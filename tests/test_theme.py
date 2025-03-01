@@ -1,6 +1,7 @@
 from assertpy import assert_that
 
-from decker_server.theme import set_theme, get_theme, Theme, primary, get_style, Style
+from decker_server.theme import Style, Theme, get_style, get_theme, primary, set_theme
+
 
 class TestTheme:
     def test_set_and_get_theme(self):

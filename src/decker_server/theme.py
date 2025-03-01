@@ -1,8 +1,10 @@
-""" Theme related functionality - colours, styles, etc."""
+"""Theme related functionality - colours, styles, etc."""
 
 from __future__ import annotations
-from enum import Enum
+
 import logging
+from enum import Enum
+
 import termcolor
 
 FORCE_COLOR: bool = False  # needed for testing as termcolor does not work in CI

@@ -1,15 +1,19 @@
 import logging
 import time
+
 from assertpy import assert_that
 
 from decker_server.server import Server
+
 
 class LogCaptureHandler(logging.Handler):
     def __init__(self):
         super().__init__()
         self.records = []
+
     def emit(self, record):
         self.records.append(record.getMessage())
+
 
 class TestServer:
     def test_server_ping_and_stop(self):

@@ -1,15 +1,16 @@
-import logging
-import threading
-import signal
-import time
 import argparse  # Added import
 import importlib.metadata
+import logging
+import signal
+import threading
+import time
 
+import decker_server.logging
 from decker_server.server import Server
 from decker_server.theme import primary, warning
-import decker_server.logging
 
-APP_THREAD: Server|None = None
+APP_THREAD: Server | None = None
+
 
 def handle_interrupt(signal, frame):
     if APP_THREAD is not None:
@@ -21,6 +22,7 @@ def handle_interrupt(signal, frame):
     time.sleep(1)
     logging.info(primary("Exiting"))
     exit(0)
+
 
 def create_parser() -> argparse.ArgumentParser:
     metadata = importlib.metadata.metadata("decker_server")
@@ -46,6 +48,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     return parser
 
+
 def main() -> None:
     # Initialize argument parser to handle --help flag.
     parser = create_parser()
@@ -64,6 +67,7 @@ def main() -> None:
     APP_THREAD.start()
     forever = threading.Event()
     forever.wait()
+
 
 signal.signal(signal.SIGINT, handle_interrupt)
 if __name__ == "__main__":
