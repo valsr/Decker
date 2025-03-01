@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "decker-server"
+name = "decker_server"
 version = "0.1.0"
 description = ""
 authors = ["valsr <valsr@valsr.com>"]
@@ -26,12 +26,14 @@ pylint-per-file-ignores = "^1.4.0"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
-
 [tool.poe.tasks.start]
-cmd = "python main.py"
+cmd = "python -m decker_server"
+
+[tool.poe.tasks.run]
+cmd = "python -m decker_server"
 
 [tool.poe.tasks.test]
-cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=prm tests"
+cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker tests"
 
 [tool.poe.tasks.mypy]
 help = "Run the mypy checker"
@@ -61,7 +63,7 @@ timeout = 300
 
 [tool.coverage.run]
 omit = ["tests/*"]
-include = ["src/prm/*"]
+include = ["src/*"]
 
 [tool.coverage.report]
 show_missing = true
