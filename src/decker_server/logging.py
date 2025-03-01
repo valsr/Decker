@@ -6,7 +6,7 @@ import time
 from decker_server.theme import highlight, secondary, warning
 
 
-def configure(level: int = logging.WARNING):
+def configure(level: int = logging.INFO):
     """Configure global/default logger.
 
     Args:

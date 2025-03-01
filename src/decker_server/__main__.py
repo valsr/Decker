@@ -5,7 +5,7 @@ import time
 
 from decker_server.ServerThread import SeverThread
 from decker_server.theme import primary, warning
-from decker_server import logging
+import decker_server.logging
 
 APP_THREAD: threading.Thread|None = None
 
@@ -22,7 +22,7 @@ def handle_interrupt(signal, frame):
 
 def main() -> None:
     logging.info(primary("Starting server"))
-    logging.configure()
+    decker_server.logging.configure()
     APP_THREAD = SeverThread()
     APP_THREAD.start()
     forever = threading.Event()

@@ -1,3 +1,4 @@
+import logging
 import threading
 import time
 
@@ -33,6 +34,6 @@ class SeverThread(threading.Thread):
             - time.sleep
         """
         while not self.stop_event.is_set():
-            print("ping")
+            logging.info("ping")
             time.sleep(1)
-        print("Stopping server.")
+        logging.info("Stopping server.")
