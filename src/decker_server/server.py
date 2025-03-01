@@ -3,7 +3,7 @@ import threading
 import time
 
 
-class SeverThread(threading.Thread):
+class Server(threading.Thread):
     """Main server thread."""
 
     def __init__(self) -> None:
