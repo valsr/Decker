@@ -49,14 +49,9 @@ nosetests.xml
 .mypy_cache/
 
 # Virtual environments
-env/
-venv/
 .venv/
-ENV/
-venv.bak/
 
 # Editor directories and files
 .vscode/
 .idea/
-*.sublime-workspace
-*.sublime-project
+*.user.*
