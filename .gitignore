@@ -56,3 +56,6 @@ nosetests.xml
 .vscode/
 .idea/
 *.user.*
+
+# Others
+/*.log
