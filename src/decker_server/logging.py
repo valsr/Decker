@@ -26,6 +26,16 @@ def configure(level: int = logging.INFO):
     logger.addHandler(handler)
     logger.setLevel(level)
 
+    error_handler = logging.FileHandler("decker-server.log")
+    error_handler.setLevel(level)
+    error_handler.setFormatter(formatter)
+    logger.addHandler(error_handler)
+
+    error_handler = logging.FileHandler("decker-server.error.log")
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(formatter)
+    logger.addHandler(error_handler)
+
 
 class PerformanceLogger:
     """Performance logger - logs the time taken to execute the block of code it wraps."""
