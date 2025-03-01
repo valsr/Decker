@@ -32,7 +32,7 @@ cmd = "python -m decker_server"
 cmd = "python -m decker_server"
 
 [tool.poe.tasks.test]
-cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker tests"
+cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker_server tests"
 
 [tool.poe.tasks.mypy]
 help = "Run the mypy checker"
