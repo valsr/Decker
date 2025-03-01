@@ -10,7 +10,6 @@ readme = "README.md"
 python = "^3.13"
 termcolor = "^2.5.0"
 
-
 [tool.poetry.group.dev.dependencies]
 black = "^25.1.0"
 mypy = "^1.15.0"
@@ -71,7 +70,7 @@ include_namespace_packages = true
 
 [tool.pylint.main]
 # A path to a file that contains private dictionary; one word per line.
-spelling-private-dict-file = "dictionary.dic"
+spelling-private-dict-file = "spell.dic"
 
 # Analyse import fallback blocks. This can be used to support both Python 2 and 3
 # compatible code, which means that the block might have code that exists only in
