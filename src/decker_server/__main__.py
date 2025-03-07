@@ -5,6 +5,7 @@ import signal
 import threading
 import time
 
+import decker_server.config
 import decker_server.logging
 from decker_server.server import Server
 from decker_server.theme import primary, warning
@@ -71,4 +72,4 @@ def main() -> None:
 
 signal.signal(signal.SIGINT, handle_interrupt)
 if __name__ == "__main__":
-    main()
+   main()

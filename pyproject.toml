@@ -7,9 +7,10 @@ license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.13"
+python = "^3.11"
 termcolor = "^2.5.0"
 toml = "^0.10.2"
+flatten-dict = "^0.4.2"
 
 [tool.poetry.group.dev.dependencies]
 black = "^25.1.0"
@@ -22,6 +23,7 @@ assertpy = "^1.1"
 assertpy-stubs = "^1.1.2"
 pylint-per-file-ignores = "^1.4.0"
 isort = "^6.0.1"
+pytest-asyncio = "^0.25.3"
 
 [build-system]
 requires = ["poetry-core"]
@@ -69,6 +71,7 @@ pythonpath = "tests"
 
 [tool.pytest.ini_options]
 timeout = 300
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 omit = ["tests/*"]
