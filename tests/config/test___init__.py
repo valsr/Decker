@@ -1,7 +1,7 @@
 from assertpy import assert_that
 
-from decker_server.config import (Config,  # see: Config and related exceptions
-                                  ConfigurationKeyExists,
+from decker_server.config import Config  # see: Config and related exceptions
+from decker_server.config import (ConfigurationKeyExists,
                                   InvalidConfigurationValue, decode_value)
 
 

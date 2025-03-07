@@ -1,29 +1,11 @@
 import argparse  # Added import
 import importlib.metadata
 import logging
-import signal
-import threading
-import time
 
 import decker_server.command.config as config_command
 import decker_server.config
 import decker_server.logging
-from decker_server.server import Server
-from decker_server.theme import primary, warning
-
-APP_THREAD: Server | None = None
-
-
-def handle_interrupt(signal, frame):
-    if APP_THREAD is not None:
-        APP_THREAD.stop()
-        APP_THREAD.join(timeout=5)
-        if APP_THREAD.is_alive():
-            print(warning("Forcing thread termination"))
-            APP_THREAD._stop()
-    time.sleep(1)
-    logging.info(primary("Exiting"))
-    exit(0)
+from decker_server.server.instance_manager import InstanceManager
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -47,6 +29,13 @@ def create_parser() -> argparse.ArgumentParser:
             "Increase logging verbosity. Specify once for INFO, twice for DEBUG. "
             "Defaults to WARNING if not provided."
         ),
+    )
+
+    parser.add_argument(
+        "-d",
+        "--dev",
+        action="store_true",
+        help="Run the application in development mode.",
     )
 
     # Add subparsers for commands
@@ -106,20 +95,17 @@ def main() -> None:
 
     decker_server.logging.configure(level=level)
 
+    logging.debug(args)
+
     # Handle commands
-    if hasattr(args, "command"):
+    if args.command:
         command = f"{args.command}.{args.action}"
         handle_commands(command, args)
         return
 
-    logging.info(primary("Starting server"))
-    global APP_THREAD
-    APP_THREAD = Server()
-    APP_THREAD.start()
-    forever = threading.Event()
-    forever.wait()
+    instance_manager = InstanceManager(dev_mode=args.dev or False)
+    instance_manager.start_server()
 
 
-signal.signal(signal.SIGINT, handle_interrupt)
 if __name__ == "__main__":
     main()
