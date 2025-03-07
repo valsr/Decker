@@ -1,10 +1,8 @@
 from assertpy import assert_that
 
-from decker_server.config import (  # see: Config and related exceptions
-    Config,
-    ConfigurationKeyExists,
-    InvalidConfigurationValue,
-)
+from decker_server.config import (Config,  # see: Config and related exceptions
+                                  ConfigurationKeyExists,
+                                  InvalidConfigurationValue, decode_value)
 
 
 class DummyBackend:
@@ -257,3 +255,39 @@ class TestFind:
             assert False, "Expected TypeError"
         except TypeError as e:
             assert_that(str(e)).contains("callback must be a callable function")
+
+class TestDecodeValue:
+    """Tests for validating the decode_value function.
+
+    See: decode_value
+    """
+
+    def test_decode_bytes(self):
+        # Given: a bytes value representing a valid UTF-8 string
+        value = b"hello world"
+
+        # When: calling decode_value on the bytes value
+        result = decode_value(value)
+
+        # Then: the returned string should match the decoded value from UTF-8
+        assert_that(result).is_equal_to("hello world")
+
+    def test_decode_non_bytes_numeric(self):
+        # Given: a non-bytes numeric value
+        value = 123
+
+        # When: calling decode_value on the numeric value
+        result = decode_value(value)
+
+        # Then: the returned string should be the string representation of the number
+        assert_that(result).is_equal_to("123")
+
+    def test_decode_non_bytes_string(self):
+        # Given: a non-bytes string value
+        value = "already_string"
+
+        # When: calling decode_value on the string value
+        result = decode_value(value)
+
+        # Then: the returned string should be identical to the original string
+        assert_that(result).is_equal_to("already_string")

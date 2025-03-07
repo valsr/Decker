@@ -1,11 +1,11 @@
 import datetime
 import logging
+import os
 from typing import Any, Callable, Generator
 
 import flatten_dict
 
 from decker_server.config.backend import BackendManager, TomlFileBackend
-import os
 
 ValueType = str | int | float | complex | list | set | frozenset | bool | bytes | bytearray | datetime.datetime
 
@@ -350,3 +350,19 @@ def find(callback: Callable[[str, ValueType], bool]) -> Generator[tuple[str, Val
         TypeError: If the provided callback is not a callable function.
     """
     return CONFIG.find(callback)
+
+def decode_value(value: ValueType|None):
+    """
+    Convert a configuration value to a string representation.
+
+    Args:
+        value: The configuration value to convert.
+
+    Returns:
+        str: A string representation of the configuration value.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)

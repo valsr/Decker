@@ -3,7 +3,8 @@ import time
 
 from assertpy import assert_that
 
-from decker_server.logging import LOGGED, PerformanceLogger, configure, debug_once
+from decker_server.logging import (LOGGED, PerformanceLogger, configure,
+                                   debug_once)
 
 
 class TestLogging:
