@@ -29,33 +29,18 @@ pytest-asyncio = "^0.25.3"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
-[tool.poe.tasks.start]
-cmd = "python -m decker_server"
-
-[tool.poe.tasks.run]
-cmd = "python -m decker_server"
-
-[tool.poe.tasks.test]
-cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker_server tests"
-
-[tool.poe.tasks.mypy]
-help = "Run the mypy checker"
-cmd  = "mypy ."
-
-[tool.poe.tasks.format]
-help = "Run the code formatters"
-cmd  = "isort . && black ."
-
-[tool.poe.tasks.black]
-help = "Run black on the code base"
-cmd  = "black ."
-
-[tool.poe.tasks.pylint]
-help = "Run the pylint checker"
-cmd  = "pylint src"
+[tool.poe.tasks]
+start = { cmd = "python -m decker_server" }
+run = { cmd = "python -m decker_server" }
+app = { cmd = "python -m decker_server" }
+test  = { cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker_server tests" }
+mypy  = { cmd  = "mypy ." }
+format = { cmd  = "isort . && black ." }
+black = { cmd  = "black ." }
+pylint = { cmd  = "pylint src" }
 
 [tool.isort]
-profile = "black"
+
 
 [tool.black]
 line-length = 120

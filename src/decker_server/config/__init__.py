@@ -5,6 +5,7 @@ from typing import Any, Callable, Generator
 import flatten_dict
 
 from decker_server.config.backend import BackendManager, TomlFileBackend
+import os
 
 ValueType = str | int | float | complex | list | set | frozenset | bool | bytes | bytearray | datetime.datetime
 
@@ -235,7 +236,13 @@ class ConfigurationKeyExists(Exception):
 
 
 # Initialize configuration with default backend
-CONFIG: Config = Config(BackendManager(TomlFileBackend(USER_CONFIG_FILE)))
+user_config_path = os.path.expanduser(USER_CONFIG_FILE)
+if not os.path.exists(user_config_path):
+    # Create the user configuration file if it does not exist
+    with open(user_config_path, "w") as config_file:
+        config_file.write("")
+
+CONFIG: Config = Config(BackendManager(TomlFileBackend(user_config_path)))
 """The global configuration instance."""
 CONFIG.load()
 
