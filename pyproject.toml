@@ -57,6 +57,7 @@ check_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = false
 mypy_path = "stubs"
+exclude = ["stubs/"]
 
 [[tool.mypy.overrides]]
 module = ["decker_server.*"]
@@ -114,7 +115,7 @@ fail-under = 9.0
 # from-stdin =
 
 # Files or directories to be skipped. They should be base names, not paths.
-ignore = ["CVS"]
+ignore = ["CVS", "stubs"]
 
 # Add files or directories matching the regular expressions patterns to the
 # ignore-list. The regex matches against paths and can be in Posix or Windows
