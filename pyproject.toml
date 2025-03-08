@@ -41,9 +41,11 @@ mypy  = { cmd  = "mypy ." }
 format = { cmd  = "isort . && black ." }
 black = { cmd  = "black ." }
 pylint = { cmd  = "pylint src" }
+install-stubs = { cmd = "mypy --install-types"}
+stubgen = { cmd = "stubgen -o stubs" }
 
 [tool.isort]
-
+profile = "black"
 
 [tool.black]
 line-length = 120
@@ -52,6 +54,9 @@ preview = true  # Sometimes helps with more compact formatting in newer versions
 [tool.mypy]
 show_error_codes = true
 check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = false
+mypy_path = "stubs"
 
 [[tool.mypy.overrides]]
 module = ["decker_server.*"]
