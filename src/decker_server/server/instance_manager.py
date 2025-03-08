@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Any
 
-from decker_server import theme
+from decker_server import platform, theme
 from decker_server.server import Server
 
 
@@ -32,20 +32,25 @@ class InstanceManager:
             return
 
         logging.info(theme.primary("Starting server"))
-        signal.signal(signal.SIGINT, self.handle_interrupt)
+        signal.signal(signal.SIGINT, self._handle_interrupt)
 
         self.server = Server()
         self.server.start()
         forever = threading.Event()
         forever.wait()
 
-    def handle_interrupt(self, signal, frame):
+    def stop_server(self):
         if self.server is not None:
             self.server.stop()
             self.server.join(timeout=5)
             if self.server.is_alive():
                 logging.warning(theme.warning("Forcing thread termination"))
                 self.server._stop()  # type: ignore
+            self.server = None
+        self._cleanup_lock()
+
+    def _handle_interrupt(self, signal, frame):
+        self.stop_server()
         time.sleep(1)
         logging.info(theme.primary("Exiting"))
         exit(0)
@@ -65,7 +70,7 @@ class InstanceManager:
 
         try:
             self.lock_file = open(self.lock_file_path, "w")
-            self._lock()
+            platform.lock_file(self.lock_file)
 
             # Register cleanup to ensure lock file is removed on exit
             atexit.register(self._cleanup_lock)
@@ -74,35 +79,17 @@ class InstanceManager:
         except (IOError, OSError):
             print("Another instance of the application is already running.")
             print("Use --dev flag to allow multiple instances for development.")
-            sys.exit(1)
-
-    def _lock(self):
-        """Unix-specific file locking implementation."""
-        try:
-            if sys.platform == "win32":
-                import msvcrt
-
-                msvcrt.lock(self.lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (IOError, OSError):
-            self.lock_file.close()
-            raise
+            if self.lock_file:
+                self.lock_file.close()
+            return False
 
     def _cleanup_lock(self):
         """Release the lock file and remove it when the application exits."""
+        if self.lock_file is None:
+            return
+
         try:
-            if sys.platform == "win32":
-                import msvcrt
-
-                msvcrt.lock(self.lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(self.lock_file, fcntl.LOCK_UN)
-
+            platform.unlock_file(self.lock_file)
             self.lock_file.close()
             os.remove(self.lock_file_path)
         except:
