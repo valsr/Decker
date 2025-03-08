@@ -1,3 +1,4 @@
+"""Configuration backends for loading and saving settings."""
 import logging
 import os
 import threading
@@ -6,6 +7,7 @@ from typing import Any
 import toml
 
 CONFIG_KEY = "server"
+
 
 class TomlFileBackend:
     """
@@ -83,16 +85,17 @@ class TomlFileBackend:
 class BackendManager:
     """BackendManager
 
-    This class is responsible for managing configuration settings with thread-safe
-    operations. It interacts with a TOML file backend to load and save configuration data,
-    providing mechanisms to ensure that concurrent access is properly managed.
+    This class is responsible for managing configuration settings with thread-safe operations. It interacts
+    with a TOML file backend to load and save configuration data, providing mechanisms to ensure that
+    concurrent access is properly managed.
     """
 
     def __init__(self, backend: TomlFileBackend):
         """
         Initialize a new instance of the configuration class.
 
-        This constructor sets up the configuration backend, along with a thread holder and a reentrant lock for synchronization.
+        This constructor sets up the configuration backend, along with a thread holder and a reentrant lock
+        for synchronization.
 
         Parameters:
             backend (TomlFileBackend): An instance used to manage configuration data.

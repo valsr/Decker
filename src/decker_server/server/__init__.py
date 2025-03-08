@@ -1,3 +1,4 @@
+"""Server module."""
 import logging
 import threading
 import time

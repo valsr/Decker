@@ -24,6 +24,8 @@ assertpy-stubs = "^1.1.2"
 pylint-per-file-ignores = "^1.4.0"
 isort = "^6.0.1"
 pytest-asyncio = "^0.25.3"
+dill = "^0.3.9"
+pyenchant = "^3.2.2"
 
 [build-system]
 requires = ["poetry-core"]
@@ -541,7 +543,7 @@ spelling-ignore-comment-directives = "fmt: on,fmt: off,noqa:,noqa,nosec,isort:sk
 # spelling-ignore-words =
 
 # A path to a file that contains the private dictionary; one word per line.
-spelling-private-dict-file = "dictionary.dic"
+spelling-private-dict-file = "spell.dic"
 
 # Tells whether to store unknown words to the private dictionary (see the
 # --spelling-private-dict-file option) instead of raising a message.

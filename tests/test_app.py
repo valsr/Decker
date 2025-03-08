@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
 
-from decker_server.__main__ import create_parser, handle_commands, main
+from decker_server.app import create_parser, handle_commands, main
 
 
 class TestMain:
@@ -130,7 +130,7 @@ class TestMain:
     class TestMain:
         """Tests for the main function."""
 
-        @patch("decker_server.__main__.InstanceManager")
+        @patch("decker_server.app.InstanceManager")
         @patch("decker_server.logging.configure")
         @patch("argparse.ArgumentParser.parse_args")
         def test_main_configures_logging_with_different_verbosity(self, mock_parse_args, mock_configure, mock_instance_manager):
@@ -156,7 +156,7 @@ class TestMain:
                 # Assert
                 mock_configure.assert_called_with(level=test_case["expected_level"])
 
-        @patch("decker_server.__main__.InstanceManager")
+        @patch("decker_server.app.InstanceManager")
         @patch("argparse.ArgumentParser.parse_args")
         def test_main_starts_server_without_command(self, mock_parse_args, mock_instance_manager):
             # Tests if main starts server when no command is provided
@@ -177,7 +177,7 @@ class TestMain:
             mock_instance_manager.assert_called_once_with(dev_mode=False)
             instance.start_server.assert_called_once()
 
-        @patch("decker_server.__main__.InstanceManager")
+        @patch("decker_server.app.InstanceManager")
         @patch("argparse.ArgumentParser.parse_args")
         def test_main_starts_server_with_dev_mode(self, mock_parse_args, mock_instance_manager):
             # Tests if main starts server with dev mode when specified
@@ -197,7 +197,7 @@ class TestMain:
             # Assert
             mock_instance_manager.assert_called_once_with(dev_mode=True)
 
-        @patch("decker_server.__main__.handle_commands")
+        @patch("decker_server.app.handle_commands")
         @patch("argparse.ArgumentParser.parse_args")
         def test_main_handles_commands(self, mock_parse_args, mock_handle_commands):
             # Tests if main handles commands when provided

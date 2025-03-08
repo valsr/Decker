@@ -1,3 +1,5 @@
+"""Module for managing application configurations."""
+
 import datetime
 import logging
 import os
@@ -82,8 +84,8 @@ class Config:
         """
         if not isinstance(value, ValueType):
             raise InvalidConfigurationValue(
-                "Value for %s is not a valid type must be one of {str, int, float, list, complex, set, bool, bytes, bytearray, datetime.datetime}"
-                % key
+                f"Value for {key} is not a valid type must be one of "
+                "{str, int, float, list, complex, set, bool, bytes, bytearray, datetime.datetime}" % key
             )
 
         key = key.lower()  # convert key to lowercase
@@ -94,14 +96,14 @@ class Config:
             parent_key = ".".join(paths[:i])
             if parent_key in self._data:
                 raise ConfigurationKeyExists(
-                    "Can't add key %s: parent key %s is already in the dictionary" % (key, parent_key)
+                    f"Can't add key {key}: parent key {parent_key} is already in the dictionary"
                 )
 
         if isinstance(value, bytes):
             value_str = value.decode("utf-8")
         else:
             value_str = str(value)
-        logging.debug("Setting configuration key %s to %s" % (key, value_str))
+        logging.debug("Setting configuration key %s to %s", key, value_str)
         self._data[key] = value
         self.save()
 
@@ -122,7 +124,7 @@ class Config:
         remove = False
 
         for k in keys:
-            logging.debug("Removing configuration key %s" % k)
+            logging.debug("Removing configuration key %s", k)
             self._data.pop(k)
             remove = True
 
@@ -138,14 +140,14 @@ class Config:
                 all configuration entries are returned.
 
         Returns:
-            list[tuple[str, ValueType]]: A list of tuples, where each tuple contains a key and its associated value.
+            list[tuple[str, ValueType]]: A list of tuples, where each tuple contains a key and its associated
+                value.
         """
         if not key:
-            return [(k, self._data[k]) for k in self._data.keys()]
+            return list(self._data.items())
 
         key = key.lower()  # convert key to lowercase
-        keys = [k for k in self._data.keys() if k == key or k.startswith(key + KEY_SEPARATOR)]
-        return [(k, self._data[k]) for k in keys]
+        return [(k, v) for k, v in self._data.items() if k == key or k.startswith(key + KEY_SEPARATOR)]
 
     def __getitem__(self, key: str) -> ValueType:
         """
@@ -215,6 +217,7 @@ class InvalidConfigurationValue(Exception):
         message (Optional[str]): An optional error message providing details about the invalid value.
                                 Defaults to "Invalid configuration value" if not provided.
     """
+
     def __init__(self, message: str | None = None):
         super().__init__(message or "Invalid configuration value")
 
@@ -231,6 +234,7 @@ class ConfigurationKeyExists(Exception):
         message (str, optional):
             An optional string providing additional details about the error.
     """
+
     def __init__(self, message: str | None = None):
         super().__init__(message or "Key already exists in the configuration")
 
@@ -239,7 +243,7 @@ class ConfigurationKeyExists(Exception):
 user_config_path = os.path.expanduser(USER_CONFIG_FILE)
 if not os.path.exists(user_config_path):
     # Create the user configuration file if it does not exist
-    with open(user_config_path, "w") as config_file:
+    with open(user_config_path, "w", encoding="utf-8") as config_file:
         config_file.write("")
 
 CONFIG: Config = Config(BackendManager(TomlFileBackend(user_config_path)))
@@ -318,7 +322,7 @@ def unset(key: str) -> None:
     CONFIG.unset(key)
 
 
-def items(key: str|None = None) -> list[tuple[str, ValueType]]:
+def items(key: str | None = None) -> list[tuple[str, ValueType]]:
     """
     Retrieve configuration entries that match the provided key or its sub-keys.
 
@@ -351,7 +355,8 @@ def find(callback: Callable[[str, ValueType], bool]) -> Generator[tuple[str, Val
     """
     return CONFIG.find(callback)
 
-def decode_value(value: ValueType|None):
+
+def decode_value(value: ValueType | None):
     """
     Convert a configuration value to a string representation.
 
