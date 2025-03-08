@@ -70,7 +70,7 @@ class InstanceManager:
             self.server.join(timeout=5)
             if self.server.is_alive():
                 logging.warning(theme.warning("Forcing thread termination"))
-                self.server._stop()  # type: ignore
+                self.server._stop()  # type: ignore [attr-defined] # pylint: disable=protected-access
             self.server = None
         logging.info(theme.primary("Server stopped"))
         self._cleanup_lock()

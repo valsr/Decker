@@ -119,7 +119,7 @@ class TestTomlBackendSave:
         os.remove(temp_path)
 
 
-class DummyBackend:
+class DummyBackend (TomlFileBackend):
     # see DummyBackend
     def __init__(self):
         """Initializes the dummy backend.

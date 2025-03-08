@@ -3,9 +3,10 @@ from assertpy import assert_that
 from decker_server.config import Config  # see: Config and related exceptions
 from decker_server.config import (ConfigurationKeyExists,
                                   InvalidConfigurationValue, decode_value)
+from decker_server.config.backend import BackendManager
 
 
-class DummyBackend:
+class DummyBackend(BackendManager):
     """A dummy backend for testing purposes.
 
     This class simulates loading from and saving to a backend storage.
@@ -19,9 +20,9 @@ class DummyBackend:
         # When: loading data from the backend
         return self.data
 
-    def save(self, data: dict) -> None:
+    def save(self, settings: dict) -> None:
         # Then: updating in-memory storage with provided data
-        self.data = data
+        self.data = settings
 
 
 # <see: TestLoadSave> ---------------------------------------------------------
@@ -72,7 +73,7 @@ class TestHasGet:
         backend.data = {"foo": "bar"}
         config_obj = Config(backend)
         config_obj.load()
-        config_obj._data = {"test.key": "value"}  # simulate preloaded data
+        config_obj["test.key"] ="value"  # simulate preloaded data
 
         # When: checking for existence and retrieving the value for an existing key
         exists = config_obj.has("test.key")
@@ -129,7 +130,7 @@ class TestSet:
 
         # When/Then: setting a key with an invalid type (e.g., dict) should raise InvalidConfigurationValue
         try:
-            config_obj.set("invalid.key", {"not": "allowed"})
+            config_obj.set("invalid.key", {"not": "allowed"}) # type: ignore
             assert False, "Expected InvalidConfigurationValue"
         except InvalidConfigurationValue as e:
             assert_that(str(e)).contains("Value for invalid.key")
@@ -138,7 +139,7 @@ class TestSet:
         # Given: a dummy backend and a configuration instance with an existing parent key
         backend = DummyBackend()
         config_obj = Config(backend)
-        config_obj._data = {"test": "parent_value"}
+        config_obj["test"] = "parent_value"
 
         # When/Then: setting a sub-key when a parent key exists should raise
         try:
@@ -160,7 +161,9 @@ class TestUnset:
         # Given: a dummy backend and a configuration instance with multiple keys
         backend = DummyBackend()
         config_obj = Config(backend)
-        config_obj._data = {"test.key": "value", "test.other": "value2", "another": "val"}
+        config_obj["test.key"] = "value"
+        config_obj["test.other"] = "value2"
+        config_obj["another"] = "val"
 
         # When: unsetting keys with the prefix 'test'
         config_obj.unset("test")
@@ -237,7 +240,7 @@ class TestFind:
         config_obj._data = {"alpha": 1, "beta": 2, "gamma": 3}
 
         # When: using find with a callback that returns True for even values
-        result = list(config_obj.find(lambda k, v: v % 2 == 0))
+        result = list(config_obj.find(lambda _, v: isinstance(v, int) and v % 2 == 0))
 
         # Then: only the key-value pair with an even value should be returned
         expected = [("beta", 2)]
@@ -247,11 +250,11 @@ class TestFind:
         # Given: a configuration instance with some entries
         backend = DummyBackend()
         config_obj = Config(backend)
-        config_obj._data = {"a": 1}
+        config_obj["a"] = 1
 
         # When/Then: invoking find with a non-callable should raise TypeError
         try:
-            list(config_obj.find("not a callable"))
+            list(config_obj.find("not a callable")) # type: ignore
             assert False, "Expected TypeError"
         except TypeError as e:
             assert_that(str(e)).contains("callback must be a callable function")
