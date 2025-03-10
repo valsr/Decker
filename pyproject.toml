@@ -11,6 +11,7 @@ python = "^3.11"
 termcolor = "^2.5.0"
 toml = "^0.10.2"
 flatten-dict = "^0.4.2"
+streamdeck = "^0.9.6"
 
 [tool.poetry.group.dev.dependencies]
 black = "^25.1.0"
@@ -43,6 +44,10 @@ black = { cmd  = "black ." }
 pylint = { cmd  = "pylint src" }
 install-stubs = { cmd = "mypy --install-types"}
 stubgen = { cmd = "stubgen -o stubs" }
+
+[tool.poe.tasks.setup]
+help = "Setup the project"
+cmd = "poetry install && apt-get update && apt-get install -y libhidapi-libusb0"
 
 [tool.isort]
 profile = "black"

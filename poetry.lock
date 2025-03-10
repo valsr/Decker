@@ -495,6 +495,17 @@ files = [
 ]
 
 [[package]]
+name = "streamdeck"
+version = "0.9.6"
+description = "Library to control Elgato StreamDeck devices."
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "streamdeck-0.9.6-py3-none-any.whl", hash = "sha256:e5fdcce06d399e249cfee7f0363eb12343b90a8ed2bfc1cd8408ced021ab184b"},
+    {file = "streamdeck-0.9.6.tar.gz", hash = "sha256:ec42d9b711b352ea274ad305a6eb48ece1eed3a5bffe70b928e082dce0f788f0"},
+]
+
+[[package]]
 name = "termcolor"
 version = "2.5.0"
 description = "ANSI color formatting for output in terminal"
@@ -555,4 +566,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "9812c457671a75c3f663b0a3c4b4e9ac9e8876f42d5d3d7748276612f85330b3"
+content-hash = "1ec95490232a65219f5ebab4ded0dccc3ad5fb7034189e824b3e6df2ee21ea4d"

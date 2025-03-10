@@ -5,6 +5,39 @@ import time
 
 from decker_server.theme import highlight, secondary, warning
 
+LOG_LEVEL = logging.WARNING
+
+def log_level() -> int:
+    """Get the current configured log level.
+
+    Returns:
+        int: The corresponding log level.
+    """
+    return LOG_LEVEL
+
+def is_debug() -> bool:
+    """Check if the log level is set to debug.
+
+    Returns:
+        bool: True if the log level is set to debug, False otherwise.
+    """
+    return LOG_LEVEL == logging.DEBUG
+
+def is_info() -> bool:
+    """Check if the log level is set to info.
+
+    Returns:
+        bool: True if the log level is set to info, False otherwise.
+    """
+    return LOG_LEVEL == logging.INFO
+
+def is_warning() -> bool:
+    """Check if the log level is set to warning.
+
+    Returns:
+        bool: True if the log level is set to warning, False otherwise.
+    """
+    return LOG_LEVEL == logging.WARNING
 
 def configure(level: int = logging.INFO):
     """Configure global/default logger.
@@ -15,6 +48,9 @@ def configure(level: int = logging.INFO):
     Returns:
 
     """
+    global LOG_LEVEL
+    LOG_LEVEL = level
+
     logger = logging.getLogger()
 
     for handler in logger.handlers:
@@ -24,10 +60,10 @@ def configure(level: int = logging.INFO):
     formatter = logging.Formatter("%(asctime)s %(name)s %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-    logger.setLevel(level)
+    logger.setLevel(LOG_LEVEL)
 
     error_handler = logging.FileHandler("decker-server.log")
-    error_handler.setLevel(level)
+    error_handler.setLevel(LOG_LEVEL)
     error_handler.setFormatter(formatter)
     logger.addHandler(error_handler)
 

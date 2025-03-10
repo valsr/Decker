@@ -5,6 +5,7 @@ import importlib.metadata
 import logging
 
 import decker_server.command.config as config_command
+import decker_server.command.device as device_command
 import decker_server.config
 import decker_server.logging
 from decker_server.server.instance_manager import InstanceManager
@@ -17,8 +18,7 @@ def create_parser() -> argparse.ArgumentParser:
     This function sets up the main parser with global options and configuration commands. It uses metadata
     from the package to populate program name and description.
 
-    Returns:
-        argparse.ArgumentParser: A fully configured argument parser ready to parse command-line arguments
+    Returns:"run", "app.py", parse.ArgumentParser: A fully configured argument parser ready to parse command-line arguments
     """
     metadata = importlib.metadata.metadata("decker_server")
     parser = argparse.ArgumentParser(
@@ -73,6 +73,13 @@ def create_parser() -> argparse.ArgumentParser:
     set_parser.add_argument("key", help="The configuration key to set")
     set_parser.add_argument("value", nargs="+", help="The value to set for the configuration key")
 
+    # Add devices command
+    device_parser = subparsers.add_parser("device", help="Device management commands")
+    devices_subparsers = device_parser.add_subparsers(dest="action", help="Device actions")
+
+    # Add list action to devices command
+    devices_subparsers.add_parser("list", help="List all devices")
+
     return parser
 
 
@@ -93,6 +100,7 @@ def handle_commands(command, args: argparse.Namespace):
         "config.get": lambda args: config_command.get_config(args.key),
         "config.remove": lambda args: config_command.remove_config(args.key),
         "config.set": lambda args: config_command.set_config(args.key, " ".join(args.value)),
+        "device.list": lambda _: device_command.list_devices(),
     }
 
     if command not in commands:
