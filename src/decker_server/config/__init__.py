@@ -85,7 +85,7 @@ class Config:
         if not isinstance(value, ValueType):
             raise InvalidConfigurationValue(
                 f"Value for {key} is not a valid type must be one of "
-                "{str, int, float, list, complex, set, bool, bytes, bytearray, datetime.datetime}" % key
+                "{str, int, float, list, complex, set, bool, bytes, bytearray, datetime.datetime}"
             )
 
         key = key.lower()  # convert key to lowercase
