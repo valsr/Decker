@@ -1,4 +1,5 @@
-from .flatten_dict import flatten as flatten, unflatten as unflatten
+from .flatten_dict import flatten as flatten
+from .flatten_dict import unflatten as unflatten
 
 __all__ = ['flatten', 'unflatten', 'splitter']
 

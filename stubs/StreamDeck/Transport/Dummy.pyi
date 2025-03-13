@@ -1,5 +1,7 @@
-from .Transport import Transport as Transport, TransportError as TransportError
 from _typeshed import Incomplete
+
+from .Transport import Transport as Transport
+from .Transport import TransportError as TransportError
 
 class Dummy(Transport):
     class Device(Transport.Device):

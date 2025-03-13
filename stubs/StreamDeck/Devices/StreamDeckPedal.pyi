@@ -1,4 +1,5 @@
-from .StreamDeck import ControlType as ControlType, StreamDeck as StreamDeck
+from .StreamDeck import ControlType as ControlType
+from .StreamDeck import StreamDeck as StreamDeck
 
 class StreamDeckPedal(StreamDeck):
     KEY_COUNT: int

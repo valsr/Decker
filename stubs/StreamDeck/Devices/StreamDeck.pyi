@@ -1,8 +1,10 @@
 import abc
-from ..Transport.Transport import TransportError as TransportError
-from _typeshed import Incomplete
 from abc import ABC, abstractmethod
 from enum import Enum
+
+from _typeshed import Incomplete
+
+from ..Transport.Transport import TransportError as TransportError
 
 class TouchscreenEventType(Enum):
     SHORT = 1

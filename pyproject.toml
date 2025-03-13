@@ -12,6 +12,7 @@ termcolor = "^2.5.0"
 toml = "^0.10.2"
 flatten-dict = "^0.4.2"
 streamdeck = "^0.9.6"
+xxhash = "^3.5.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^25.1.0"

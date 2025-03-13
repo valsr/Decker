@@ -1,5 +1,9 @@
-from .StreamDeck import ControlType as ControlType, DialEventType as DialEventType, StreamDeck as StreamDeck, TouchscreenEventType as TouchscreenEventType
 from _typeshed import Incomplete
+
+from .StreamDeck import ControlType as ControlType
+from .StreamDeck import DialEventType as DialEventType
+from .StreamDeck import StreamDeck as StreamDeck
+from .StreamDeck import TouchscreenEventType as TouchscreenEventType
 
 class StreamDeckPlus(StreamDeck):
     KEY_COUNT: int

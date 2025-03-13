@@ -1,20 +1,23 @@
 import logging
 
-from decker_server import common, hardware, theme, logging as log
+from decker_server import common, hardware
+from decker_server import logging as log
+from decker_server import theme
+
 
 def list_devices():
     """List all devices."""
     logging.debug("Listing all devices")
 
     # Define headers based on log level
-    headers = ["ID", "Type", "Registered"]
+    headers = ["Id", "Type", "Registered"]
     if log.is_debug() or log.is_info():
-        headers.extend(["Vendor", "Product", "Path"])
+        headers.extend(["Vendor Id", "Product Id", "Path"])
 
     # Collect all data for column width calculation
     rows = []
     for device in hardware.list_devices():
-        internal_id = hardware.get_internal_device_id(device)
+        internal_id = device.get_id()
         registered = "TBD"
         vendor = device.vendor_id()
         product = device.product_id()

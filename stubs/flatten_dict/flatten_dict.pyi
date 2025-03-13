@@ -1,6 +1,13 @@
-from .reducers import dot_reducer as dot_reducer, path_reducer as path_reducer, tuple_reducer as tuple_reducer, underscore_reducer as underscore_reducer
-from .splitters import dot_splitter as dot_splitter, path_splitter as path_splitter, tuple_splitter as tuple_splitter, underscore_splitter as underscore_splitter
 from _typeshed import Incomplete
+
+from .reducers import dot_reducer as dot_reducer
+from .reducers import path_reducer as path_reducer
+from .reducers import tuple_reducer as tuple_reducer
+from .reducers import underscore_reducer as underscore_reducer
+from .splitters import dot_splitter as dot_splitter
+from .splitters import path_splitter as path_splitter
+from .splitters import tuple_splitter as tuple_splitter
+from .splitters import underscore_splitter as underscore_splitter
 
 REDUCER_DICT: Incomplete
 SPLITTER_DICT: Incomplete

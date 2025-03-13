@@ -1,5 +1,7 @@
-from .StreamDeck import ControlType as ControlType, StreamDeck as StreamDeck
 from _typeshed import Incomplete
+
+from .StreamDeck import ControlType as ControlType
+from .StreamDeck import StreamDeck as StreamDeck
 
 class StreamDeckNeo(StreamDeck):
     KEY_COUNT: int

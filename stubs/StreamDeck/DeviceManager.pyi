@@ -1,3 +1,5 @@
+from _typeshed import Incomplete
+
 from .Devices.StreamDeckMini import StreamDeckMini as StreamDeckMini
 from .Devices.StreamDeckNeo import StreamDeckNeo as StreamDeckNeo
 from .Devices.StreamDeckOriginal import StreamDeckOriginal as StreamDeckOriginal
@@ -5,10 +7,10 @@ from .Devices.StreamDeckOriginalV2 import StreamDeckOriginalV2 as StreamDeckOrig
 from .Devices.StreamDeckPedal import StreamDeckPedal as StreamDeckPedal
 from .Devices.StreamDeckPlus import StreamDeckPlus as StreamDeckPlus
 from .Devices.StreamDeckXL import StreamDeckXL as StreamDeckXL
-from .ProductIDs import USBProductIDs as USBProductIDs, USBVendorIDs as USBVendorIDs
+from .ProductIDs import USBProductIDs as USBProductIDs
+from .ProductIDs import USBVendorIDs as USBVendorIDs
 from .Transport.Dummy import Dummy as Dummy
 from .Transport.LibUSBHIDAPI import LibUSBHIDAPI as LibUSBHIDAPI
-from _typeshed import Incomplete
 
 class ProbeError(Exception): ...
 
