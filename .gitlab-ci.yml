@@ -5,7 +5,7 @@ stages:
 - build
 
 before_script:
-  - pip install poetry poethepoet
+  - pip install poetry
   - poetry install
   - source `poetry env info --path`/bin/activate
 
