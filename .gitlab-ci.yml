@@ -7,6 +7,8 @@ stages:
 default:
   image: python:3.11
   before_script:
+    - apt-get update
+    - apt-get install -y hunspell-en-ca hunspell
     - pip install poetry
     - poetry install
     - source `poetry env info --path`/bin/activate
@@ -21,33 +23,52 @@ default:
 
 format:
   stage: lint
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: always
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: always
   script:
   - black --check .
   - isort --check .
 
 pylint:
   stage: lint
-  before_script:
-  - pip install poetry
-  - apt-get update
-  - apt-get install -y hunspell-en-ca
-  - poetry install
-  - source `poetry env info --path`/bin/activate
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: always
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: always
   script:
   - pylint .
 
 mypy:
   stage: lint
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: always
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: always
   script:
   - mypy .
 
 sast:
   stage: sast
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: always
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: always
 include:
 - template: Security/SAST.gitlab-ci.yml
 
 test:
   stage: test
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: always
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: always
   script:
   - pytest --junitxml=report.xml --cov-report xml:coverage.xml --cov=decker_server tests
   artifacts:
@@ -61,16 +82,16 @@ test:
 build:
   stage: build
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: always
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: always
   script:
   - poetry build
 
 publish:
   stage: build
   rules:
-    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
-      when: always
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: always
   script:
   - echo -e "\e[32mBuilding project\e[0m"
   - poetry build
