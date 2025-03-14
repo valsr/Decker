@@ -4,13 +4,12 @@ stages:
 - test
 - build
 
-before_script:
-  - pip install poetry
-  - poetry install
-  - source `poetry env info --path`/bin/activate
-
 default:
   image: python:3.11
+  before_script:
+    - pip install poetry
+    - poetry install
+    - source `poetry env info --path`/bin/activate
 
 # You can override the included template(s) by including variable overrides
 # SAST customization: https://docs.gitlab.com/ee/user/application_security/sast/#customizing-the-sast-settings
@@ -28,6 +27,12 @@ format:
 
 pylint:
   stage: lint
+  before_script:
+  - pip install poetry
+  - apt-get update
+  - apt-get install -y hunspell-en-ca
+  - poetry install
+  - source `poetry env info --path`/bin/activate
   script:
   - pylint .
 
