@@ -1,4 +1,5 @@
 """Configuration command."""
+
 import logging
 
 from decker_server import config, theme
@@ -16,7 +17,7 @@ def list_config(keywords=None):
 
     logging.debug("Listing configuration items with keywords: %s", keywords)
 
-    def filter_by_keywords(key:str , _) -> bool:
+    def filter_by_keywords(key: str, _) -> bool:
         if keywords:
             return all(keyword in key for keyword in keywords)
         return True
@@ -34,6 +35,7 @@ def list_config(keywords=None):
     for key, value in config_items:
         print(f"{key}: {config.decode_value(value)}")
 
+
 def get_config(key):
     """Get a specific configuration value.
 
@@ -49,6 +51,7 @@ def get_config(key):
     value = config.get(key)
     print(f"{key}: {config.decode_value(value)}")
 
+
 def remove_config(key):
     """Remove a specific configuration value.
 
@@ -62,6 +65,7 @@ def remove_config(key):
     config.unset(key)
     logging.info("Removed configuration: %s", key)
 
+
 def set_config(key, value):
     """Set a specific configuration value.
 
@@ -71,8 +75,7 @@ def set_config(key, value):
     """
     if config.has(key):
         old_value = config.get(key)
-        logging.warning("Replacing existing configuration '%s': %s -> %s",
-                       key, config.decode_value(old_value), value)
+        logging.warning("Replacing existing configuration '%s': %s -> %s", key, config.decode_value(old_value), value)
 
     config.set(key, value)
     logging.debug("Set configuration item: %s to %s", key, value)

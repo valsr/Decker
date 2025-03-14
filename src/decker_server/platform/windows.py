@@ -1,4 +1,5 @@
 """Windows specific functions for the decker server."""
+
 import sys
 from io import TextIOWrapper
 
@@ -25,6 +26,7 @@ def lock_file(file: TextIOWrapper):
         The behavior may vary depending on the operating system.
     """
     msvcrt.lock(file.fileno(), msvcrt.LK_NBLCK, 1)
+
 
 def unlock_file(file: TextIOWrapper):
     """

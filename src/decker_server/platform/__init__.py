@@ -8,6 +8,7 @@ if sys.platform == "win32":
 else:
     from . import linux as platform
 
+
 def lock_file(file: TextIOWrapper):
     """
     Lock the specified file to prevent concurrent access.

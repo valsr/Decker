@@ -57,8 +57,7 @@ class TestLoadSave:
         config_obj.save()
 
         # Then: the backend data should be unflattened
-        expected_unflattened = {"foo": "bar", "nested": {"key": "value"},
-                                  "new": {"key": "new_value"}}
+        expected_unflattened = {"foo": "bar", "nested": {"key": "value"}, "new": {"key": "new_value"}}
         assert_that(backend.data).is_equal_to(expected_unflattened)
 
 
@@ -76,7 +75,7 @@ class TestHasGet:
         backend.data = {"foo": "bar"}
         config_obj = Config(backend)
         config_obj.load()
-        config_obj["test.key"] ="value"  # simulate preloaded data
+        config_obj["test.key"] = "value"  # simulate preloaded data
 
         # When: checking for existence and retrieving the value for an existing key
         exists = config_obj.has("test.key")
@@ -133,7 +132,7 @@ class TestSet:
 
         # When/Then: setting a key with an invalid type (e.g., dict) should raise InvalidConfigurationValue
         try:
-            config_obj.set("invalid.key", {"not": "allowed"}) # type: ignore
+            config_obj.set("invalid.key", {"not": "allowed"})  # type: ignore
             assert False, "Expected InvalidConfigurationValue"
         except InvalidConfigurationValue as e:
             assert_that(str(e)).contains("Value for invalid.key")
@@ -257,10 +256,11 @@ class TestFind:
 
         # When/Then: invoking find with a non-callable should raise TypeError
         try:
-            list(config_obj.find("not a callable")) # type: ignore
+            list(config_obj.find("not a callable"))  # type: ignore
             assert False, "Expected TypeError"
         except TypeError as e:
             assert_that(str(e)).contains("callback must be a callable function")
+
 
 class TestDecodeValue:
     """Tests for validating the decode_value function.

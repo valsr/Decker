@@ -1,4 +1,5 @@
 """Linux specific functions for the decker server."""
+
 import sys
 from io import TextIOWrapper
 
@@ -25,6 +26,7 @@ def lock_file(file: TextIOWrapper):
         The behavior may vary depending on the operating system.
     """
     fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
 
 def unlock_file(file: TextIOWrapper):
     """

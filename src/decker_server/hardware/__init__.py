@@ -22,9 +22,11 @@ def autoopen(func):
         finally:
             if close_device:
                 self.deck.close()
+
     return wrapper
 
-def make_id(text: str|None) -> str|None:
+
+def make_id(text: str | None) -> str | None:
     if not text:
         return None
 
@@ -41,6 +43,7 @@ def make_id(text: str|None) -> str|None:
         result = cipher[digest % base] + result
         digest //= base
     return result
+
 
 class Device:
     def __init__(self, deck: StreamDeck):
@@ -78,4 +81,5 @@ class Device:
             finally:
                 if close_device:
                     self.deck.close()
+
         return wrapper

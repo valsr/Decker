@@ -7,6 +7,7 @@ from decker_server.theme import highlight, secondary, warning
 
 LOG_LEVEL = logging.WARNING
 
+
 def log_level() -> int:
     """Get the current configured log level.
 
@@ -14,6 +15,7 @@ def log_level() -> int:
         int: The corresponding log level.
     """
     return LOG_LEVEL
+
 
 def is_debug() -> bool:
     """Check if the log level is set to debug.
@@ -23,6 +25,7 @@ def is_debug() -> bool:
     """
     return LOG_LEVEL == logging.DEBUG
 
+
 def is_info() -> bool:
     """Check if the log level is set to info.
 
@@ -31,6 +34,7 @@ def is_info() -> bool:
     """
     return LOG_LEVEL == logging.INFO
 
+
 def is_warning() -> bool:
     """Check if the log level is set to warning.
 
@@ -38,6 +42,7 @@ def is_warning() -> bool:
         bool: True if the log level is set to warning, False otherwise.
     """
     return LOG_LEVEL == logging.WARNING
+
 
 def configure(level: int = logging.INFO):
     """Configure global/default logger.

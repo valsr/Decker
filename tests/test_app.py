@@ -133,7 +133,9 @@ class TestMain:
         @patch("decker_server.app.InstanceManager")
         @patch("decker_server.logging.configure")
         @patch("argparse.ArgumentParser.parse_args")
-        def test_main_configures_logging_with_different_verbosity(self, mock_parse_args, mock_configure, mock_instance_manager):
+        def test_main_configures_logging_with_different_verbosity(
+            self, mock_parse_args, mock_configure, mock_instance_manager
+        ):
             # Tests if main configures logging with the correct verbosity level
 
             # Arrange
