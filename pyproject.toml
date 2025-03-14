@@ -40,11 +40,12 @@ run = { cmd = "python -m decker_server" }
 app = { cmd = "python -m decker_server" }
 test  = { cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker_server tests" }
 mypy  = { cmd  = "mypy ." }
-format = { cmd  = "isort . && black ." }
 black = { cmd  = "black ." }
+isort = { cmd  = "isort ." }
 pylint = { cmd  = "pylint src" }
 install-stubs = { cmd = "mypy --install-types"}
 stubgen = { cmd = "stubgen -o stubs" }
+format = ["isort", "black"]
 
 [tool.poe.tasks.setup]
 help = "Setup the project"
