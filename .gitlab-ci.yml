@@ -61,8 +61,8 @@ test:
 build:
   stage: build
   rules:
-    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
-      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: always
   script:
   - poetry build
 
