@@ -43,6 +43,10 @@ include:
 
 test:
   stage: test
+  only:
+  - merge_requests
+  - main
+  - release/*
   script:
   - pytest --junitxml=report.xml --cov-report xml:coverage.xml --cov=decker_server tests
   artifacts:
@@ -55,16 +59,17 @@ test:
 
 build:
   stage: build
-  only:
-  - merge_requests
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
   script:
   - poetry build
 
 publish:
   stage: build
-  only:
-  - main
-  - release/*
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+      when: always
   script:
   - echo -e "\e[32mBuilding project\e[0m"
   - poetry build
