@@ -1,0 +1,35 @@
+from _typeshed import Incomplete
+
+from .StreamDeck import ControlType as ControlType
+from .StreamDeck import StreamDeck as StreamDeck
+
+class StreamDeckNeo(StreamDeck):
+    KEY_COUNT: int
+    KEY_COLS: int
+    KEY_ROWS: int
+    TOUCH_KEY_COUNT: int
+    KEY_PIXEL_WIDTH: int
+    KEY_PIXEL_HEIGHT: int
+    KEY_IMAGE_FORMAT: str
+    KEY_FLIP: Incomplete
+    KEY_ROTATION: int
+    DECK_TYPE: str
+    DECK_VISUAL: bool
+    SCREEN_PIXEL_WIDTH: int
+    SCREEN_PIXEL_HEIGHT: int
+    SCREEN_IMAGE_FORMAT: str
+    SCREEN_FLIP: Incomplete
+    SCREEN_ROTATION: int
+    IMAGE_REPORT_LENGTH: int
+    IMAGE_REPORT_HEADER_LENGTH: int
+    IMAGE_REPORT_PAYLOAD_LENGTH: Incomplete
+    BLANK_KEY_IMAGE: Incomplete
+    BLANK_SCREEN_IMAGE: Incomplete
+    def reset(self) -> None: ...
+    def set_brightness(self, percent) -> None: ...
+    def get_serial_number(self): ...
+    def get_firmware_version(self): ...
+    def set_key_image(self, key, image) -> None: ...
+    def set_key_color(self, key, r, g, b) -> None: ...
+    def set_screen_image(self, image) -> None: ...
+    def set_touchscreen_image(self, image, x_pos: int = 0, y_pos: int = 0, width: int = 0, height: int = 0) -> None: ...

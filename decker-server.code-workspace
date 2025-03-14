@@ -1,0 +1,45 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"workbench.colorCustomizations": {
+			"activityBar.activeBackground": "#5900b3",
+			"activityBar.background": "#5900b3",
+			"activityBar.foreground": "#e7e7e7",
+			"activityBar.inactiveForeground": "#e7e7e799",
+			"activityBarBadge.background": "#000000",
+			"activityBarBadge.foreground": "#e7e7e7",
+			"commandCenter.border": "#e7e7e799",
+			"editorGroup.border": "#5900b3",
+			"panel.border": "#5900b3",
+			"sash.hoverBorder": "#5900b3",
+			"sideBar.border": "#5900b3",
+			"statusBar.background": "#400080",
+			"statusBar.border": "#400080",
+			"statusBar.debuggingBackground": "#408000",
+			"statusBar.debuggingBorder": "#408000",
+			"statusBar.debuggingForeground": "#e7e7e7",
+			"statusBar.foreground": "#e7e7e7",
+			"statusBarItem.hoverBackground": "#5900b3",
+			"statusBarItem.remoteBackground": "#400080",
+			"statusBarItem.remoteForeground": "#e7e7e7",
+			"tab.activeBorder": "#5900b3",
+			"titleBar.activeBackground": "#400080",
+			"titleBar.activeForeground": "#e7e7e7",
+			"titleBar.border": "#400080",
+			"titleBar.inactiveBackground": "#40008099",
+			"titleBar.inactiveForeground": "#e7e7e799"
+		},
+		"peacock.color": "#400080",
+		"python-envs.defaultEnvManager": "ms-python.python:venv",
+		"python-envs.pythonProjects": [],
+		"testing.coverageBarThresholds": {
+			"red": 0,
+			"yellow": 55,
+			"green": 75
+		}
+	}
+}
