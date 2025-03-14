@@ -9,7 +9,19 @@ import flatten_dict
 
 from decker_server.config.backend import BackendManager, TomlFileBackend
 
-ValueType = str | int | float | complex | list | set | frozenset | bool | bytes | bytearray | datetime.datetime
+ValueType = (
+    str
+    | int
+    | float
+    | complex
+    | list
+    | set  # pylint: disable=used-before-assignment
+    | frozenset
+    | bool
+    | bytes
+    | bytearray
+    | datetime.datetime
+)
 
 KEY_SEPARATOR = "."
 USER_CONFIG_FILE = "~/.decker"
@@ -290,7 +302,7 @@ def get(key: str) -> ValueType | None:
     return CONFIG.get(key)
 
 
-def set(key: str, value: ValueType) -> None:
+def set(key: str, value: ValueType) -> None:  # pylint: disable=redefined-builtin
     """
     Sets a configuration key with the provided value. If any parent key exists, a ConfigurationKeyExists
     exception is raised.

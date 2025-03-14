@@ -18,7 +18,8 @@ def create_parser() -> argparse.ArgumentParser:
     This function sets up the main parser with global options and configuration commands. It uses metadata
     from the package to populate program name and description.
 
-    Returns:"run", "app.py", parse.ArgumentParser: A fully configured argument parser ready to parse command-line arguments
+    Returns:
+        parse.ArgumentParser: A fully configured argument parser ready to parse command-line arguments
     """
     metadata = importlib.metadata.metadata("decker_server")
     parser = argparse.ArgumentParser(

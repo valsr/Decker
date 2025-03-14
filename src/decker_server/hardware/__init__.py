@@ -1,3 +1,5 @@
+"""Module interfacing with the StreamDeck hardware."""
+
 from __future__ import annotations
 
 import xxhash
@@ -6,6 +8,14 @@ from StreamDeck.Devices.StreamDeck import StreamDeck
 
 
 def list_devices() -> list[Device]:
+    """
+    Enumerate and return a list of all available hardware devices.
+    This function uses the DeviceManager to discover connected devices and wraps each result in a Device object.
+
+    Returns:
+        list[Device]: A list of Device objects representing all available hardware devices.
+    """
+
     return [Device(x) for x in DeviceManager().enumerate()]
 
 
@@ -27,6 +37,19 @@ def autoopen(func):
 
 
 def make_id(text: str | None) -> str | None:
+    """
+    Generates a unique identifier from the given text using xxhash and custom base60 encoding.
+
+    This function creates a deterministic ID by hashing the input text with xxhash.xxh32
+    and converting the resulting integer digest into a custom base60 encoding that avoids
+    look-alike characters (such as 'O' vs '0', 'l' vs '1', etc.).
+
+    Args:
+        text (str | None): The input text to generate an ID from.
+
+    Returns:
+        str | None: A unique string ID derived from the input text, or None if the input is empty.
+    """
     if not text:
         return None
 
@@ -46,10 +69,27 @@ def make_id(text: str | None) -> str | None:
 
 
 class Device:
+    """
+    This class provides a convenient interface for interacting with StreamDeck devices by automatically
+    handling the opening and closing of the device connection when necessary.
+    """
+
     def __init__(self, deck: StreamDeck):
+        """
+        Initialize a hardware handler with a StreamDeck.
+
+        Args:
+            deck (StreamDeck): The StreamDeck device to control.
+        """
         self.deck = deck
 
     def get_id(self) -> str | None:
+        """
+        Generate a unique ID for this hardware device.
+
+        Returns:
+            str | None: A unique identifier string for the device, or None unable to generate an ID.
+        """
         return make_id(self.get_serial_number())
 
     def __getattr__(self, name):

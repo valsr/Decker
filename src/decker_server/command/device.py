@@ -1,8 +1,9 @@
+"""Command to handle device related operations."""
+
 import logging
 
 from decker_server import common, hardware
 from decker_server import logging as log
-from decker_server import theme
 
 
 def list_devices():

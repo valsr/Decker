@@ -53,7 +53,7 @@ def configure(level: int = logging.INFO):
     Returns:
 
     """
-    global LOG_LEVEL
+    global LOG_LEVEL  # pylint: disable=global-statement
     LOG_LEVEL = level
 
     logger = logging.getLogger()
@@ -81,7 +81,7 @@ def configure(level: int = logging.INFO):
 class PerformanceLogger:
     """Performance logger - logs the time taken to execute the block of code it wraps."""
 
-    def __init__(self, description: str, details: str | None = None, log_level: int = logging.DEBUG):
+    def __init__(self, description: str, details: str | None = None, level: int = logging.DEBUG):
         """Initialize the performance logger.
 
         Args:
@@ -93,7 +93,7 @@ class PerformanceLogger:
         self.override_threshold = 10000
         self.warn_threshold = 1000
         self.enabled = True
-        self.log_level = log_level
+        self.log_level = level
 
     def __enter__(self):
         """Start the timer."""
