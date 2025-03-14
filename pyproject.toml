@@ -63,12 +63,14 @@ show_error_codes = true
 check_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = false
-mypy_path = "stubs"
-exclude = ["stubs/"]
 
 [[tool.mypy.overrides]]
 module = ["decker_server.*"]
 follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+module = ["StreamDeck.*"]
+disable_error_code = ["name-defined"]
 
 [tool.pytest]
 pythonpath = "tests"
