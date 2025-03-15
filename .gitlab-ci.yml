@@ -60,9 +60,9 @@ sast:
   stage: sast
   rules:
   - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    when: always
+    when: on_success
   - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
-    when: always
+    when: on_success
 include:
 - template: Security/SAST.gitlab-ci.yml
 
@@ -70,13 +70,13 @@ test:
   stage: test
   rules:
   - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    when: always
+    when: on_success
   - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
-    when: always
+    when: on_success
   script:
   - pytest --junitxml=report.xml --cov-report xml:coverage.xml --cov=decker_server tests
   artifacts:
-    when: always
+    when: on_success
     reports:
       junit: report.xml
       coverage_report:
@@ -87,7 +87,7 @@ build:
   stage: build
   rules:
   - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    when: always
+    when: on_success
   script:
   - poetry build
 
@@ -95,7 +95,7 @@ publish:
   stage: build
   rules:
   - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
-    when: always
+    when: on_success
   script:
   - echo -e "\e[32mBuilding project\e[0m"
   - poetry build
