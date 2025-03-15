@@ -1,52 +1,83 @@
 stages:
 - lint
-- sast
 - test
 - build
 
-before_script:
-  - pip install poetry poethepoet
-  - poetry install
-  - source `poetry env info --path`/bin/activate
-
 default:
   image: python:3.11
-
-# You can override the included template(s) by including variable overrides
-# SAST customization: https://docs.gitlab.com/ee/user/application_security/sast/#customizing-the-sast-settings
-# Secret Detection customization: https://docs.gitlab.com/ee/user/application_security/secret_detection/pipeline/#customization
-# Dependency Scanning customization: https://docs.gitlab.com/ee/user/application_security/dependency_scanning/#customizing-the-dependency-scanning-settings
-# Container Scanning customization: https://docs.gitlab.com/ee/user/application_security/container_scanning/#customizing-the-container-scanning-settings
-# Note that environment variables can be set in several places
-# See https://docs.gitlab.com/ee/ci/variables/#cicd-variable-precedence
+  before_script:
+    - apt-get update
+    - pip install poetry
+    - poetry install
+    - source `poetry env info --path`/bin/activate
 
 format:
   stage: lint
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: always
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: always
   script:
   - black --check .
   - isort --check .
 
 pylint:
   stage: lint
+  before_script:
+    - apt-get update && apt-get install -y enchant-2
+    - pip install poetry
+    - poetry install
+    - source `poetry env info --path`/bin/activate
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: always
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: always
   script:
   - pylint .
 
 mypy:
   stage: lint
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: always
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: always
   script:
   - mypy .
 
-sast:
-  stage: sast
-include:
-- template: Security/SAST.gitlab-ci.yml
+semgrep-sast:
+  stage: test
+  before_script:
+    - echo "Secret detection"
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: on_success
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: on_success
+
+secret_detection:
+  stage: test
+  before_script:
+    - echo "Secret detection"
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: on_success
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: on_success
 
 test:
   stage: test
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: on_success
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: on_success
   script:
   - pytest --junitxml=report.xml --cov-report xml:coverage.xml --cov=decker_server tests
   artifacts:
-    when: always
+    when: on_success
     reports:
       junit: report.xml
       coverage_report:
@@ -55,19 +86,28 @@ test:
 
 build:
   stage: build
-  only:
-  - merge_requests
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: on_success
   script:
   - poetry build
 
 publish:
   stage: build
-  only:
-  - main
-  - release/*
+  rules:
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: on_success
   script:
   - echo -e "\e[32mBuilding project\e[0m"
   - poetry build
   - echo "\e[32mPublishing project\e[0m"
   - poetry config repositories.gitlab https://gitlab.com/api/v4/projects/67591431/packages/pypi
   - poetry publish --repository gitlab -u valsr -p CI_JOB_TOKEN
+
+# SAST customization: https://docs.gitlab.com/ee/user/application_security/sast/#customizing-the-sast-settings
+# Secret Detection customization: https://docs.gitlab.com/ee/user/application_security/secret_detection/pipeline/#customization
+# Dependency Scanning customization: https://docs.gitlab.com/ee/user/application_security/dependency_scanning/#customizing-the-dependency-scanning-settings
+include:
+- template: Jobs/SAST.gitlab-ci.yml
+- template: Jobs/Secret-Detection.gitlab-ci.yml
+- template: Jobs/Dependency-Scanning.gitlab-ci.yml

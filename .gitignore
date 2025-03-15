@@ -56,7 +56,9 @@ report.xml
 # Editor directories and files
 .vscode/
 .idea/
+*.user
 *.user.*
 
 # Others
 /*.log
+tmp/
