@@ -60,3 +60,4 @@ report.xml
 
 # Others
 /*.log
+tmp/
