@@ -61,4 +61,4 @@ report.xml
 
 # Others
 /*.log
-tmp/
+/logs

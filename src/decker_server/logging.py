@@ -1,6 +1,7 @@
 """Logging configuration and helper utilities."""
 
 import logging
+import os
 import time
 
 from decker_server.theme import highlight, secondary, warning
@@ -44,11 +45,17 @@ def is_warning() -> bool:
     return LOG_LEVEL == logging.WARNING
 
 
-def configure(level: int = logging.INFO):
+def configure(
+    level: int = logging.INFO,
+    log_dir: str = "",
+    server_id: str | None = None,
+):
     """Configure global/default logger.
 
     Args:
         level(int): Log level. Defaults to logging.WARNING.
+        server_id(str): The server ID (or None for the main process) to use in the log file name. Defaults to None.
+        log_dir(str): The directory to store log files. Defaults to "".
 
     Returns:
 
@@ -67,12 +74,13 @@ def configure(level: int = logging.INFO):
     logger.addHandler(handler)
     logger.setLevel(LOG_LEVEL)
 
-    error_handler = logging.FileHandler("decker-server.log")
+    log_name = "decker-server" if server_id is None else f"decker-server-{server_id}"
+    error_handler = logging.FileHandler(os.path.join(log_dir, f"{log_name}.log"))
     error_handler.setLevel(LOG_LEVEL)
     error_handler.setFormatter(formatter)
     logger.addHandler(error_handler)
 
-    error_handler = logging.FileHandler("decker-server.error.log")
+    error_handler = logging.FileHandler(os.path.join(log_dir, f"{log_name}.error.log"))
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(formatter)
     logger.addHandler(error_handler)

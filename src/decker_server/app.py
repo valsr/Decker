@@ -3,6 +3,7 @@
 import argparse  # Added import
 import importlib.metadata
 import logging
+import os
 
 import decker_server.command.config as config_command
 import decker_server.command.device as device_command
@@ -135,8 +136,9 @@ def main() -> None:
     else:
         level = logging.WARNING
 
-    decker_server.logging.configure(level=level)
-
+    log_directory = decker_server.config.get("logging.directory") or os.getcwd()
+    decker_server.logging.configure(level=level, directory=str(log_directory))
+    logging.debug("Logging directory: %s", log_directory)
     logging.debug(args)
 
     # Handle commands
