@@ -1,6 +1,5 @@
 stages:
 - lint
-- sast
 - test
 - build
 
@@ -11,14 +10,6 @@ default:
     - pip install poetry
     - poetry install
     - source `poetry env info --path`/bin/activate
-
-# You can override the included template(s) by including variable overrides
-# SAST customization: https://docs.gitlab.com/ee/user/application_security/sast/#customizing-the-sast-settings
-# Secret Detection customization: https://docs.gitlab.com/ee/user/application_security/secret_detection/pipeline/#customization
-# Dependency Scanning customization: https://docs.gitlab.com/ee/user/application_security/dependency_scanning/#customizing-the-dependency-scanning-settings
-# Container Scanning customization: https://docs.gitlab.com/ee/user/application_security/container_scanning/#customizing-the-container-scanning-settings
-# Note that environment variables can be set in several places
-# See https://docs.gitlab.com/ee/ci/variables/#cicd-variable-precedence
 
 format:
   stage: lint
@@ -56,15 +47,25 @@ mypy:
   script:
   - mypy .
 
-sast:
-  stage: sast
+semgrep-sast:
+  stage: test
+  before_script:
+    - echo "Secret detection"
   rules:
   - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     when: on_success
   - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
     when: on_success
-include:
-- template: Security/SAST.gitlab-ci.yml
+
+secret_detection:
+  stage: test
+  before_script:
+    - echo "Secret detection"
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    when: on_success
+  - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
+    when: on_success
 
 test:
   stage: test
@@ -102,3 +103,11 @@ publish:
   - echo "\e[32mPublishing project\e[0m"
   - poetry config repositories.gitlab https://gitlab.com/api/v4/projects/67591431/packages/pypi
   - poetry publish --repository gitlab -u valsr -p CI_JOB_TOKEN
+
+# SAST customization: https://docs.gitlab.com/ee/user/application_security/sast/#customizing-the-sast-settings
+# Secret Detection customization: https://docs.gitlab.com/ee/user/application_security/secret_detection/pipeline/#customization
+# Dependency Scanning customization: https://docs.gitlab.com/ee/user/application_security/dependency_scanning/#customizing-the-dependency-scanning-settings
+include:
+- template: Jobs/SAST.gitlab-ci.yml
+- template: Jobs/Secret-Detection.gitlab-ci.yml
+- template: Jobs/Dependency-Scanning.gitlab-ci.yml
