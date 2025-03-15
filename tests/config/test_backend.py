@@ -1,8 +1,9 @@
 import os
 import tempfile
+from unittest.mock import patch
 
 import toml
-from assertpy import assert_that
+from assertpy import assert_that, fail
 
 from decker_server.config.backend import BackendManager, TomlFileBackend
 
@@ -20,24 +21,21 @@ class TestTomlBackendLoad:
         except FileNotFoundError as e:
             assert_that(str(e)).contains(temp_path)
 
-    def test_load_not_readable(self):
+    @patch("os.path.exists")
+    @patch("os.access")
+    def test_load_not_readable(self, mock_os_access, mock_path_exists):
         # Arrange
-        with tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="UTF-8") as tmp_file:
-            tmp_file.write("server = { port = 8080 }")
-            temp_path = tmp_file.name
-        # Remove read permission
-        os.chmod(temp_path, 0o000)
+        temp_path = "config.toml"
+        mock_path_exists.return_value = True
+        mock_os_access.return_value = False
         backend = TomlFileBackend(temp_path)
 
         # Act & Assert
         try:
             backend.load()
-            assert False, "Expected PermissionError"
+            fail("Expected PermissionError")
         except PermissionError as e:
             assert_that(str(e)).contains(temp_path)
-        finally:
-            os.chmod(temp_path, 0o644)
-            os.remove(temp_path)
 
     def test_load_without_server_key(self):
         # Arrange
@@ -75,23 +73,32 @@ class TestTomlBackendLoad:
 
 
 class TestTomlBackendSave:
-    def test_save_not_readable(self):
+    def test_save_not_readable(self, monkeypatch):
         # Arrange
         with tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="UTF-8") as tmp_file:
             tmp_file.write("server = { port = 8080 }")
             temp_path = tmp_file.name
-        os.chmod(temp_path, 0o000)
+
+        # Mock the open function to raise PermissionError for this specific file
+        original_open = open
+
+        def mock_open(path, *args, **kwargs):
+            if path == temp_path and ("w" in kwargs.get("mode", "") or "w" in args[0] if args else False):
+                raise PermissionError(f"Permission denied: '{temp_path}'")
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", mock_open)
+
         backend = TomlFileBackend(temp_path)
         settings = {"new": {"key": "value"}}
 
         # Act & Assert
         try:
             backend.save(settings)
-            assert False, "Expected PermissionError"
+            fail("Expected PermissionError")
         except PermissionError as e:
             assert_that(str(e)).contains(temp_path)
         finally:
-            os.chmod(temp_path, 0o644)
             os.remove(temp_path)
 
     def test_save_success(self, monkeypatch):
