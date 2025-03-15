@@ -1,41 +1,40 @@
 """Server module."""
 
+import rpyc
 import logging
 import threading
 import time
 
+class Server(rpyc.Service):
+    """Main server thread implementing an RPC server that self-terminates after 15 seconds."""
 
-class Server(threading.Thread):
-    """Main server thread."""
+    def on_connect(self, conn):
+        """Called when a connection is established."""
+        logging.info("Connection established")
 
-    def __init__(self) -> None:
-        """Initializes PingThread.
+    def on_disconnect(self, conn):
+        """Called when a connection is closed."""
+        logging.info("Connection closed")
 
-        Args:
-            stop_event (threading.Event): Event used to signal thread termination.
+    def exposed_get_answer(self):
+        """Return the answer to the ultimate question of life, the universe, and everything."""
+        return 42
 
-        See:
-            - threading.Event
-        """
-        super().__init__()
-        self.stop_event = threading.Event()
-        self.daemon = True
+    def exposed_get_question(self):
+        """Return the ultimate question of life, the universe, and everything."""
+        return "What do you get when you multiply six by nine?"
 
-    def stop(self) -> None:
-        """Stops the thread.
+    def start(self):
+        """Start the server."""
+        self._thread = threading.Thread(target=self._start_server)
+        self._thread.start()
 
-        See:
-            - threading.Event.set
-        """
-        self.stop_event.set()
+    def stop(self):
+        """Stop the server."""
+        self._thread.join(timeout=15)
 
-    def run(self) -> None:
-        """Pings every second until the stop event is active.
-
-        See:
-            - time.sleep
-        """
-        while not self.stop_event.is_set():
-            logging.info("ping")
-            time.sleep(1)
-        logging.info("Stopping server.")
+    def _start_server(self):
+        """Start the server in a new thread."""
+        from rpyc.utils.server import ThreadedServer
+        server = ThreadedServer(self, port=18861)
+        server.start()

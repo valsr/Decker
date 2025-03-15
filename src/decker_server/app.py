@@ -6,6 +6,7 @@ import logging
 
 import decker_server.command.config as config_command
 import decker_server.command.device as device_command
+import decker_server.command.server as server_command
 import decker_server.config
 import decker_server.logging
 from decker_server.server.instance_manager import InstanceManager
@@ -81,6 +82,15 @@ def create_parser() -> argparse.ArgumentParser:
     # Add list action to devices command
     devices_subparsers.add_parser("list", help="List all devices")
 
+    # Add server command
+    server_parser = subparsers.add_parser("server", help="Server commands")
+    server_subparsers = server_parser.add_subparsers(dest="action", help="Server actions")
+
+    # Add start action to server command
+    start_parser = server_subparsers.add_parser("start", help="Start the server")
+    # TODO or null to connect to the first available device
+    start_parser.add_argument("device_id", help="The device ID connect to")
+
     return parser
 
 
@@ -102,6 +112,7 @@ def handle_commands(command, args: argparse.Namespace):
         "config.remove": lambda args: config_command.remove_config(args.key),
         "config.set": lambda args: config_command.set_config(args.key, " ".join(args.value)),
         "device.list": lambda _: device_command.list_devices(),
+        "server.start": lambda args: server_command.start_server(args.device_id),
     }
 
     if command not in commands:
