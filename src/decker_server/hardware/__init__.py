@@ -82,6 +82,7 @@ class Device:
             deck (StreamDeck): The StreamDeck device to control.
         """
         self.deck = deck
+        self._id : str|None = None
 
     def get_id(self) -> str | None:
         """
@@ -90,7 +91,9 @@ class Device:
         Returns:
             str | None: A unique identifier string for the device, or None unable to generate an ID.
         """
-        return make_id(self.get_serial_number())
+        if not self._id:
+            self._id = make_id(self.get_serial_number())
+        return self._id
 
     def __getattr__(self, name):
         """
