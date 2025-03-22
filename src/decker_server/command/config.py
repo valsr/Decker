@@ -31,7 +31,7 @@ def list_config(keywords=None):
     logging.debug("Found %d configuration items", len(config_items))
     config_items.sort(key=lambda x: x[0])
 
-    print("Application Configuration:")
+    print(f"Application Configuration ({config.get_config_path()}):")
     for key, value in config_items:
         print(f"{key}: {config.decode_value(value)}")
 

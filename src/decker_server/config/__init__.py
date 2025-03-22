@@ -378,3 +378,11 @@ def decode_value(value: ValueType | None):
     if isinstance(value, bytes):
         return value.decode("utf-8")
     return str(value)
+
+def get_config_path() -> str:
+    """Get the path to the user configuration file.
+
+    Returns:
+        str: The path to the user configuration file.
+    """
+    return user_config_path
