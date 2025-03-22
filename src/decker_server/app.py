@@ -92,6 +92,9 @@ def create_parser() -> argparse.ArgumentParser:
     # TODO or null to connect to the first available device
     start_parser.add_argument("device_id", help="The device ID connect to")
 
+    status_parser = server_subparsers.add_parser("status", help="Check the status of the server")
+    status_parser.add_argument("device_id", nargs="*", help="The device ID to check the server status for")
+
     return parser
 
 
@@ -114,6 +117,9 @@ def handle_commands(command, args: argparse.Namespace):
         "config.set": lambda args: config_command.set_config(args.key, " ".join(args.value)),
         "device.list": lambda _: device_command.list_devices(),
         "server.start": lambda args: server_command.start_server(args.device_id),
+        "server.status": lambda args: (
+            server_command.server_status(args.device_id) if args.device_id else server_command.all_servers_status()
+        ),
     }
 
     if command not in commands:

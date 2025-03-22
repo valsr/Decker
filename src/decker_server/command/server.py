@@ -31,3 +31,13 @@ def start_server(device_id: str):
     )
     logging.debug("Child PID: %s", child.pid)
     logging.info("Server started for device: %s", device_id)
+
+
+def server_status(device_id: list[str]):
+    """Check the status of the server for the device(s)."""
+    logging.info("Checking server status for device(s): %s", ",".join(device_id))
+
+
+def all_servers_status():
+    """Check the status of all running servers."""
+    logging.info("Checking all running servers status")
