@@ -379,6 +379,7 @@ def decode_value(value: ValueType | None):
         return value.decode("utf-8")
     return str(value)
 
+
 def get_config_path() -> str:
     """Get the path to the user configuration file.
 
