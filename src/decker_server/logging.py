@@ -45,6 +45,21 @@ def is_warning() -> bool:
     return LOG_LEVEL == logging.WARNING
 
 
+class NamespaceFilter(logging.Filter):
+    """Filter to add the full namespace to the log record."""
+
+    def __init__(self):
+        super().__init__()
+        self.base_path = os.path.dirname(os.path.abspath(__file__))
+
+    def filter(self, record: logging.LogRecord):
+        if record.pathname.startswith(self.base_path):
+            record.namespace = record.pathname[len(self.base_path) + 1 : -3].replace(os.path.sep, ".")
+        else:
+            record.namespace = "Unknown module ({record.pathname})"
+        return True
+
+
 def configure(
     level: int = logging.INFO,
     directory: str = "",
@@ -69,17 +84,19 @@ def configure(
         logger.removeHandler(handler)
 
     handler = logging.StreamHandler()
+    handler.addFilter(NamespaceFilter())
     cli_formatter = logging.Formatter("%(levelname)s: %(message)s")
     handler.setFormatter(cli_formatter)
     logger.addHandler(handler)
     logger.setLevel(LOG_LEVEL)
 
-    file_formatter = logging.Formatter("%(asctime)s %(levelname)-8s [%(module)s:%(lineno)d] %(message)s")
+    file_formatter = logging.Formatter("%(asctime)s %(levelname)-8s [%(namespace)s:%(lineno)d] %(message)s")
     log_name = "decker-server" if server_id is None else f"decker-server-{server_id}"
     error_handler = logging.FileHandler(os.path.join(directory, f"{log_name}.log"))
     error_handler.setLevel(LOG_LEVEL)
     error_handler.setFormatter(file_formatter)
     logger.addHandler(error_handler)
+
 
 class PerformanceLogger:
     """Performance logger - logs the time taken to execute the block of code it wraps."""
