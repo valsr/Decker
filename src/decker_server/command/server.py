@@ -28,8 +28,6 @@ def start_server(device_id: str):
         [python_executable, "-m", "decker_server.server", device_id],
         start_new_session=True,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
     )
     logging.debug("Child PID: %s", child.pid)
     logging.info("Server started for device: %s", device_id)
