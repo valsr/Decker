@@ -69,22 +69,17 @@ def configure(
         logger.removeHandler(handler)
 
     handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s %(name)s %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s")
-    handler.setFormatter(formatter)
+    cli_formatter = logging.Formatter("%(levelname)s: %(message)s")
+    handler.setFormatter(cli_formatter)
     logger.addHandler(handler)
     logger.setLevel(LOG_LEVEL)
 
+    file_formatter = logging.Formatter("%(asctime)s %(levelname)-8s [%(module)s:%(lineno)d] %(message)s")
     log_name = "decker-server" if server_id is None else f"decker-server-{server_id}"
     error_handler = logging.FileHandler(os.path.join(directory, f"{log_name}.log"))
     error_handler.setLevel(LOG_LEVEL)
-    error_handler.setFormatter(formatter)
+    error_handler.setFormatter(file_formatter)
     logger.addHandler(error_handler)
-
-    error_handler = logging.FileHandler(os.path.join(directory, f"{log_name}.error.log"))
-    error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(formatter)
-    logger.addHandler(error_handler)
-
 
 class PerformanceLogger:
     """Performance logger - logs the time taken to execute the block of code it wraps."""
