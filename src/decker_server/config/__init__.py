@@ -47,8 +47,6 @@ class Config:
         Load configuration data from the backend.
         """
         data = self._backend.load()
-        # convert all keys to lowercase
-        data = {k.lower(): v for k, v in data.items()}
         self._data = flatten_dict.flatten(data, reducer="dot")
 
     def save(self):
@@ -67,7 +65,7 @@ class Config:
         Returns:
             bool: True if the key is found in the configuration data, otherwise False.
         """
-        return key.lower() in self._data
+        return key in self._data
 
     def get(self, key: str) -> ValueType | None:
         """
@@ -79,7 +77,7 @@ class Config:
         Returns:
             Optional[ValueType]: The value associated with the key if it exists; otherwise, None.
         """
-        return self._data.get(key.lower(), None)
+        return self._data.get(key, None)
 
     def set(self, key: str, value: ValueType) -> None:
         """
@@ -87,7 +85,7 @@ class Config:
         exception is raised.
 
         Parameters:
-            key (str): The configuration key to set. It will be normalized to lowercase.
+            key (str): The configuration key to set.
             value (ValueType): The value to associate with the key. It must be one of the accepted types.
 
         Raises:
@@ -99,8 +97,6 @@ class Config:
                 f"Value for {key} is not a valid type must be one of "
                 "{str, int, float, list, complex, set, bool, bytes, bytearray, datetime.datetime}"
             )
-
-        key = key.lower()  # convert key to lowercase
 
         # if key or any of the parent keys are in the dictionary, don't add
         paths = key.split(".")
@@ -132,7 +128,6 @@ class Config:
             Modifies the internal configuration data by deleting matching keys.
             Triggers a save operation if any key has been removed.
         """
-        key = key.lower()
         keys = [key for key, _ in self.list(key)]
         remove = False
 
@@ -159,7 +154,6 @@ class Config:
         if not key:
             return list(self._data.items())
 
-        key = key.lower()  # convert key to lowercase
         return [(k, v) for k, v in self._data.items() if k == key or k.startswith(key + KEY_SEPARATOR)]
 
     def __getitem__(self, key: str) -> ValueType:
@@ -309,7 +303,7 @@ def set(key: str, value: ValueType) -> None:  # pylint: disable=redefined-builti
     exception is raised.
 
     Parameters:
-        key (str): The configuration key to set. It will be normalized to lowercase.
+        key (str): The configuration key to set
         value (ValueType): The value to associate with the key. It must be one of the accepted types.
 
     Raises:
