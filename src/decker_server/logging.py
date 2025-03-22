@@ -60,9 +60,21 @@ class NamespaceFilter(logging.Filter):
         return True
 
 
+class SeverFilter(logging.Filter):
+    """Filter to add the server id to the log record."""
+
+    def __init__(self, server_id: str | None):
+        super().__init__()
+        self.server_id = server_id
+
+    def filter(self, record: logging.LogRecord):
+        record.server_id = self.server_id
+        return True
+
+
 def configure(
     level: int = logging.INFO,
-    directory: str = "",
+    log_directory: str = "",
     server_id: str | None = None,
 ):
     """Configure global/default logger.
@@ -79,23 +91,34 @@ def configure(
     LOG_LEVEL = level
 
     logger = logging.getLogger()
+    logger.setLevel(LOG_LEVEL)
 
     for handler in logger.handlers:
         logger.removeHandler(handler)
 
+    # configure logging to console
     handler = logging.StreamHandler()
     handler.addFilter(NamespaceFilter())
-    cli_formatter = logging.Formatter("%(levelname)s: %(message)s")
+    handler.addFilter(SeverFilter(server_id))
+    cli_format = "%(levelname)s"
+    if server_id:
+        cli_format += " (%(server_id)s)"
+    cli_format += ": %(message)s"
+
+    cli_formatter = logging.Formatter(cli_format)
     handler.setFormatter(cli_formatter)
     logger.addHandler(handler)
-    logger.setLevel(LOG_LEVEL)
 
-    file_formatter = logging.Formatter("%(asctime)s %(levelname)-8s [%(namespace)s:%(lineno)d] %(message)s")
+    # configure logging to file
+    file_format = "%(asctime)s %(levelname)-8s "
+    if server_id:
+        file_format += "(%(server_id)s)"
+    file_format += "[%(namespace)s:%(lineno)d] %(message)s"
+    file_formatter = logging.Formatter(file_format)
     log_name = "decker-server" if server_id is None else f"decker-server-{server_id}"
-    error_handler = logging.FileHandler(os.path.join(directory, f"{log_name}.log"))
-    error_handler.setLevel(LOG_LEVEL)
-    error_handler.setFormatter(file_formatter)
-    logger.addHandler(error_handler)
+    file_handler = logging.FileHandler(os.path.join(log_directory, f"{log_name}.log"))
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
 
 
 class PerformanceLogger:
