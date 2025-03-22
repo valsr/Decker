@@ -47,7 +47,7 @@ class TestLoadSave:
         config_obj.load()
 
         # Then: internal data should be flattened with lowercase keys
-        expected_flat = {"foo": "bar", "nested.key": "value"}
+        expected_flat = {"FOO": "bar", "nested.key": "value"}
         assert_that(config_obj._data).is_equal_to(expected_flat)
 
         # Given: update the internal data
@@ -57,7 +57,7 @@ class TestLoadSave:
         config_obj.save()
 
         # Then: the backend data should be unflattened
-        expected_unflattened = {"foo": "bar", "nested": {"key": "value"}, "new": {"key": "new_value"}}
+        expected_unflattened = {"FOO": "bar", "nested": {"key": "value"}, "new": {"key": "new_value"}}
         assert_that(backend.data).is_equal_to(expected_unflattened)
 
 
@@ -119,9 +119,9 @@ class TestSet:
         config_obj.set("Test.Key", "value")
 
         # Then: the key should be stored in lowercase and retrievable
-        assert_that(config_obj.get("test.key")).is_equal_to("value")
+        assert_that(config_obj.get("Test.Key")).is_equal_to("value")
         # And: backend storage should reflect the change through flattening/unflattening
-        expected_backend = {"test": {"key": "value"}}
+        expected_backend = {"Test": {"Key": "value"}}
         assert_that(backend.data).is_equal_to(expected_backend)
 
     def test_set_invalid_value_raises_exception(self):

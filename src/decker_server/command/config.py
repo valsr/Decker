@@ -19,7 +19,7 @@ def list_config(keywords=None):
 
     def filter_by_keywords(key: str, _) -> bool:
         if keywords:
-            return all(keyword in key for keyword in keywords)
+            return all(keyword in key.lower() for keyword in keywords)
         return True
 
     config_items = list(config.find(filter_by_keywords))
