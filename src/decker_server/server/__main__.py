@@ -56,7 +56,7 @@ def _get_config_log_level(device_id: str, verbose_level: int) -> int:
 def configure_logging(device: str, verbose_level: int):
     level = _get_config_log_level(device, verbose_level)
     directory = str(decker_server.config.get("logging.directory") or os.getcwd())
-    decker_server.logging.configure(level=level, directory=directory, server_id=device)
+    decker_server.logging.configure(level=level, log_directory=directory, server_id=device)
     logging.debug("Configured logging with level %s and directory %s", logging.getLevelName(level), directory)
 
 

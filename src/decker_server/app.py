@@ -137,7 +137,7 @@ def main() -> None:
         level = logging.WARNING
 
     log_directory = decker_server.config.get("logging.directory") or os.getcwd()
-    decker_server.logging.configure(level=level, directory=str(log_directory))
+    decker_server.logging.configure(level=level, log_directory=str(log_directory))
     logging.debug("Logging directory: %s", log_directory)
     logging.debug(args)
 
