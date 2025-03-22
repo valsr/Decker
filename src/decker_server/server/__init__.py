@@ -1,9 +1,11 @@
 """Server module."""
 
-import rpyc
 import logging
 import threading
 import time
+
+import rpyc
+
 
 class Server(rpyc.Service):
     """Main server thread implementing an RPC server that self-terminates after 15 seconds."""
@@ -36,5 +38,6 @@ class Server(rpyc.Service):
     def _start_server(self):
         """Start the server in a new thread."""
         from rpyc.utils.server import ThreadedServer
+
         server = ThreadedServer(self, port=18861)
         server.start()

@@ -47,15 +47,15 @@ def is_warning() -> bool:
 
 def configure(
     level: int = logging.INFO,
-    log_dir: str = "",
+    directory: str = "",
     server_id: str | None = None,
 ):
     """Configure global/default logger.
 
     Args:
         level(int): Log level. Defaults to logging.WARNING.
+        directory(str): The directory to store log files. Defaults to "".
         server_id(str): The server ID (or None for the main process) to use in the log file name. Defaults to None.
-        log_dir(str): The directory to store log files. Defaults to "".
 
     Returns:
 
@@ -75,12 +75,12 @@ def configure(
     logger.setLevel(LOG_LEVEL)
 
     log_name = "decker-server" if server_id is None else f"decker-server-{server_id}"
-    error_handler = logging.FileHandler(os.path.join(log_dir, f"{log_name}.log"))
+    error_handler = logging.FileHandler(os.path.join(directory, f"{log_name}.log"))
     error_handler.setLevel(LOG_LEVEL)
     error_handler.setFormatter(formatter)
     logger.addHandler(error_handler)
 
-    error_handler = logging.FileHandler(os.path.join(log_dir, f"{log_name}.error.log"))
+    error_handler = logging.FileHandler(os.path.join(directory, f"{log_name}.error.log"))
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(formatter)
     logger.addHandler(error_handler)

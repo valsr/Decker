@@ -6,8 +6,9 @@ class DeckerError(Exception):
         self.message = message
         super().__init__(self.message)
 
+
 class DeviceNotFoundError(DeckerError):
-    def __init__(self, device_id:str, available_devices: list[Device]|None):
+    def __init__(self, device_id: str, available_devices: list[Device] | None):
         self.device_id = device_id
         message = f"Device with id {device_id} not found."
         if available_devices:
