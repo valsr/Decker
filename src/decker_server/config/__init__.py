@@ -67,7 +67,7 @@ class Config:
         Returns:
             bool: True if the key is found in the configuration data, otherwise False.
         """
-        return key in self._data
+        return key.lower() in self._data
 
     def get(self, key: str) -> ValueType | None:
         """
@@ -79,7 +79,7 @@ class Config:
         Returns:
             Optional[ValueType]: The value associated with the key if it exists; otherwise, None.
         """
-        return self._data.get(key, None)
+        return self._data.get(key.lower(), None)
 
     def set(self, key: str, value: ValueType) -> None:
         """
@@ -132,6 +132,7 @@ class Config:
             Modifies the internal configuration data by deleting matching keys.
             Triggers a save operation if any key has been removed.
         """
+        key = key.lower()
         keys = [key for key, _ in self.list(key)]
         remove = False
 

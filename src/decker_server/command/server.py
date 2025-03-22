@@ -9,6 +9,7 @@ from time import sleep
 from decker_server import hardware
 from decker_server.error import DeviceNotFoundError
 
+
 def start_server(device_id: str):
     """Start server for device."""
     logging.info("Starting server for device: %s", device_id)
@@ -24,11 +25,11 @@ def start_server(device_id: str):
 
     # Start the server as a detached subprocess
     child = subprocess.Popen(
-        [python_executable, "-m", "decker_server.server"],
+        [python_executable, "-m", "decker_server.server", device_id],
         start_new_session=True,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stderr=subprocess.DEVNULL,
     )
     logging.debug("Child PID: %s", child.pid)
     logging.info("Server started for device: %s", device_id)

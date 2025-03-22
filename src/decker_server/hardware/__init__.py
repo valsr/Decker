@@ -82,7 +82,7 @@ class Device:
             deck (StreamDeck): The StreamDeck device to control.
         """
         self.deck = deck
-        self._id : str|None = None
+        self._id: str | None = None
 
     def get_id(self) -> str | None:
         """
