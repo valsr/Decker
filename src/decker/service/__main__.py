@@ -7,10 +7,10 @@ import signal
 import sys
 import time
 
-from decker_server import theme
-import decker_server.config
-import decker_server.logging
-from decker_server.service.service import ServiceManager
+from decker import theme
+import decker.config
+import decker.logging
+from decker.service.service import ServiceManager
 
 MANAGER: ServiceManager | None = None
 
@@ -39,8 +39,8 @@ def create_parser():
 def _get_config_log_level(device_id: str, verbose_level: int) -> int:
     level: int | None = None
 
-    if decker_server.config.has(f"server.{device_id}.logging.level"):
-        config_level = decker_server.config.get(f"server.{device_id}.logging.level")
+    if decker.config.has(f"server.{device_id}.logging.level"):
+        config_level = decker.config.get(f"server.{device_id}.logging.level")
         if config_level and isinstance(config_level, (str, int)):
             if isinstance(config_level, str):
                 mapping = logging.getLevelNamesMapping()
@@ -62,8 +62,8 @@ def _get_config_log_level(device_id: str, verbose_level: int) -> int:
 
 def configure_logging(device: str, verbose_level: int):
     level = _get_config_log_level(device, verbose_level)
-    directory = str(decker_server.config.get("logging.directory") or os.getcwd())
-    decker_server.logging.configure(level=level, log_directory=directory, server_id=device)
+    directory = str(decker.config.get("logging.directory") or os.getcwd())
+    decker.logging.configure(level=level, log_directory=directory, server_id=device)
     logging.debug("Configured logging with level %s and directory %s", logging.getLevelName(level), directory)
 
 

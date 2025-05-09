@@ -7,7 +7,7 @@ import tempfile
 from typing import Any
 import rpyc
 
-from decker_server import platform, theme
+from decker import platform, theme
 from enum import Enum
 
 FILE_LOCK = os.path.join(tempfile.gettempdir(), "decker_service.lock")

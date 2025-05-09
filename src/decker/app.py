@@ -5,12 +5,12 @@ import importlib.metadata
 import logging
 import os
 
-import decker_server.command.config as config_command
-import decker_server.command.device as device_command
-import decker_server.command.server as server_command
-import decker_server.config
-import decker_server.logging
-from decker_server.service.service import ServiceManager
+import decker.command.config as config_command
+import decker.command.device as device_command
+import decker.command.server as server_command
+import decker.config
+import decker.logging
+from decker.service.service import ServiceManager
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -23,7 +23,7 @@ def create_parser() -> argparse.ArgumentParser:
     Returns:
         parse.ArgumentParser: A fully configured argument parser ready to parse command-line arguments
     """
-    metadata = importlib.metadata.metadata("decker_server")
+    metadata = importlib.metadata.metadata("decker")
     parser = argparse.ArgumentParser(
         prog=metadata["Name"],
         description=metadata["Description"],
@@ -142,8 +142,8 @@ def main() -> None:
     else:
         level = logging.WARNING
 
-    log_directory = decker_server.config.get("logging.directory") or os.getcwd()
-    decker_server.logging.configure(level=level, log_directory=str(log_directory))
+    log_directory = decker.config.get("logging.directory") or os.getcwd()
+    decker.logging.configure(level=level, log_directory=str(log_directory))
     logging.debug("Logging directory: %s", log_directory)
     logging.debug(args)
 

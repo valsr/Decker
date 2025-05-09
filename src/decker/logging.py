@@ -4,7 +4,7 @@ import logging
 import os
 import time
 
-from decker_server.theme import highlight, secondary, warning
+from decker.theme import highlight, secondary, warning
 
 LOG_LEVEL = logging.WARNING
 

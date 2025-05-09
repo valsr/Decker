@@ -2,7 +2,7 @@
 
 import logging
 
-from decker_server import config, theme
+from decker import config, theme
 
 
 def list_config(keywords=None):

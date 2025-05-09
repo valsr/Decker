@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
 
-from decker_server.service.service import ServiceManager
+from decker.service.service import ServiceManager
 
 
 class TestInstanceManager:
@@ -17,7 +17,7 @@ class TestInstanceManager:
 
             # Assert
             assert_that(instance._lock_file).is_none()
-            assert_that(instance._lock_file_path).ends_with("decker_server.lock")
+            assert_that(instance._lock_file_path).ends_with("decker.lock")
             assert_that(instance.is_dev_mode).is_false()
             assert_that(instance.api).is_none()
 
@@ -31,8 +31,8 @@ class TestInstanceManager:
     class TestStartServer:
         """Tests for the InstanceManager's start_server method."""
 
-        @patch("decker_server.platform.lock_file", autospec=True)
-        @patch("decker_server.server.instance_manager.Server")
+        @patch("decker.platform.lock_file", autospec=True)
+        @patch("decker.server.instance_manager.Server")
         @patch("threading.Event")
         def test_start_server_with_lock(self, mock_event, mock_server, mock_lock_file):
             # Test server start behavior when lock is acquired.
@@ -51,9 +51,9 @@ class TestInstanceManager:
             assert_that(instance.api).is_not_none()
             mock_event_instance.wait.assert_called_once()
 
-        @patch("decker_server.server.instance_manager.Server")
-        @patch("decker_server.platform.lock_file", autospec=True)
-        @patch("decker_server.server.instance_manager.logging.error")
+        @patch("decker.server.instance_manager.Server")
+        @patch("decker.platform.lock_file", autospec=True)
+        @patch("decker.server.instance_manager.logging.error")
         @patch("threading.Event")
         def test_start_server_without_lock(self, mock_event, mock_log_error, mock_lock_file, mock_server):
             # Test server start behavior when lock acquisition fails.

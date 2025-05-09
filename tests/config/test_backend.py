@@ -5,7 +5,7 @@ from unittest.mock import patch
 import toml
 from assertpy import assert_that, fail
 
-from decker_server.config.backend import BackendManager, TomlFileBackend
+from decker.config.backend import BackendManager, TomlFileBackend
 
 
 class TestTomlBackendLoad:
