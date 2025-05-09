@@ -10,7 +10,7 @@ import decker_server.command.device as device_command
 import decker_server.command.server as server_command
 import decker_server.config
 import decker_server.logging
-from decker_server.server.instance_manager import InstanceManager
+from decker_server.service.service import ServiceManager
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -153,5 +153,5 @@ def main() -> None:
         handle_commands(command, args)
         return
 
-    instance_manager = InstanceManager(dev_mode=args.dev or False)
-    instance_manager.start_server()
+    instance_manager = ServiceManager()
+    instance_manager.start("3HHmZv")

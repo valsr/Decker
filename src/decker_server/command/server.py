@@ -6,8 +6,39 @@ import subprocess
 import sys
 from time import sleep
 
-from decker_server import hardware
+from rpyc.utils.registry import REGISTRY_PORT
+
+from decker_server import config, hardware
 from decker_server.error import DeviceNotFoundError
+
+
+def _start_registry_server():
+    """Start the registry server."""
+    # check if registry server is already running
+    hostname = "localhost"
+    port = REGISTRY_PORT
+
+    if config.has("registry.hostname"):
+        hostname = str(config.get("registry.hostname"))
+    if config.has("registry.port"):
+        port = config.get("registry.port")
+
+    logging.debug("Checking if registry server is already running on %s:%s", hostname, port)
+
+    logging.info("Starting registry server")
+
+    # Get the current Python executable
+    python_executable = sys.executable
+    logging.debug("Python executable: %s", python_executable)
+
+    # Start the server as a detached subprocess
+    child = subprocess.Popen(
+        [python_executable, "-m", "decker_server.registry.server"],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+    )
+    logging.debug("Child PID: %s", child.pid)
+    logging.info("Registry server started")
 
 
 def start_server(device_id: str):

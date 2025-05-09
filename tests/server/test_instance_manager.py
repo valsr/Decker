@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
 
-from decker_server.server.instance_manager import InstanceManager
+from decker_server.service.service import ServiceManager
 
 
 class TestInstanceManager:
@@ -13,17 +13,17 @@ class TestInstanceManager:
 
         def test_init_sets_default_values(self):
             # Act
-            instance = InstanceManager()
+            instance = ServiceManager()
 
             # Assert
-            assert_that(instance.lock_file).is_none()
-            assert_that(instance.lock_file_path).ends_with("decker_server.lock")
+            assert_that(instance._lock_file).is_none()
+            assert_that(instance._lock_file_path).ends_with("decker_server.lock")
             assert_that(instance.is_dev_mode).is_false()
-            assert_that(instance.server).is_none()
+            assert_that(instance.api).is_none()
 
         def test_init_with_dev_mode(self):
             # Act
-            instance = InstanceManager(dev_mode=True)
+            instance = ServiceManager(dev_mode=True)
 
             # Assert
             assert_that(instance.is_dev_mode).is_true()
@@ -41,14 +41,14 @@ class TestInstanceManager:
             mock_lock_file.return_value = True
             mock_event_instance = MagicMock()
             mock_event.return_value = mock_event_instance
-            instance = InstanceManager()
+            instance = ServiceManager()
 
             # Act
-            instance.start_server()
+            instance.start()
 
             # Assert
             mock_lock_file.assert_called_once()
-            assert_that(instance.server).is_not_none()
+            assert_that(instance.api).is_not_none()
             mock_event_instance.wait.assert_called_once()
 
         @patch("decker_server.server.instance_manager.Server")
@@ -60,11 +60,11 @@ class TestInstanceManager:
 
             # Arrange
             mock_lock_file.side_effect = IOError("Lock failed")
-            instance = InstanceManager()
+            instance = ServiceManager()
 
             # Act
-            instance.start_server()
+            instance.start()
 
             # Assert
             mock_log_error.assert_called_once()
-            assert_that(instance.server).is_none()
+            assert_that(instance.api).is_none()
