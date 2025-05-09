@@ -12,8 +12,8 @@ class TestLogging:
         logger = logging.getLogger()
         logger.handlers.clear()
         configure(logging.DEBUG)
-        # Expect three handlers: stream, error file and file handler.
-        assert_that(len(logger.handlers)).is_equal_to(3)
+        # Expect three handlers: stream and file.
+        assert_that(len(logger.handlers)).is_equal_to(2)
 
     def test_performance_logger(self, monkeypatch):
         messages = []

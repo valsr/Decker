@@ -1,9 +1,10 @@
 """Module for managing application configurations."""
 
+import builtins
 import datetime
 import logging
 import os
-from typing import Any, Callable, Generator
+from typing import Any, Callable, Generator, TypeVar, cast
 
 import flatten_dict
 
@@ -22,6 +23,8 @@ ValueType = (
     | bytearray
     | datetime.datetime
 )
+
+T = TypeVar("T", bound=ValueType)
 
 KEY_SEPARATOR = "."
 USER_CONFIG_FILE = "~/.decker"
@@ -67,7 +70,7 @@ class Config:
         """
         return key in self._data
 
-    def get(self, key: str) -> ValueType | None:
+    def get(self, key: str) -> ValueType:
         """
         Retrieve the configuration value for the given key.
 
@@ -75,9 +78,12 @@ class Config:
             key (str): The key for which to retrieve the configuration value.
 
         Returns:
-            Optional[ValueType]: The value associated with the key if it exists; otherwise, None.
+            ValueType: The value associated with the key if it exists.
+
+        Raises:
+            KeyError: If the key is not found in the collection.
         """
-        return self._data.get(key, None)
+        return self._data[key]
 
     def set(self, key: str, value: ValueType) -> None:
         """
@@ -297,6 +303,41 @@ def get(key: str) -> ValueType | None:
     return CONFIG.get(key)
 
 
+def get_as(key: str, target_type: type[T]) -> T:
+    """
+    Retrieve the configuration value for the given key and convert it to the specified target type.
+
+    Parameters:
+        key (str): The key for which to retrieve the configuration value.
+        target_type (type): The type to convert the value to.
+
+    Returns:
+        The converted value of the specified type.
+
+    Raises:
+        TypeError: If the value is None or unable to conver to proper type
+    """
+    return to_type(get(key), target_type)
+
+
+def get_as_or_default(key: str, target_type: type[T], default: T) -> T:
+    """
+    Retrieve the configuration value for the given key and convert it to the specified target type.
+
+    Parameters:
+        key (str): The key for which to retrieve the configuration value.
+        target_type (type): The type to convert the value to.
+        default: The default value to return if conversion fails.
+
+    Returns:
+        The converted value of the specified type, or the default value if conversion fails.
+    """
+    try:
+        return to_type_or_default(get(key), target_type, default)
+    except KeyError:
+        return default
+
+
 def set(key: str, value: ValueType) -> None:  # pylint: disable=redefined-builtin
     """
     Sets a configuration key with the provided value. If any parent key exists, a ConfigurationKeyExists
@@ -375,9 +416,243 @@ def decode_value(value: ValueType | None):
     """
     if value is None:
         return None
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8")
+    return str(value)
+
+
+def value_type_to_string(value: ValueType | None) -> str:
+    """
+    Convert a configuration value to a string.
+
+    Args:
+        value: The configuration value to convert.
+
+    Returns:
+        str: The converted value as a string.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (list, builtins.set, frozenset)):
+        raise TypeError(f"Cannot convert {type(value)} to str")
+
     if isinstance(value, bytes):
         return value.decode("utf-8")
     return str(value)
+
+
+def value_type_to_bytes(value: ValueType | None) -> bytes:
+    """
+    Convert a configuration value to bytes.
+
+    Args:
+        value: The configuration value to convert.
+
+    Returns:
+        bytes: The converted value as a bytes.
+    """
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if isinstance(value, bytes):
+        return value
+
+    if isinstance(value, (list, builtins.set, frozenset)):
+        if all(isinstance(item, int) and 0 <= item <= 255 for item in value):
+            return bytes(value)  # Create bytes object from iterable of integers
+        raise TypeError(f"Cannot convert {type(value)} to bytes: all elements must be integers in range 0-255")
+
+    return bytes(value_type_to_string(value).encode("utf-8"))
+
+
+def value_type_to_bool(value: ValueType | None) -> bool:
+    """
+    Convert a configuration value to a boolean.
+
+    Args:
+        value: The configuration value to convert.
+
+    Returns:
+        bool: The converted value as a boolean.
+    """
+    if value is None:
+        return False
+
+    if isinstance(value, str):
+        lower_value = value.lower()
+        if lower_value in ("true", "yes", "y", "1"):
+            return True
+        if lower_value in ("false", "no", "n", "0"):
+            return False
+        raise ValueError(f"Cannot convert {value} to bool")
+    return bool(value)
+
+
+def value_type_to_datetime(value: ValueType | None) -> datetime.datetime:
+    """
+    Convert a configuration value to a datetime.
+
+    Args:
+        value: The configuration value to convert.
+
+    Returns:
+        datetime.datetime: The converted value as a datetime.
+    """
+    if value is None:
+        raise ValueError("Value is None")
+    if isinstance(value, datetime.datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.datetime.fromisoformat(value)
+
+    raise TypeError(f"Cannot convert {type(value)} to datetime.datetime")
+
+
+def value_type_to_int(value: ValueType | None) -> int:
+    """
+    Convert a configuration value to an integer.
+
+    Args:
+        value: The configuration value to convert.
+
+    Returns:
+        int: The converted value as an integer.
+    """
+    if value is None:
+        raise ValueError("Value is None")
+
+    if isinstance(value, (int, float, str)):
+        return int(value)
+
+    raise TypeError(f"Cannot convert {type(value)} to int")
+
+
+def value_type_to_float(value: ValueType | None) -> float:
+    """
+    Convert a configuration value to a float.
+
+    Args:
+        value: The configuration value to convert.
+
+    Returns:
+        float: The converted value as a float.
+    """
+    if value is None:
+        raise ValueError("Value is None")
+
+    if isinstance(value, (int, float, str)):
+        return float(value)
+
+    raise TypeError(f"Cannot convert {type(value)} to float")
+
+
+def value_type_to_complex(value: ValueType | None) -> complex:
+    """
+    Convert a configuration value to a complex number.
+
+    Args:
+        value: The configuration value to convert.
+
+    Returns:
+        complex: The converted value as a complex number.
+    """
+    if value is None:
+        raise ValueError("Value is None")
+
+    if isinstance(value, (int, float, complex, str)):
+        return complex(value)
+
+    raise TypeError(f"Cannot convert {type(value)} to complex")
+
+
+def value_type_to_list(value: ValueType | None) -> list[Any]:
+    """
+    Convert a configuration value to a list.
+
+    Args:
+        value: The configuration value to convert.
+
+    Returns:
+        list: The converted value as a list.
+    """
+    if value is None:
+        return []
+
+    if isinstance(value, (list, builtins.set, frozenset)):
+        return list(value)
+
+    if isinstance(value, (str, bytes, bytearray)):
+        if isinstance(value, (bytes, bytearray)):
+            value = value.decode("utf-8")
+        return [item.strip() for item in value.split(",")]
+
+    return [value]
+
+
+def to_type(value: ValueType | None, target_type: type[T]) -> T:
+    """
+    Convert a configuration value to the specified target type.
+
+    Args:
+        value: The configuration value to convert.
+        target_type: The type to convert the value to.
+
+    Returns:
+        The converted value of the specified type.
+
+    Raises:
+        TypeError: If the value is None or unable to conver to proper type
+    """
+    array_types = (list, builtins.set, frozenset)
+
+    # Handle specific type conversions
+    if target_type == str:
+        return cast(T, value_type_to_string(value))
+    if target_type == bytes:
+        return cast(T, value_type_to_bytes(value))
+    if target_type == bytearray:
+        return cast(T, bytearray(value_type_to_bytes(value)))
+    if target_type == int:
+        return cast(T, value_type_to_int(value))
+    if target_type == float:
+        return cast(T, value_type_to_float(value))
+    if target_type == complex:
+        return cast(T, value_type_to_complex(value))
+    if target_type == bool:
+        return cast(T, value_type_to_bool(value))
+    if target_type == datetime.datetime:
+        return cast(T, value_type_to_datetime(value))
+    if target_type in array_types:
+        if isinstance(value, array_types):
+            return cast(T, value)
+        list_items = value_type_to_list(value)
+        if target_type == frozenset:
+            return cast(T, frozenset(list_items))
+        if target_type == builtins.set:
+            return cast(T, builtins.set(list_items))
+        return cast(T, list_items)
+
+    raise TypeError(f"Cannot convert {type(value)} to {target_type}")
+
+
+def to_type_or_default(value: ValueType | None, target_type: type[T], default: T) -> T:
+    """
+    Convert a configuration value to the specified target type.
+
+    Args:
+        value: The configuration value to convert.
+        target_type: The type to convert the value to.
+        default: The default value to return if conversion fails.
+
+    Returns:
+        The converted value of the specified type, or the default value if conversion fails.
+    """
+    if value is None:
+        return default
+
+    try:
+        return to_type(value, target_type)
+    except (ValueError, TypeError):
+        return default
 
 
 def get_config_path() -> str:

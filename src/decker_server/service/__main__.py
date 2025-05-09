@@ -3,9 +3,16 @@
 import argparse
 import logging
 import os
+import signal
+import sys
+import time
 
+from decker_server import theme
 import decker_server.config
 import decker_server.logging
+from decker_server.service.service import ServiceManager
+
+MANAGER: ServiceManager | None = None
 
 
 def create_parser():
@@ -61,16 +68,31 @@ def configure_logging(device: str, verbose_level: int):
 
 
 def run():
-    from time import sleep
-
     parser = create_parser()
     args = parser.parse_args()
 
     configure_logging(args.device, args.verbose)
 
-    logging.debug("Starting server")
-    sleep(120)
-    logging.debug("Stopping server")
+    global MANAGER
+    MANAGER = ServiceManager(args.device)
+
+    signal.signal(signal.SIGINT, _handle_interrupt)
+
+    try:
+        MANAGER.start()
+        MANAGER.manage()
+    except Exception as e:
+        logging.error("Failed to start server: %s", e)
+        MANAGER.stop()
+        return
+
+
+def _handle_interrupt(_, __):
+    if MANAGER is not None:
+        MANAGER.stop()
+        time.sleep(1)
+    logging.info(theme.primary("Exiting"))
+    sys.exit(0)
 
 
 if __name__ == "__main__":
