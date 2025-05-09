@@ -3,7 +3,7 @@ import time
 
 from assertpy import assert_that
 
-from decker_server.logging import LOGGED, PerformanceLogger, configure, debug_once
+from decker.logging import LOGGED, PerformanceLogger, configure, debug_once
 
 
 class TestLogging:
@@ -12,8 +12,8 @@ class TestLogging:
         logger = logging.getLogger()
         logger.handlers.clear()
         configure(logging.DEBUG)
-        # Expect three handlers: stream, error file and file handler.
-        assert_that(len(logger.handlers)).is_equal_to(3)
+        # Expect three handlers: stream and file.
+        assert_that(len(logger.handlers)).is_equal_to(2)
 
     def test_performance_logger(self, monkeypatch):
         messages = []

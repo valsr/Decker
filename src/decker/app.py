@@ -3,12 +3,14 @@
 import argparse  # Added import
 import importlib.metadata
 import logging
+import os
 
-import decker_server.command.config as config_command
-import decker_server.command.device as device_command
-import decker_server.config
-import decker_server.logging
-from decker_server.server.instance_manager import InstanceManager
+import decker.command.config as config_command
+import decker.command.device as device_command
+import decker.command.server as server_command
+import decker.config
+import decker.logging
+from decker.service.service import ServiceManager
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -21,7 +23,7 @@ def create_parser() -> argparse.ArgumentParser:
     Returns:
         parse.ArgumentParser: A fully configured argument parser ready to parse command-line arguments
     """
-    metadata = importlib.metadata.metadata("decker_server")
+    metadata = importlib.metadata.metadata("decker")
     parser = argparse.ArgumentParser(
         prog=metadata["Name"],
         description=metadata["Description"],
@@ -81,6 +83,18 @@ def create_parser() -> argparse.ArgumentParser:
     # Add list action to devices command
     devices_subparsers.add_parser("list", help="List all devices")
 
+    # Add server command
+    server_parser = subparsers.add_parser("server", help="Server commands")
+    server_subparsers = server_parser.add_subparsers(dest="action", help="Server actions")
+
+    # Add start action to server command
+    start_parser = server_subparsers.add_parser("start", help="Start the server")
+    # TODO or null to connect to the first available device
+    start_parser.add_argument("device_id", help="The device ID connect to")
+
+    status_parser = server_subparsers.add_parser("status", help="Check the status of the server")
+    status_parser.add_argument("device_id", nargs="*", help="The device ID to check the server status for")
+
     return parser
 
 
@@ -102,6 +116,10 @@ def handle_commands(command, args: argparse.Namespace):
         "config.remove": lambda args: config_command.remove_config(args.key),
         "config.set": lambda args: config_command.set_config(args.key, " ".join(args.value)),
         "device.list": lambda _: device_command.list_devices(),
+        "server.start": lambda args: server_command.start_server(args.device_id),
+        "server.status": lambda args: (
+            server_command.server_status(args.device_id) if args.device_id else server_command.all_servers_status()
+        ),
     }
 
     if command not in commands:
@@ -124,8 +142,9 @@ def main() -> None:
     else:
         level = logging.WARNING
 
-    decker_server.logging.configure(level=level)
-
+    log_directory = decker.config.get("logging.directory") or os.getcwd()
+    decker.logging.configure(level=level, log_directory=str(log_directory))
+    logging.debug("Logging directory: %s", log_directory)
     logging.debug(args)
 
     # Handle commands
@@ -134,5 +153,5 @@ def main() -> None:
         handle_commands(command, args)
         return
 
-    instance_manager = InstanceManager(dev_mode=args.dev or False)
-    instance_manager.start_server()
+    instance_manager = ServiceManager()
+    instance_manager.start("3HHmZv")

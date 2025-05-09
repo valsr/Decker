@@ -2,7 +2,7 @@
 
 import logging
 
-from decker_server import config, theme
+from decker import config, theme
 
 
 def list_config(keywords=None):
@@ -19,7 +19,7 @@ def list_config(keywords=None):
 
     def filter_by_keywords(key: str, _) -> bool:
         if keywords:
-            return all(keyword in key for keyword in keywords)
+            return all(keyword in key.lower() for keyword in keywords)
         return True
 
     config_items = list(config.find(filter_by_keywords))
@@ -31,7 +31,7 @@ def list_config(keywords=None):
     logging.debug("Found %d configuration items", len(config_items))
     config_items.sort(key=lambda x: x[0])
 
-    print("Application Configuration:")
+    print(f"Application Configuration ({config.get_config_path()}):")
     for key, value in config_items:
         print(f"{key}: {config.decode_value(value)}")
 

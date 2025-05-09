@@ -2,8 +2,8 @@
 
 import logging
 
-from decker_server import common, hardware
-from decker_server import logging as log
+from decker import common, hardware
+from decker import logging as log
 
 
 def list_devices():

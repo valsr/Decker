@@ -1,6 +1,6 @@
 [tool.poetry]
-name = "decker_server"
-version = "0.1.0"
+name = "decker"
+version = "0.2.0"
 description = "A server to handle Elgato's StreamDeck hardware"
 authors = ["valsr <valsr@valsr.com>"]
 license = "MIT"
@@ -13,6 +13,7 @@ toml = "^0.10.2"
 flatten-dict = "^0.4.2"
 streamdeck = "^0.9.6"
 xxhash = "^3.5.0"
+rpyc = "^6.0.1"
 
 [tool.poetry.group.dev.dependencies]
 black = "^25.1.0"
@@ -35,10 +36,10 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poe.tasks]
-start = { cmd = "python -m decker_server" }
-run = { cmd = "python -m decker_server" }
-app = { cmd = "python -m decker_server" }
-test  = { cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker_server tests" }
+start = { cmd = "python -m decker" }
+run = { cmd = "python -m decker" }
+app = { cmd = "python -m decker" }
+test  = { cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker tests" }
 mypy  = { cmd  = "mypy ." }
 black = { cmd  = "black ." }
 isort = { cmd  = "isort ." }
@@ -65,7 +66,7 @@ warn_unused_ignores = true
 warn_redundant_casts = false
 
 [[tool.mypy.overrides]]
-module = ["decker_server.*"]
+module = ["decker.*"]
 follow_untyped_imports = true
 
 [[tool.mypy.overrides]]

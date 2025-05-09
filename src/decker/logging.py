@@ -1,9 +1,10 @@
 """Logging configuration and helper utilities."""
 
 import logging
+import os
 import time
 
-from decker_server.theme import highlight, secondary, warning
+from decker.theme import highlight, secondary, warning
 
 LOG_LEVEL = logging.WARNING
 
@@ -44,11 +45,44 @@ def is_warning() -> bool:
     return LOG_LEVEL == logging.WARNING
 
 
-def configure(level: int = logging.INFO):
+class NamespaceFilter(logging.Filter):
+    """Filter to add the full namespace to the log record."""
+
+    def __init__(self):
+        super().__init__()
+        self.base_path = os.path.dirname(os.path.abspath(__file__))
+
+    def filter(self, record: logging.LogRecord):
+        if record.pathname.startswith(self.base_path):
+            record.namespace = record.pathname[len(self.base_path) + 1 : -3].replace(os.path.sep, ".")
+        else:
+            record.namespace = "Unknown module ({record.pathname})"
+        return True
+
+
+class SeverFilter(logging.Filter):
+    """Filter to add the server id to the log record."""
+
+    def __init__(self, server_id: str | None):
+        super().__init__()
+        self.server_id = server_id
+
+    def filter(self, record: logging.LogRecord):
+        record.server_id = self.server_id
+        return True
+
+
+def configure(
+    level: int = logging.INFO,
+    log_directory: str = "",
+    server_id: str | None = None,
+):
     """Configure global/default logger.
 
     Args:
         level(int): Log level. Defaults to logging.WARNING.
+        directory(str): The directory to store log files. Defaults to "".
+        server_id(str): The server ID (or None for the main process) to use in the log file name. Defaults to None.
 
     Returns:
 
@@ -57,25 +91,34 @@ def configure(level: int = logging.INFO):
     LOG_LEVEL = level
 
     logger = logging.getLogger()
+    logger.setLevel(LOG_LEVEL)
 
     for handler in logger.handlers:
         logger.removeHandler(handler)
 
+    # configure logging to console
     handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s %(name)s %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s")
-    handler.setFormatter(formatter)
+    handler.addFilter(NamespaceFilter())
+    handler.addFilter(SeverFilter(server_id))
+    cli_format = "%(levelname)s"
+    if server_id:
+        cli_format += " (%(server_id)s)"
+    cli_format += ": %(message)s"
+
+    cli_formatter = logging.Formatter(cli_format)
+    handler.setFormatter(cli_formatter)
     logger.addHandler(handler)
-    logger.setLevel(LOG_LEVEL)
 
-    error_handler = logging.FileHandler("decker-server.log")
-    error_handler.setLevel(LOG_LEVEL)
-    error_handler.setFormatter(formatter)
-    logger.addHandler(error_handler)
-
-    error_handler = logging.FileHandler("decker-server.error.log")
-    error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(formatter)
-    logger.addHandler(error_handler)
+    # configure logging to file
+    file_format = "%(asctime)s %(levelname)-8s "
+    if server_id:
+        file_format += "(%(server_id)s)"
+    file_format += "[%(namespace)s:%(lineno)d] %(message)s"
+    file_formatter = logging.Formatter(file_format)
+    log_name = "decker-server" if server_id is None else f"decker-server-{server_id}"
+    file_handler = logging.FileHandler(os.path.join(log_directory, f"{log_name}.log"))
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
 
 
 class PerformanceLogger:

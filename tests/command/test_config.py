@@ -1,7 +1,7 @@
 from assertpy import assert_that
 
-import decker_server.config
-from decker_server.command import config as command_config
+import decker.config
+from decker.command import config as command_config
 
 
 class TestListConfig:
@@ -11,7 +11,7 @@ class TestListConfig:
             # Arrange: return no configuration items
             return []
 
-        monkeypatch.setattr(decker_server.config, "find", fake_find)
+        monkeypatch.setattr(decker.config, "find", fake_find)
 
         # Act
         command_config.list_config()
@@ -27,7 +27,7 @@ class TestListConfig:
             # Act: apply the filter function to the items
             return [item for item in items if filter_func(item[0], item[1])]
 
-        monkeypatch.setattr(decker_server.config, "find", fake_find)
+        monkeypatch.setattr(decker.config, "find", fake_find)
 
         # Act
         # Pass a keyword that should match keys containing the letter 'a'
@@ -49,7 +49,7 @@ class TestListConfig:
             # Act: apply the filter function to the items
             return [item for item in items if filter_func(item[0], item[1])]
 
-        monkeypatch.setattr(decker_server.config, "find", fake_find)
+        monkeypatch.setattr(decker.config, "find", fake_find)
 
         # Act
         command_config.list_config()
@@ -74,9 +74,9 @@ class TestGetConfig:
         def fake_decode_value(value):
             return value
 
-        monkeypatch.setattr(decker_server.config, "has", fake_has)
-        monkeypatch.setattr(decker_server.config, "get", fake_get)
-        monkeypatch.setattr(decker_server.config, "decode_value", fake_decode_value)
+        monkeypatch.setattr(decker.config, "has", fake_has)
+        monkeypatch.setattr(decker.config, "get", fake_get)
+        monkeypatch.setattr(decker.config, "decode_value", fake_decode_value)
 
         # Act
         command_config.get_config("test_key")
@@ -93,8 +93,8 @@ class TestGetConfig:
         def fake_error(message):
             return message
 
-        monkeypatch.setattr(decker_server.config, "has", fake_has)
-        monkeypatch.setattr(decker_server.theme, "error", fake_error)
+        monkeypatch.setattr(decker.config, "has", fake_has)
+        monkeypatch.setattr(decker.theme, "error", fake_error)
 
         # Act
         command_config.get_config("nonexistent_key")
@@ -117,8 +117,8 @@ class TestRemoveConfig:
             unset_called = True
             unset_key = key
 
-        monkeypatch.setattr(decker_server.config, "has", fake_has)
-        monkeypatch.setattr(decker_server.config, "unset", fake_unset)
+        monkeypatch.setattr(decker.config, "has", fake_has)
+        monkeypatch.setattr(decker.config, "unset", fake_unset)
 
         # Act
         command_config.remove_config("test_key")
@@ -137,8 +137,8 @@ class TestRemoveConfig:
         def fake_warning(message):
             return message
 
-        monkeypatch.setattr(decker_server.config, "has", fake_has)
-        monkeypatch.setattr(decker_server.theme, "warning", fake_warning)
+        monkeypatch.setattr(decker.config, "has", fake_has)
+        monkeypatch.setattr(decker.theme, "warning", fake_warning)
 
         # Act
         command_config.remove_config("nonexistent_key")
@@ -163,8 +163,8 @@ class TestSetConfig:
             set_key = key
             set_value = value
 
-        monkeypatch.setattr(decker_server.config, "has", fake_has)
-        monkeypatch.setattr(decker_server.config, "set", fake_set)
+        monkeypatch.setattr(decker.config, "has", fake_has)
+        monkeypatch.setattr(decker.config, "set", fake_set)
 
         # Act
         command_config.set_config("new_key", "new_value")
@@ -195,10 +195,10 @@ class TestSetConfig:
             set_key = key
             set_value = value
 
-        monkeypatch.setattr(decker_server.config, "has", fake_has)
-        monkeypatch.setattr(decker_server.config, "get", fake_get)
-        monkeypatch.setattr(decker_server.config, "decode_value", fake_decode_value)
-        monkeypatch.setattr(decker_server.config, "set", fake_set)
+        monkeypatch.setattr(decker.config, "has", fake_has)
+        monkeypatch.setattr(decker.config, "get", fake_get)
+        monkeypatch.setattr(decker.config, "decode_value", fake_decode_value)
+        monkeypatch.setattr(decker.config, "set", fake_set)
 
         # Act
         command_config.set_config("existing_key", "updated_value")
