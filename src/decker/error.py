@@ -1,4 +1,4 @@
-from decker_server.hardware import Device
+from decker.hardware import Device
 
 
 class DeckerError(Exception):

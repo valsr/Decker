@@ -8,7 +8,7 @@ from typing import Any, Callable, Generator, TypeVar, cast
 
 import flatten_dict
 
-from decker_server.config.backend import BackendManager, TomlFileBackend
+from decker.config.backend import BackendManager, TomlFileBackend
 
 ValueType = (
     str
@@ -40,7 +40,7 @@ class Config:
         Initialize the configuration instance with the given backend manager.
 
         Args:
-            backend (decker_server.config.backend.BackendManager): An instance managing backend operations.
+            backend (decker.config.backend.BackendManager): An instance managing backend operations.
         """
         self._backend = backend
         self._data: dict[str, Any] = {}  # flat dictionary

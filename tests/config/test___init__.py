@@ -4,7 +4,7 @@ import os
 import pytest
 from assertpy import assert_that
 
-from decker_server.config import (
+from decker.config import (
     USER_CONFIG_FILE,
     Config,
     ConfigurationKeyExists,
@@ -16,8 +16,8 @@ from decker_server.config import (
     get_config_path,
     items,
 )
-from decker_server.config import set as set_config
-from decker_server.config import (
+from decker.config import set as set_config
+from decker.config import (
     to_type,
     unset,
     value_type_to_bool,
@@ -29,7 +29,7 @@ from decker_server.config import (
     value_type_to_list,
     value_type_to_string,
 )
-from decker_server.config.backend import BackendManager
+from decker.config.backend import BackendManager
 
 
 class DummyBackend(BackendManager):

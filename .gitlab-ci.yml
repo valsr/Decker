@@ -75,7 +75,7 @@ test:
   - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH =~ /^release\/.*$/
     when: on_success
   script:
-  - pytest --junitxml=report.xml --cov-report xml:coverage.xml --cov=decker_server tests
+  - pytest --junitxml=report.xml --cov-report xml:coverage.xml --cov=decker tests
   artifacts:
     when: on_success
     reports:
