@@ -4,7 +4,9 @@ import argparse  # Added import
 import importlib.metadata
 import logging
 import os
+import tkinter.ttk as ttk
 
+from decker.Application import Application
 import decker.command.config as config_command
 import decker.command.device as device_command
 import decker.config
@@ -50,79 +52,7 @@ def create_parser() -> argparse.ArgumentParser:
         help="Run the application in development mode.",
     )
 
-    # Add subparsers for commands
-    subparsers = parser.add_subparsers(dest="command", help="Commands")
-
-    # Add config command
-    config_parser = subparsers.add_parser("config", help="Configuration commands")
-    config_subparsers = config_parser.add_subparsers(dest="action", help="Config actions")
-
-    # Add list action to config command
-    list_parser = config_subparsers.add_parser("list", help="List application configuration")
-    list_parser.add_argument("keywords", nargs="*", help="Keywords to filter configuration keys (optional)")
-
-    # Add get action to config command
-    get_parser = config_subparsers.add_parser("get", help="Get a specific configuration value")
-    get_parser.add_argument("key", help="The configuration key to retrieve")
-
-    # Add remove action to config command
-    remove_parser = config_subparsers.add_parser("remove", help="Remove a specific configuration value")
-    remove_parser.add_argument("key", help="The configuration key to remove")
-
-    # Add set action to config command
-    set_parser = config_subparsers.add_parser("set", help="Set a specific configuration value")
-    set_parser.add_argument("key", help="The configuration key to set")
-    set_parser.add_argument("value", nargs="+", help="The value to set for the configuration key")
-
-    # Add devices command
-    device_parser = subparsers.add_parser("device", help="Device management commands")
-    devices_subparsers = device_parser.add_subparsers(dest="action", help="Device actions")
-
-    # Add list action to devices command
-    devices_subparsers.add_parser("list", help="List all devices")
-
-    # Add server command
-    server_parser = subparsers.add_parser("server", help="Server commands")
-    server_subparsers = server_parser.add_subparsers(dest="action", help="Server actions")
-
-    # Add start action to server command
-    start_parser = server_subparsers.add_parser("start", help="Start the server")
-
-    # TODO or null to connect to the first available device
-    start_parser.add_argument("device_id", help="The device ID connect to")
-
-    status_parser = server_subparsers.add_parser("status", help="Check the status of the server")
-    status_parser.add_argument("device_id", nargs="*", help="The device ID to check the server status for")
-
     return parser
-
-
-def handle_commands(command, args: argparse.Namespace):
-    """
-    Handles command execution as asked by the user.
-
-    This function acts as a command dispatcher for configuration-related commands.
-    It maps command strings to their corresponding handler functions.
-
-    Args:
-        command (str): The command to execute.
-        args (argparse.Namespace): Parsed command line arguments containing the parameters
-            needed for the specific command.
-    """
-    commands = {
-        "config.list": lambda args: config_command.list_config(args.keywords),
-        "config.get": lambda args: config_command.get_config(args.key),
-        "config.remove": lambda args: config_command.remove_config(args.key),
-        "config.set": lambda args: config_command.set_config(args.key, " ".join(args.value)),
-        "device.list": lambda _: device_command.list_devices(),
-    }
-
-    if command not in commands:
-        logging.error("Invalid command: %s", command)
-        return
-
-    logging.debug("Handling command: %s", command)
-    commands[command](args)
 
 
 def main() -> None:
@@ -142,10 +72,6 @@ def main() -> None:
     logging.debug("Logging directory: %s", log_directory)
     logging.debug(args)
 
-    # Handle commands
-    if args.command:
-        command = f"{args.command}.{args.action}"
-        handle_commands(command, args)
-        return
-
     # Start the application
+    app = Application()
+    app.run()
