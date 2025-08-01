@@ -1,7 +1,9 @@
 import os
 import tempfile
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import MagicMock, patch
 
+from pytest import MonkeyPatch
 import toml
 from assertpy import assert_that, fail
 
@@ -23,7 +25,7 @@ class TestTomlBackendLoad:
 
     @patch("os.path.exists")
     @patch("os.access")
-    def test_load_not_readable(self, mock_os_access, mock_path_exists):
+    def test_load_not_readable(self, mock_os_access: MagicMock, mock_path_exists: MagicMock):
         # Arrange
         temp_path = "config.toml"
         mock_path_exists.return_value = True
@@ -73,7 +75,7 @@ class TestTomlBackendLoad:
 
 
 class TestTomlBackendSave:
-    def test_save_not_readable(self, monkeypatch):
+    def test_save_not_readable(self, monkeypatch: MonkeyPatch):
         # Arrange
         with tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="UTF-8") as tmp_file:
             tmp_file.write("server = { port = 8080 }")
@@ -82,10 +84,10 @@ class TestTomlBackendSave:
         # Mock the open function to raise PermissionError for this specific file
         original_open = open
 
-        def mock_open(path, *args, **kwargs):
+        def mock_open(path: str, *args: Any, **kwargs: Any) -> Any:
             if path == temp_path and ("w" in kwargs.get("mode", "") or "w" in args[0] if args else False):
                 raise PermissionError(f"Permission denied: '{temp_path}'")
-            return original_open(path, *args, **kwargs)
+            return original_open(path, *args, **kwargs) # pyright: ignore[reportUnknownVariableType]
 
         monkeypatch.setattr("builtins.open", mock_open)
 
@@ -101,7 +103,7 @@ class TestTomlBackendSave:
         finally:
             os.remove(temp_path)
 
-    def test_save_success(self, monkeypatch):
+    def test_save_success(self, _monkeypatch: MonkeyPatch):
         # Arrange
         # Create a temporary config file with initial content
         with tempfile.NamedTemporaryFile(delete=False, mode="w+", encoding="UTF-8") as tmp_file:
@@ -128,7 +130,7 @@ class TestTomlBackendSave:
 
 class DummyBackend(TomlFileBackend):
     # see DummyBackend
-    def __init__(self):
+    def __init__(self): # pylint: disable=super-init-not-called
         """Initializes the dummy backend.
 
         Returns:
@@ -148,11 +150,11 @@ class DummyBackend(TomlFileBackend):
 
         return {"dummy": {"key": "dummy.value"}}
 
-    def save(self, settings):
+    def save(self, settings: dict[str, Any]):
         """Simulates a synchronous save operation.
 
         Args:
-            settings (list[Setting]): Settings to save.
+            settings (dict[str, Any]): Settings to save.
 
         Returns:
             None.

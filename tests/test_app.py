@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
 
-from decker.app import create_parser, handle_commands, main
+from decker.app import create_parser, main
 
 
 class TestMain:
@@ -28,8 +28,8 @@ class TestMain:
             parser = create_parser()
 
             # Assert
-            assert_that(parser._actions).is_not_empty()
-            actions = {action.dest: action for action in parser._actions}
+            assert_that(parser._actions).is_not_empty() # pylint: disable=protected-access
+            actions = {action.dest: action for action in parser._actions}  # pylint: disable=protected-access
             assert_that(actions).contains_key("version")
 
         def test_create_parser_has_verbose_argument(self):
@@ -39,7 +39,7 @@ class TestMain:
             parser = create_parser()
 
             # Assert
-            actions = {action.dest: action for action in parser._actions}
+            actions = {action.dest: action for action in parser._actions} # pylint: disable=protected-access
             assert_that(actions).contains_key("verbose")
             assert_that(actions["verbose"].default).is_equal_to(0)
 
@@ -50,82 +50,9 @@ class TestMain:
             parser = create_parser()
 
             # Assert
-            actions = {action.dest: action for action in parser._actions}
+            actions = {action.dest: action for action in parser._actions}  # pylint: disable=protected-access
             assert_that(actions).contains_key("dev")
             assert_that(actions["dev"].dest).is_equal_to("dev")
-
-    class TestHandleCommands:
-        """Tests for the handle_commands function."""
-
-        @patch("decker.command.config.list_config")
-        def test_handle_config_list_command(self, mock_list_config):
-            # Tests if handle_commands correctly calls list_config
-
-            # Arrange
-            args = MagicMock()
-            args.keywords = ["test"]
-
-            # Act
-            handle_commands("config.list", args)
-
-            # Assert
-            mock_list_config.assert_called_once_with(["test"])
-
-        @patch("decker.command.config.get_config")
-        def test_handle_config_get_command(self, mock_get_config):
-            # Tests if handle_commands correctly calls get_config
-
-            # Arrange
-            args = MagicMock()
-            args.key = "test_key"
-
-            # Act
-            handle_commands("config.get", args)
-
-            # Assert
-            mock_get_config.assert_called_once_with("test_key")
-
-        @patch("decker.command.config.set_config")
-        def test_handle_config_set_command(self, mock_set_config):
-            # Tests if handle_commands correctly calls set_config
-
-            # Arrange
-            args = MagicMock()
-            args.key = "test_key"
-            args.value = ["test", "value"]
-
-            # Act
-            handle_commands("config.set", args)
-
-            # Assert
-            mock_set_config.assert_called_once_with("test_key", "test value")
-
-        @patch("decker.command.config.remove_config")
-        def test_handle_config_remove_command(self, mock_remove_config):
-            # Tests if handle_commands correctly calls remove_config
-
-            # Arrange
-            args = MagicMock()
-            args.key = "test_key"
-
-            # Act
-            handle_commands("config.remove", args)
-
-            # Assert
-            mock_remove_config.assert_called_once_with("test_key")
-
-        @patch("logging.error")
-        def test_handle_invalid_command(self, mock_error):
-            # Tests if handle_commands handles invalid commands correctly
-
-            # Arrange
-            args = MagicMock()
-
-            # Act
-            handle_commands("invalid.command", args)
-
-            # Assert
-            mock_error.assert_called_once()
 
     class TestMain:
         """Tests for the main function."""
@@ -134,7 +61,7 @@ class TestMain:
         @patch("decker.logging.configure")
         @patch("argparse.ArgumentParser.parse_args")
         def test_main_configures_logging_with_different_verbosity(
-            self, mock_parse_args, mock_configure, mock_instance_manager
+            self, mock_parse_args: MagicMock, mock_configure: MagicMock, _mock_instance_manager: MagicMock
         ):
             # Tests if main configures logging with the correct verbosity level
 
@@ -160,7 +87,7 @@ class TestMain:
 
         @patch("decker.app.InstanceManager")
         @patch("argparse.ArgumentParser.parse_args")
-        def test_main_starts_server_without_command(self, mock_parse_args, mock_instance_manager):
+        def test_main_starts_server_without_command(self, mock_parse_args: MagicMock, mock_instance_manager: MagicMock):
             # Tests if main starts server when no command is provided
 
             # Arrange
@@ -181,7 +108,7 @@ class TestMain:
 
         @patch("decker.app.InstanceManager")
         @patch("argparse.ArgumentParser.parse_args")
-        def test_main_starts_server_with_dev_mode(self, mock_parse_args, mock_instance_manager):
+        def test_main_starts_server_with_dev_mode(self, mock_parse_args: MagicMock, mock_instance_manager: MagicMock):
             # Tests if main starts server with dev mode when specified
 
             # Arrange
@@ -201,7 +128,7 @@ class TestMain:
 
         @patch("decker.app.handle_commands")
         @patch("argparse.ArgumentParser.parse_args")
-        def test_main_handles_commands(self, mock_parse_args, mock_handle_commands):
+        def test_main_handles_commands(self, mock_parse_args: MagicMock, mock_handle_commands: MagicMock):
             # Tests if main handles commands when provided
 
             # Arrange

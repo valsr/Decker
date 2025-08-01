@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+from typing import Any
 
 from decker.theme import highlight, secondary, warning
 
@@ -88,7 +89,7 @@ def configure(
 
     """
     global LOG_LEVEL  # pylint: disable=global-statement
-    LOG_LEVEL = level
+    LOG_LEVEL = level # pyright: ignore[reportConstantRedefinition]
 
     logger = logging.getLogger()
     logger.setLevel(LOG_LEVEL)
@@ -146,7 +147,7 @@ class PerformanceLogger:
         logging.log(self.log_level, secondary(self.description))
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any):
         """Log the time taken to execute the block of code."""
         diff = time.time() - self.start
         should_log = self.enabled or diff > self.override_threshold or diff > self.warn_threshold
@@ -169,7 +170,7 @@ class PerformanceLogger:
 LOGGED: list[str] = []
 
 
-def log_once(key: str, level: int, message: str, args, **kwargs):
+def log_once(key: str, level: int, message: str, *args: tuple[Any], **kwargs: dict[str, Any]):
     """Log a message only once.
 
     Args:
@@ -177,58 +178,58 @@ def log_once(key: str, level: int, message: str, args, **kwargs):
         message (str): The message to log.
     """
     if key not in LOGGED:
-        logging.log(level, message, *args, **kwargs)
+        logging.log(level, message, *args, **kwargs) # pyright: ignore[reportArgumentType]
         LOGGED.append(key)
 
 
-def debug_once(key: str, message: str, *args, **kwargs):
+def debug_once(key: str, message: str, *args: tuple[Any], **kwargs: dict[str, Any]):
     """Log a debug message only once.
 
     Args:
         key (str): The key to use to identify the message.
         message (str): The message to log.
     """
-    log_once(key, logging.DEBUG, message, args, **kwargs)
+    log_once(key, logging.DEBUG, message, *args, **kwargs)
 
 
-def info_once(key: str, message: str, *args, **kwargs):
+def info_once(key: str, message: str, *args: tuple[Any], **kwargs: dict[str, Any]):
     """Log an info message only once.
 
     Args:
         key (str): The key to use to identify the message.
         message (str): The message to log.
     """
-    log_once(key, logging.INFO, message, args, **kwargs)
+    log_once(key, logging.INFO, message, *args, **kwargs)
 
 
-def warning_once(key: str, message: str, *args, **kwargs):
+def warning_once(key: str, message: str, *args: tuple[Any], **kwargs: dict[str, Any]):
     """Log a warning message only once.
 
     Args:
         key (str): The key to use to identify the message.
         message (str): The message to log.
     """
-    log_once(key, logging.WARNING, message, args, **kwargs)
+    log_once(key, logging.WARNING, message, *args, **kwargs)
 
 
-def error_once(key: str, message: str, *args, **kwargs):
+def error_once(key: str, message: str, *args: tuple[Any], **kwargs: dict[str, Any]):
     """Log an error message only once.
 
     Args:
         key (str): The key to use to identify the message.
         message (str): The message to log.
     """
-    log_once(key, logging.ERROR, message, args, **kwargs)
+    log_once(key, logging.ERROR, message, *args, **kwargs)
 
 
-def critical_once(key: str, message: str, *args, **kwargs):
+def critical_once(key: str, message: str, *args: tuple[Any], **kwargs: dict[str, Any]):
     """Log a critical message only once.
 
     Args:
         key (str): The key to use to identify the message.
         message (str): The message to log.
     """
-    log_once(key, logging.CRITICAL, message, args, **kwargs)
+    log_once(key, logging.CRITICAL, message, *args, **kwargs)
 
 
 class InfoPerformanceLogger(PerformanceLogger):

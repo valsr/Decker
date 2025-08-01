@@ -27,7 +27,7 @@ def set_theme(theme: Theme):
         theme(Theme): The theme to set.
     """
     global THEME  # pylint: disable=global-statement
-    THEME = theme
+    THEME = theme # pyright: ignore[reportConstantRedefinition]
     logging.debug("Theme set to %s", theme.value)
 
 
@@ -62,7 +62,7 @@ class Style(Enum):
     H4 = "H4"
 
 
-def primary(text):
+def primary(text: str) -> str:
     """
     Colors the given text with the primary style.
 
@@ -75,7 +75,7 @@ def primary(text):
     return colored(text, Style.PRIMARY)
 
 
-def colored(text, style: Style = Style.PRIMARY):
+def colored(text: str, style: Style = Style.PRIMARY) -> str:
     """Applies color to the given text based on the specified style and theme.
 
     Args:
@@ -88,7 +88,7 @@ def colored(text, style: Style = Style.PRIMARY):
     return termcolor.colored(text, get_style(style), force_color=FORCE_COLOR)
 
 
-def secondary(text):
+def secondary(text: str) -> str:
     """Formats the given text as secondary text using the specified theme.
 
     Args:
@@ -100,7 +100,7 @@ def secondary(text):
     return colored(text, Style.SECONDARY)
 
 
-def h1(text):
+def h1(text: str) -> str:
     """Formats the given text as a level 1 heading (H1) using the specified theme.
 
     Args:
@@ -112,7 +112,7 @@ def h1(text):
     return colored(text, Style.H1)
 
 
-def h2(text):
+def h2(text: str) -> str:
     """Formats the given text as a level 2 heading (H2) using the specified theme.
 
     Args:
@@ -124,7 +124,7 @@ def h2(text):
     return colored(text, Style.H2)
 
 
-def h3(text):
+def h3(text: str):
     """Formats the given text as a level 3 heading using the specified theme.
 
     Args:
@@ -136,7 +136,7 @@ def h3(text):
     return colored(text, Style.H3)
 
 
-def h4(text):
+def h4(text: str) -> str:
     """Formats the given text as a level 4 heading (H4) using the specified theme.
 
     Args:
@@ -148,7 +148,7 @@ def h4(text):
     return colored(text, Style.H4)
 
 
-def highlight(text):
+def highlight(text: str) -> str:
     """Applies highlighting to the given text using the specified theme.
 
     Args:
@@ -160,7 +160,7 @@ def highlight(text):
     return colored(text, Style.HIGHLIGHT)
 
 
-def warning(text):
+def warning(text: str) -> str:
     """Displays a warning message with the specified text and theme.
 
     Args:
@@ -172,7 +172,7 @@ def warning(text):
     return colored(text, Style.WARNING)
 
 
-def error(text):
+def error(text: str) -> str:
     """Formats the given text as an error message using the specified theme.
 
     Args:

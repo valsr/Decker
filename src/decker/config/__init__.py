@@ -1,10 +1,11 @@
 """Module for managing application configurations."""
 
 import builtins
+from collections.abc import Callable, Generator
 import datetime
 import logging
 import os
-from typing import Any, Callable, Generator, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 import flatten_dict
 
@@ -15,9 +16,9 @@ ValueType = (
     | int
     | float
     | complex
-    | list
-    | set  # pylint: disable=used-before-assignment
-    | frozenset
+    | list[Any]
+    | set[Any]  # pylint: disable=used-before-assignment
+    | frozenset[Any]
     | bool
     | bytes
     | bytearray
@@ -28,6 +29,22 @@ T = TypeVar("T", bound=ValueType)
 
 KEY_SEPARATOR = "."
 USER_CONFIG_FILE = "~/.decker"
+
+
+def is_valid_value_type(value: Any) -> bool:
+    """
+    Check if the value is of a valid type for configuration.
+
+    Args:
+        value (Any): The value to check.
+
+    Returns:
+        bool: True if the value is of a valid type, otherwise False.
+    """
+    return isinstance(
+        value,
+        (str, int, float, complex, list, builtins.set, frozenset, bool, bytes, bytearray, datetime.datetime)
+    )
 
 
 class Config:
@@ -43,21 +60,21 @@ class Config:
             backend (decker.config.backend.BackendManager): An instance managing backend operations.
         """
         self._backend = backend
-        self._data: dict[str, Any] = {}  # flat dictionary
+        self._data: dict[str, ValueType] = {}  # flat dictionary
 
     def load(self):
         """
         Load configuration data from the backend.
         """
         data = self._backend.load()
-        self._data = flatten_dict.flatten(data, reducer="dot")
+        self._data = flatten_dict.flatten(data, reducer="dot")  # type: ignore
 
     def save(self):
         """
         Saves the current configuration data to the backend storage.
         """
-        data = flatten_dict.unflatten(self._data, splitter="dot")
-        self._backend.save(data)
+        data: dict[str, Any] = flatten_dict.unflatten(self._data, splitter="dot")  # type: ignore
+        self._backend.save(data)  # type: ignore
 
     def has(self, key: str) -> bool:
         """Check if the given key exists within the internal configuration data.
@@ -98,7 +115,7 @@ class Config:
             ConfigurationKeyExists: If a parent key of the given key already exists in the configuration data.
             InvalidConfigurationValue: If the value is not of a valid type.
         """
-        if not isinstance(value, ValueType):
+        if not is_valid_value_type(value):
             raise InvalidConfigurationValue(
                 f"Value for {key} is not a valid type must be one of "
                 "{str, int, float, list, complex, set, bool, bytes, bytearray, datetime.datetime}"
@@ -175,10 +192,7 @@ class Config:
         Raises:
             KeyError: If the key is not found in the collection.
         """
-        data = self.get(key)
-        if data is None:
-            raise KeyError(f"Key {key} not found")
-        return data
+        return self.get(key)
 
     def __setitem__(self, key: str, value: ValueType) -> None:
         """
