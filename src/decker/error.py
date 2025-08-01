@@ -1,19 +1,20 @@
-from decker.hardware import Device
-
-
 class DeckerError(Exception):
-    def __init__(self, message):
+    """
+    Custom exception class for Decker-related errors.
+
+    This exception is raised when errors specific to the Decker application occur.
+    It extends the built-in Exception class and stores a custom error message.
+
+    Attributes:
+        message (str): The error message describing what went wrong.
+
+    Args:
+        message (str): A descriptive error message.
+
+    Example:
+        >>> raise DeckerError("Configuration file not found")
+        DeckerError: Configuration file not found
+    """
+    def __init__(self, message: str):
         self.message = message
         super().__init__(self.message)
-
-
-class DeviceNotFoundError(DeckerError):
-    def __init__(self, device_id: str, available_devices: list[Device] | None):
-        self.device_id = device_id
-        message = f"Device with id {device_id} not found."
-        if available_devices:
-            device_ids = [d.get_id() or "Unknown" for d in available_devices]
-            message += f" Choose one from: {', '.join(device_ids)}"
-        else:
-            message += " No devices found."
-        super().__init__(message)

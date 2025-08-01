@@ -1,5 +1,6 @@
 import datetime
 import os
+from typing import Any, Literal
 
 import pytest
 from assertpy import assert_that
@@ -38,13 +39,13 @@ class DummyBackend(BackendManager):
     This class simulates loading from and saving to a backend storage.
     """
 
-    def __init__(self, data=None):  # pylint: disable=super-init-not-called
+    def __init__(self, data: dict[str, Any] | None = None):  # pylint: disable=super-init-not-called
         self.data = data or {}
 
-    def load(self) -> dict:
+    def load(self) -> dict[str, Any]:
         return self.data
 
-    def save(self, settings: dict) -> None:
+    def save(self, settings: dict[str, Any]) -> None:
         self.data = settings
 
 
@@ -60,7 +61,7 @@ class TestConfigLoadSave:
 
         # Assert
         expected_flat = {"FOO": "bar", "nested.key": "value"}
-        assert_that(sut._data).is_equal_to(expected_flat)  # pylint: disable=protected-access
+        assert_that(sut._data).is_equal_to(expected_flat)  # pyright: ignore[reportPrivateUsage]
 
     def test_save(self):
         # Arrange
@@ -87,7 +88,7 @@ class TestConfigHas:
         assert_that(sut.has("foo")).is_true()
 
     @pytest.mark.parametrize("key", ["Foo", "baz"])
-    def test_has_with_non_existing_key(self, key):
+    def test_has_with_non_existing_key(self, key: str):
         # Arrange
         sut = Config(DummyBackend({"foo": "bar"}))
         sut.load()
@@ -182,7 +183,7 @@ class TestConfigUnset:
         sut.unset("test")
 
         # Assert
-        remaining_keys = list(sut._data.keys())  # pylint: disable=protected-access
+        remaining_keys = list(sut._data.keys())  # pyright: ignore[reportPrivateUsage] # pylint: disable=protected-access
         assert_that(remaining_keys).contains_only("another")
         assert_that(backend.data).is_equal_to({"another": "val"})
 
@@ -196,7 +197,7 @@ class TestConfigUnset:
         sut.unset("nonexistent")
 
         # Assert
-        assert_that(sut._data).is_equal_to({"key": "value"})  # pylint: disable=protected-access
+        assert_that(sut._data).is_equal_to({"key": "value"})  # pyright: ignore[reportPrivateUsage] # pylint: disable=protected-access
         assert_that(backend.data).is_equal_to({"key": "value"})
 
 
@@ -334,7 +335,7 @@ class TestGetAs:
         set_config("test.list", "a,b,c")
 
         # Act
-        result = get_as("test.list", list)
+        result: list[str] = get_as("test.list", list[str])
 
         # Assert
         assert_that(result).is_instance_of(list)
@@ -404,7 +405,7 @@ class TestValueTypeToString:
             ("test string", "test string"),
         ],
     )
-    def test_values_converted_to_string(self, value, expected):
+    def test_values_converted_to_string(self, value: Any, expected:str):
         # Act
         result = value_type_to_string(value)
 
@@ -413,7 +414,7 @@ class TestValueTypeToString:
         assert_that(result).is_equal_to(expected)
 
     @pytest.mark.parametrize("value", [[1, 2, 3], {1, 2, 3}, frozenset([1, 2, 3])])
-    def test_iterables_raise_type_error(self, value):
+    def test_iterables_raise_type_error(self, value: list[int]|set[int]|frozenset[int]):
         # Act & Assert
         assert_that(value_type_to_string).raises(TypeError).when_called_with(value)
 
@@ -434,7 +435,7 @@ class TestValueTypeToBytes:
             (frozenset([97, 98, 99]), b"abc"),  # ASCII for
         ],
     )
-    def test_values_converted_to_bytes(self, value, expected):
+    def test_values_converted_to_bytes(self, value: Any, expected: bytes):
         result = value_type_to_bytes(value)
 
         # Assert
@@ -442,7 +443,7 @@ class TestValueTypeToBytes:
         assert_that(result).is_equal_to(expected)
 
     @pytest.mark.parametrize("value", [[256], [-1], {"not an int"}, frozenset([1, "boo", 3])])
-    def test_invalid_iterables_raise_type_error(self, value):
+    def test_invalid_iterables_raise_type_error(self, value: list[int]|set[int]|frozenset[int]):
         # Act & Assert
         assert_that(value_type_to_bytes).raises(TypeError).when_called_with(value)
 
@@ -463,24 +464,24 @@ class TestValueTypeToBool:
         assert_that(value_type_to_bool(False)).is_false()
 
     @pytest.mark.parametrize("value", ["true", "True", "TRUE", "yes", "Yes", "YES", "y", "Y", "1"])
-    def test_truthy_strings_return_true(self, value):
+    def test_truthy_strings_return_true(self, value: str):
         # Assert
         assert_that(value_type_to_bool(value)).is_true()
 
     @pytest.mark.parametrize("value", ["false", "False", "FALSE", "no", "No", "NO", "n", "N", "0"])
-    def test_falsy_strings_return_false(self, value):
+    def test_falsy_strings_return_false(self, value: str):
         # Assert
         assert_that(value_type_to_bool(value)).is_false()
 
     @pytest.mark.parametrize(
         "value", ["", " ", "  ", "  \t", " \n", " \t\n", " \t\n\r", "maybe", "not a boolean", "2", "-1"]
     )
-    def test_invalid_strings_raise_value_error(self, value):
-        # Act & Asser
+    def test_invalid_strings_raise_value_error(self, value: str):
+        # Act & Assert
         assert_that(value_type_to_bool).raises(ValueError).when_called_with(value)
 
     @pytest.mark.parametrize("value,is_true", [(0, False), (42, True), (0.0, False), (3.14, True)])
-    def test_numeric_values_follow_python_bool_rules(self, value, is_true):
+    def test_numeric_values_follow_python_bool_rules(self, value: Any, is_true: bool):
         # Act
         result = value_type_to_bool(value)
 
@@ -514,7 +515,7 @@ class TestValueTypeToDatetime:
             ("2023-05-15", datetime.datetime(2023, 5, 15)),
         ],
     )
-    def test_valid_iso_string_converts_to_datetime(self, value, expected):
+    def test_valid_iso_string_converts_to_datetime(self, value: str, expected: datetime.datetime):
         # Act & Assert
         assert_that(value_type_to_datetime(value)).is_equal_to(expected)
 
@@ -527,7 +528,7 @@ class TestValueTypeToDatetime:
             "not a date",
         ],
     )
-    def test_invalid_date_string_values_raises_value_error(self, value):
+    def test_invalid_date_string_values_raises_value_error(self, value: str):
         # Act & Assert
         assert_that(value_type_to_datetime).raises(ValueError).when_called_with(value)
 
@@ -542,7 +543,7 @@ class TestValueTypeToDatetime:
             (2023, 5, 15),
         ],
     )
-    def test_invalid_data_values_raises_type_error(self, value):
+    def test_invalid_data_values_raises_type_error(self, value: float | list[int] | dict[str, int] | Literal[42] | Literal[True] | Literal[2023]):
         # Act & Assert
         assert_that(value_type_to_datetime).raises(TypeError).when_called_with(value)
 
@@ -564,22 +565,22 @@ class TestValueTypeToInt:
         assert_that(result).is_equal_to(42)
 
     @pytest.mark.parametrize("value, expected", [(3.14, 3), (42.0, 42), (-1.5, -1)])
-    def test_float_converted_to_int(self, value, expected):
+    def test_float_converted_to_int(self, value: float, expected: Literal[3] | Literal[42] | Literal[-1]):
         # Act & Assert
         assert_that(value_type_to_int(value)).is_equal_to(expected)
 
     @pytest.mark.parametrize("value, expected", [("42", 42), ("10", 10), ("0", 0), ("+7", 7)])
-    def test_valid_string_converted_to_int(self, value, expected):
+    def test_valid_string_converted_to_int(self, value: Literal['42'] | Literal['10'] | Literal['0'] | Literal['+7'], expected: Literal[42] | Literal[10] | Literal[0] | Literal[7]):
         # Act & Assert
         assert_that(value_type_to_int(value)).is_equal_to(expected)
 
     @pytest.mark.parametrize("value", ["not a number", "42.5", "", "3.14"])
-    def test_invalid_string_raises_value_error(self, value):
+    def test_invalid_string_raises_value_error(self, value: Literal['not a number'] | Literal['42.5'] | Literal[''] | Literal['3.14']):
         # Act & Assert
         assert_that(value_type_to_int).raises(ValueError).when_called_with(value)
 
     @pytest.mark.parametrize("value, expected", [(True, 1), (False, 0)])
-    def test_boolean_converted_to_int(self, value, expected):
+    def test_boolean_converted_to_int(self, value: bool, expected: Literal[1] | Literal[0]):
         # Act
         result = value_type_to_int(value)
 
@@ -599,7 +600,7 @@ class TestValueTypeToInt:
             (1, 2),  # tuple]
         ],
     )
-    def test_other_types_raise_type_error(self, value):
+    def test_other_types_raise_type_error(self, value: list[int] | set[int] | frozenset[int] | bytearray | datetime.datetime | Literal[b"42"] | Literal[1]):
         # Act & Assert
         assert_that(value_type_to_int).raises(TypeError).when_called_with(value).described_as(
             f"Cannot convert {type(value)} to int"
@@ -623,7 +624,7 @@ class TestValueTypeToFloat:
         assert_that(result).is_equal_to(3.14)
 
     @pytest.mark.parametrize("value, expected", [(42, 42.0), (-10, -10.0), (0, 0.0)])
-    def test_int_converted_to_float(self, value, expected):
+    def test_int_converted_to_float(self, value: Literal[42] | Literal[-10] | Literal[0], expected: float):
         # Act & Assert
         assert_that(value_type_to_float(value)).is_equal_to(expected)
 
@@ -631,12 +632,12 @@ class TestValueTypeToFloat:
         "value, expected",
         [("42.5", 42.5), ("-10.5", -10.5), ("0.0", 0.0), ("+7.0", 7.0), ("3.14", 3.14), (".5", 0.5), ("5.", 5.0)],
     )
-    def test_valid_string_converted_to_float(self, value, expected):
+    def test_valid_string_converted_to_float(self, value: Literal['42.5'] | Literal['-10.5'] | Literal['0.0'] | Literal['+7.0'] | Literal['3.14'] | Literal['.5'] | Literal['5.'], expected: float):
         # When/Assert
         assert_that(value_type_to_float(value)).is_equal_to(expected)
 
     @pytest.mark.parametrize("value", ["not a number", "42.5.0", "", "3.14.15"])
-    def test_invalid_string_raises_value_error(self, value):
+    def test_invalid_string_raises_value_error(self, value: Literal['not a number'] | Literal['42.5.0'] | Literal[''] | Literal['3.14.15']):
         # Act & Assert
         assert_that(value_type_to_float).raises(ValueError).when_called_with(value)
 
@@ -644,7 +645,7 @@ class TestValueTypeToFloat:
         "value",
         [[1, 2, 3], {1, 2, 3}, frozenset([1, 2, 3]), b"3.14", bytearray(b"3.14"), datetime.datetime.now(), (1, 2)],
     )
-    def test_other_types_raise_type_error(self, value):
+    def test_other_types_raise_type_error(self, value: list[int] | set[int] | frozenset[int] | bytearray | datetime.datetime | Literal[b"3.14"] | Literal[1]):
         # Act & Assert
         assert_that(value_type_to_float).raises(TypeError).when_called_with(value).described_as(
             f"Cannot convert {type(value)} to float"
@@ -668,21 +669,21 @@ class TestValueTypeToComplex:
         assert_that(result).is_equal_to(3 + 4j)
 
     @pytest.mark.parametrize("value, expected", [(42, complex(42, 0)), (-10, complex(-10, 0)), (0, complex(0, 0))])
-    def test_int_converted_to_complex(self, value, expected):
+    def test_int_converted_to_complex(self, value: Literal[42] | Literal[-10] | Literal[0], expected: complex):
         # Act & Assert
         assert_that(value_type_to_complex(value)).is_equal_to(expected)
 
     @pytest.mark.parametrize(
         "value, expected", [(3.14, complex(3.14, 0)), (-10.5, complex(-10.5, 0)), (0.0, complex(0.0, 0))]
     )
-    def test_float_converted_to_complex(self, value, expected):
+    def test_float_converted_to_complex(self, value: float, expected: complex):
         # Act  & Assert
         assert_that(value_type_to_complex(value)).is_equal_to(expected)
 
     @pytest.mark.parametrize(
         "value, expected", [("3+4j", complex(3, 4)), ("-1-2j", complex(-1, -2)), ("5j", complex(0, 5))]
     )
-    def test_valid_string_converted_to_complex(self, value, expected):
+    def test_valid_string_converted_to_complex(self, value: Literal['3+4j'] | Literal['-1-2j'] | Literal['5j'], expected: complex):
         # Act & Assert
         assert_that(value_type_to_complex(value)).is_equal_to(expected)
 
@@ -702,7 +703,7 @@ class TestValueTypeToComplex:
             (1, 2),
         ],
     )
-    def test_other_types_raise_type_error(self, value):
+    def test_other_types_raise_type_error(self, value: list[int] | set[int] | frozenset[int] | bytearray | datetime.datetime | Literal[b"3+4j"] | Literal[1]):
         # Act & Assert
         assert_that(value_type_to_complex).raises(TypeError).when_called_with(value).described_as(
             f"Cannot convert {type(value)} to complex"
@@ -719,7 +720,7 @@ class TestValueTypeToList:
         assert_that(result).is_equal_to([])
 
     @pytest.mark.parametrize("value", [[1, 2, 3], {1, 2, 3}, frozenset([1, 2, 3])])
-    def test_list_types_returned_as_list(self, value):
+    def test_list_types_returned_as_list(self, value: list[int] | set[int] | frozenset[int]):
         # Act
         result = value_type_to_list(value)
 
@@ -728,19 +729,19 @@ class TestValueTypeToList:
         assert_that(result).is_equal_to([1, 2, 3])
 
     @pytest.mark.parametrize("value", ["a,b,c", "a, b, c", "a,  b,c"])
-    def test_string_split_by_commas(self, value):
+    def test_string_split_by_commas(self, value: Literal['a,b,c'] | Literal['a, b, c'] | Literal['a,  b,c']):
         # Act & Assert
         assert_that(value_type_to_list(value)).is_equal_to(["a", "b", "c"])
 
     @pytest.mark.parametrize("value", [b"1,2,3", bytearray(b"1,2,3")])
-    def test_bytes_decoded_and_split(self, value):
+    def test_bytes_decoded_and_split(self, value: bytearray | Literal[b"1,2,3"]):
         # Act & Assert
         assert_that(value_type_to_list(value)).is_equal_to(["1", "2", "3"])
 
     @pytest.mark.parametrize(
         "value, expected", [("1", ["1"]), (42, [42]), (3.14, [3.14]), (True, [True]), (3 + 4j, [3 + 4j])]
     )
-    def test_single_items_converte_to_single_list(self, value, expected):
+    def test_single_items_converte_to_single_list(self, value: float | complex | Literal['1'] | Literal[42] | Literal[True], expected: list[str] | list[int] | list[float] | list[bool] | list[complex]):
         # Act & Assert
         assert_that(value_type_to_list(value)).is_equal_to(expected)
 
@@ -758,7 +759,7 @@ class TestToType:
             (True, "True"),
         ],
     )
-    def test_to_type_string_conversion(self, value, expected):
+    def test_to_type_string_conversion(self, value: None | float | complex | Literal['a string'] | Literal[b"hello"] | Literal[123] | Literal[True], expected: Literal[''] | Literal['a string'] | Literal['hello'] | Literal['123'] | Literal['3.14'] | Literal['(3+4j)'] | Literal['True']):
         # Act & Assert
         assert_that(to_type(value, str)).is_equal_to(expected)
 
@@ -774,7 +775,7 @@ class TestToType:
             (True, b"True"),
         ],
     )
-    def test_to_type_bytes_conversion(self, value, expected):
+    def test_to_type_bytes_conversion(self, value: None | float | complex | Literal['a string'] | Literal[b"hello"] | Literal[123] | Literal[True], expected: Literal[b""] | Literal[b"a string"] | Literal[b"hello"] | Literal[b"123"] | Literal[b"3.14"] | Literal[b"(3+4j)"] | Literal[b"True"]):
         # Act & Assert
         assert_that(to_type(value, bytes)).is_equal_to(expected)
 
@@ -788,7 +789,7 @@ class TestToType:
             ("42", 42),
         ],
     )
-    def test_to_type_int_conversion(self, value, expected):
+    def test_to_type_int_conversion(self, value: float | Literal[1] | bool | Literal['42'], expected: Literal[1] | Literal[3] | Literal[0] | Literal[42]):
         # Act & Assert
         assert_that(to_type(value, int)).is_equal_to(expected)
 
@@ -802,7 +803,7 @@ class TestToType:
             ("42", 42.0),
         ],
     )
-    def test_to_type_float_conversion(self, value, expected):
+    def test_to_type_float_conversion(self, value: float | Literal[1] | bool | Literal['42'], expected: float):
         # Act & Assert
         assert_that(to_type(value, float)).is_equal_to(expected)
 
@@ -818,7 +819,7 @@ class TestToType:
             ((3 + 5j), (3 + 5j)),
         ],
     )
-    def test_to_type_complex_conversions(self, value, expected):
+    def test_to_type_complex_conversions(self, value: float | complex | Literal[1] | bool | Literal['42'] | Literal['42+5j'], expected: complex):
         # Act & Assert
         assert_that(to_type(value, complex)).is_equal_to(expected)
 
@@ -850,7 +851,7 @@ class TestToType:
             (False, False),
         ],
     )
-    def test_to_type_bool_conversion(self, value, expected):
+    def test_to_type_bool_conversion(self, value: None | Literal['true'] | Literal['True'] | Literal['TRUE'] | Literal['yes'] | Literal['Yes'] | Literal['YES'] | Literal['y'] | Literal['Y'] | Literal['1'] | Literal[1] | bool | Literal['false'] | Literal['False'] | Literal['FALSE'] | Literal['no'] | Literal['No'] | Literal['NO'] | Literal['n'] | Literal['N'] | Literal['0'] | Literal[0], expected: bool):
         # Act & Assert
         assert_that(to_type(value, bool)).is_equal_to(expected)
 
@@ -880,7 +881,7 @@ class TestToType:
             (bytearray(b"1,2,3"), frozenset([1, 2, 3])),
         ],
     )
-    def test_to_type_collection_conversions(self, value, expected):
+    def test_to_type_collection_conversions(self, value: list[int] | set[int] | frozenset[int] | bytearray | Literal['1,2,3'] | Literal['\'1\',\'2\',\'3\''] | Literal[b"1,2,3"], expected: list[int] | list[str] | set[int] | set[str] | frozenset[int] | frozenset[str]):
         # Act & Assert
         assert_that(to_type(value, type(expected))).is_equal_to(expected)
 
@@ -907,7 +908,7 @@ class TestToType:
             (None, datetime.datetime),
         ],
     )
-    def test_to_type_invalid_conversion_raises_value_error(self, value, target_type):
+    def test_to_type_invalid_conversion_raises_value_error(self, value: None, target_type: datetime.datetime):
         # Act & Assert
         assert_that(to_type).raises(ValueError).when_called_with(value, target_type)
 

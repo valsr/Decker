@@ -4,11 +4,8 @@ import argparse  # Added import
 import importlib.metadata
 import logging
 import os
-import tkinter.ttk as ttk
 
 from decker.Application import Application
-import decker.command.config as config_command
-import decker.command.device as device_command
 import decker.config
 import decker.logging
 
