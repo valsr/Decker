@@ -39,13 +39,14 @@ build-backend = "poetry.core.masonry.api"
 start = { cmd = "python -m decker" }
 run = { cmd = "python -m decker" }
 app = { cmd = "python -m decker" }
+client = { cmd = "python -m decker.client" }
 test  = { cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker tests" }
 mypy  = { cmd  = "mypy ." }
 black = { cmd  = "black ." }
 isort = { cmd  = "isort ." }
 pylint = { cmd  = "pylint src" }
-install-stubs = { cmd = "mypy --install-types"}
-stubgen = { cmd = "stubgen -o stubs" }
+mypy-stubs = { cmd = "mypy --install-types"}
+stubs = { cmd = "stubgen -o .stubs" }
 format = ["isort", "black"]
 
 [tool.poe.tasks.setup]
@@ -73,12 +74,10 @@ follow_untyped_imports = true
 module = ["StreamDeck.*"]
 disable_error_code = ["name-defined"]
 
-[tool.pytest]
-pythonpath = "tests"
-
 [tool.pytest.ini_options]
 timeout = 300
 asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
 
 
 [tool.coverage.run]
@@ -126,18 +125,18 @@ fail-under = 9.0
 # from-stdin =
 
 # Files or directories to be skipped. They should be base names, not paths.
-ignore = ["CVS", "stubs"]
+ignore = [".stubs", ".typings", ".venv", "dist", "build", "docs"]
 
 # Add files or directories matching the regular expressions patterns to the
 # ignore-list. The regex matches against paths and can be in Posix or Windows
 # format. Because '\' represents the directory delimiter on Windows systems, it
 # can't be used as an escape character.
-# ignore-paths = ["tests\\.*"]
+ignore-paths = [".stubs/.*", ".typings/.*", ".venv/.*"]
 
 # Files or directories matching the regular expression patterns are skipped. The
 # regex matches against base names, not paths. The default value ignores Emacs
 # file locks
-ignore-patterns = ["^\\.#"]
+ignore-patterns = ["^/.#"]
 
 # List of module names for which member attributes should not be checked (useful
 # for modules/projects where namespaces are manipulated during runtime and thus
@@ -472,6 +471,7 @@ enable = ["c-extension-no-member"]
 
 per-file-ignores = [
     "/tests/:missing-function-docstring,missing-module-docstring,missing-class-docstring",
+    "/stubs/",
 ]
 
 [tool.pylint.method_args]
