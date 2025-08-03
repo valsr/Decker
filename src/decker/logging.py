@@ -178,7 +178,7 @@ def log_once(key: str, level: int, message: str, *args: tuple[Any], **kwargs: di
         message (str): The message to log.
     """
     if key not in LOGGED:
-        logging.log(level, message, *args, **kwargs) # pyright: ignore[reportArgumentType]
+        logging.log(level, message, *args, **kwargs) # type: ignore
         LOGGED.append(key)
 
 
