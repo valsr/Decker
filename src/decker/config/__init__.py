@@ -67,14 +67,14 @@ class Config:
         Load configuration data from the backend.
         """
         data = self._backend.load()
-        self._data = flatten_dict.flatten(data, reducer="dot")  # type: ignore
+        self._data = flatten_dict.flatten(data, reducer="dot")
 
     def save(self):
         """
         Saves the current configuration data to the backend storage.
         """
-        data: dict[str, Any] = flatten_dict.unflatten(self._data, splitter="dot")  # type: ignore
-        self._backend.save(data)  # type: ignore
+        data: dict[str, Any] = flatten_dict.unflatten(self._data, splitter="dot")
+        self._backend.save(data)
 
     def has(self, key: str) -> bool:
         """Check if the given key exists within the internal configuration data.
