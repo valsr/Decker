@@ -46,8 +46,9 @@ black = { cmd  = "black ." }
 isort = { cmd  = "isort ." }
 pylint = { cmd  = "pylint src" }
 mypy-stubs = { cmd = "mypy --install-types"}
-stubs = { cmd = "stubgen -o .stubs" }
+stub-gen = { cmd = "stubgen -o .stubs --include-private" }
 format = ["isort", "black"]
+stubs = ["stub-gen", "mypy-stubs"]
 
 [tool.poe.tasks.setup]
 help = "Setup the project"
@@ -65,6 +66,16 @@ show_error_codes = true
 check_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = false
+mypy_path = ["stubs", "typings", ".stubs"]
+exclude = [
+    "stubs",
+    "typings",
+    ".stubs",
+    ".venv",
+    "dist",
+    "build",
+    "docs",
+]
 
 [[tool.mypy.overrides]]
 module = ["decker.*"]
@@ -73,6 +84,11 @@ follow_untyped_imports = true
 [[tool.mypy.overrides]]
 module = ["StreamDeck.*"]
 disable_error_code = ["name-defined"]
+
+# Disable for 3rd party modules/stubs
+[[tool.mypy.overrides]]
+module = ["rpyc.*"]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 timeout = 300
