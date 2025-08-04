@@ -101,10 +101,10 @@ def configure(
     handler = logging.StreamHandler()
     handler.addFilter(NamespaceFilter())
     handler.addFilter(SeverFilter(server_id))
-    cli_format = "%(levelname)s"
+    cli_format = "%(asctime)s %(levelname)s"
     if server_id:
         cli_format += " (%(server_id)s)"
-    cli_format += ": %(message)s"
+    cli_format += "[%(namespace)s:%(lineno)d]: %(message)s"
 
     cli_formatter = logging.Formatter(cli_format)
     handler.setFormatter(cli_formatter)
