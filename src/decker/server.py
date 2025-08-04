@@ -1,5 +1,6 @@
 """Server and daemon management for the Decker application."""
 
+from copy import deepcopy
 import logging
 import multiprocessing
 import signal
@@ -10,10 +11,10 @@ import rpyc
 import rpyc.utils.factory
 import rpyc.core.protocol
 from rpyc.core.service import Service
-from rpyc.utils.server import ThreadedServer
-
+from rpyc.utils.server import ThreadPoolServer
 
 from decker.Application import Application
+from decker.api import API
 
 
 class DeckerService(Service):
@@ -33,7 +34,8 @@ class DeckerService(Service):
         """Handle client disconnection."""
         logging.info("Client disconnected from Decker service")
 
-    def exposed_start_application(self) -> bool:
+    @rpyc.utils.exposed
+    def start(self) -> bool:
         """
         Start the Decker application.
 
@@ -56,7 +58,7 @@ class DeckerService(Service):
             return False
 
     @rpyc.utils.exposed
-    def stop_application(self) -> bool:
+    def stop(self) -> bool:
         """
         Stop the Decker application.
 
@@ -91,7 +93,7 @@ class DeckerService(Service):
             "timestamp": self._last_heartbeat,
             "application_running": self._application is not None,
         }
-        logging.debug("Heartbeat received: %s", status)
+        # TODO derive status from status method
         return status
 
     @rpyc.utils.exposed
@@ -106,14 +108,13 @@ class DeckerService(Service):
             "service_status": "running",
             "application_running": self._application is not None,
             "last_heartbeat": self._last_heartbeat,
-            "uptime": time.time() - self._last_heartbeat,
         }
 
 
 class ServerProcess:
     """Manages the RPyC server process."""
 
-    def __init__(self, port: int = 18861):
+    def __init__(self, port: int = 18861, startup_wait: float = 5.0):
         """
         Initialize the server process.
 
@@ -122,7 +123,8 @@ class ServerProcess:
         """
         self.port = port
         self.process: multiprocessing.Process | None = None
-        self._server: ThreadedServer | None = None
+        self._server: ThreadPoolServer | None = None
+        self._startup_wait: float = startup_wait  # Time to wait for server startup
 
     def start(self) -> bool:
         """
@@ -141,10 +143,13 @@ class ServerProcess:
             self.process.start()
 
             # Give the server a moment to start
-            time.sleep(1)
+            time.sleep(self._startup_wait)
 
             if self.process.is_alive():
-                logging.info("RPyC server started successfully with PID %d", self.process.pid)
+                if not API.request("start"):
+                    logging.error("Failed to start Decker service application")
+                    self.stop() # Clean up if failed to start
+                    return False
                 return True
             else:
                 logging.error("Failed to start RPyC server")
@@ -181,6 +186,7 @@ class ServerProcess:
             logging.error("Failed to stop server process: %s", e)
             return False
 
+    @property
     def is_running(self) -> bool:
         """
         Check if the server process is running.
@@ -190,7 +196,8 @@ class ServerProcess:
         """
         return self.process is not None and self.process.is_alive()
 
-    def get_pid(self) -> int | None:
+    @property
+    def pid(self) -> int | None:
         """
         Get the process ID of the server.
 
@@ -201,20 +208,23 @@ class ServerProcess:
             return self.process.pid
         return None
 
+    def _server_signal_handler(self, signum: int, _: Any):
+        """Handle signals for graceful shutdown."""
+        if not self._server:
+            return
+
+        logging.info("Received signal %d, shutting down server", signum)
+        API.request("stop")
+        self._server.close()
+
     def _run_server(self):
         """Run the RPyC server in the subprocess."""
         try:
-            # Set up signal handlers for graceful shutdown
-            def signal_handler(signum: int, _frame: Any):
-                logging.info("Received signal %d, shutting down server", signum)
-                if self._server:
-                    self._server.close()
-
-            signal.signal(signal.SIGTERM, signal_handler)
-            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, self._server_signal_handler)
+            signal.signal(signal.SIGINT, self._server_signal_handler)
 
             # Create and start the server
-            self._server = ThreadedServer(
+            self._server = ThreadPoolServer(
                 DeckerService(),
                 port=self.port,
                 protocol_config={"allow_public_attrs": True}
@@ -226,108 +236,106 @@ class ServerProcess:
             logging.error("Server process encountered an error: %s", e)
 
 
-class DaemonManager:
-    """Manages the daemon mode with health monitoring and auto-restart capabilities."""
+class ServerManager:
+    """Manages the server with health monitoring and auto-restart capabilities."""
 
-    def __init__(self, port: int = 18861, heartbeat_interval: float = 2.0, max_failed_heartbeats: int = 2):
+    def __init__(self, port: int = 18861, min_monitor_interval: float = 5.0, max_failed_heartbeats: int = 2):
         """
-        Initialize the daemon manager.
+        Initialize the server manager.
 
         Args:
             port (int): The port for the RPyC server.
-            heartbeat_interval (float): Time in seconds between heartbeats.
+            min_monitor_interval (float): Minimum time in seconds between health checks.
             max_failed_heartbeats (int): Maximum consecutive failed heartbeats before restart.
         """
         self.port = port
-        self.heartbeat_interval = heartbeat_interval
+        self.monitor_interval = min_monitor_interval
         self.max_failed_heartbeats = max_failed_heartbeats
         self.server_process = ServerProcess(port)
-        self._running = False
         self._failed_heartbeats = 0
 
-    def start_daemon(self) -> bool:
+    def start(self) -> bool:
         """
-        Start the daemon with health monitoring.
+        Start the server with health monitoring.
 
         Returns:
-            bool: True if the daemon was started successfully, False otherwise.
+            bool: True if the server was started successfully, False otherwise.
         """
-        logging.info("Starting Decker daemon")
+        logging.info("Starting Decker server")
 
         if not self.server_process.start():
             logging.error("Failed to start server process")
             return False
 
-        self._running = True
-
         try:
-            self._monitor_health()
+            self._monitor()
         except KeyboardInterrupt:
             logging.info("Received interrupt signal, shutting down daemon")
         finally:
-            self._shutdown()
+            self.stop()
 
         return True
 
-    def stop_daemon(self) -> bool:
+    def stop(self) -> bool:
         """
-        Stop the daemon.
+        Stop the server.
 
         Returns:
-            bool: True if the daemon was stopped successfully, False otherwise.
+            bool: True if the server was stopped successfully, False otherwise.
         """
-        logging.info("Stopping Decker daemon")
-        self._running = False
+        logging.info("Stopping Decker server")
         return self.server_process.stop()
 
-    def _monitor_health(self):
+    def _monitor(self):
         """Monitor the health of the server process and restart if necessary."""
         logging.info("Starting health monitoring (heartbeat interval: %.1fs, max failures: %d)",
-                    self.heartbeat_interval, self.max_failed_heartbeats)
+                    self.monitor_interval, self.max_failed_heartbeats)
 
-        while self._running:
+        while True:
             try:
                 # Check if server process is still alive
-                if not self.server_process.is_running():
+                if not self.server_process.is_running:
                     logging.warning("Server process died, restarting...")
                     self._restart_server()
                     continue
 
-                # Perform heartbeat check
-                if self._check_heartbeat():
-                    self._failed_heartbeats = 0
-                else:
-                    self._failed_heartbeats += 1
-                    logging.warning("Heartbeat failed (%d/%d)",
-                                  self._failed_heartbeats, self.max_failed_heartbeats)
+                # Perform heartbeat check (application status)
+                self._check_heartbeat()
 
-                    if self._failed_heartbeats >= self.max_failed_heartbeats:
-                        logging.error("Maximum failed heartbeats reached, restarting server")
-                        self._restart_server()
+                # TODO: Perform soft/hard memory monitoring
 
-                time.sleep(self.heartbeat_interval)
+                # Sleep for the specified interval before the next check
+                time.sleep(self.monitor_interval)
 
             except Exception as e:
                 logging.error("Error during health monitoring: %s", e)
-                time.sleep(self.heartbeat_interval)
+                time.sleep(self.monitor_interval)
 
-    def _check_heartbeat(self) -> bool:
+    def _check_heartbeat(self):
         """
-        Check the heartbeat of the server.
-
-        Returns:
-            bool: True if heartbeat is successful, False otherwise.
+        Check server heartbeat.
         """
         try:
-            conn: rpyc.core.protocol.Connection = rpyc.utils.factory.connect("localhost", self.port)
-            response = conn.root.heartbeat()
-            conn.close()
+            logging.debug("Sending heartbeat to server on port %d", self.port)
+            response = API.request("heartbeat")
+            if response is None:
+                logging.warning("No response from server, assuming unhealthy")
+                self._failed_heartbeats += 1
+                return
 
-            logging.debug("Heartbeat successful: %s", response)
-            return True
+            if response.get("status") != "healthy":
+                logging.warning("Unhealthy server response: %s", response)
+                self._failed_heartbeats += 1
+            # if response.get("application_status") != "running":
+            #     logging.warning("Application is not running, restarting server")
+            #     self._restart_server()
         except Exception as e:
             logging.warning("Heartbeat failed: %s", e)
-            return False
+            self._failed_heartbeats += 1
+
+        if self._failed_heartbeats >= self.max_failed_heartbeats:
+            logging.error("Maximum failed heartbeats reached, restarting server")
+            self._restart_server()
 
     def _restart_server(self) -> bool:
         """
@@ -352,25 +360,17 @@ class DaemonManager:
             logging.error("Failed to restart server")
             return False
 
-    def _shutdown(self):
-        """Perform cleanup during shutdown."""
-        logging.info("Shutting down daemon")
-        self._running = False
-        self.server_process.stop()
-
-    def get_status(self) -> dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         """
-        Get the current status of the daemon.
+        Get the current status of the server.
 
         Returns:
-            dict[str, Any]: A dictionary containing daemon status information.
+            dict[str, Any]: A dictionary containing server status information.
         """
         return {
-            "daemon_running": self._running,
-            "server_running": self.server_process.is_running(),
-            "server_pid": self.server_process.get_pid(),
+            "pid": self.server_process.pid,
             "failed_heartbeats": self._failed_heartbeats,
             "max_failed_heartbeats": self.max_failed_heartbeats,
-            "heartbeat_interval": self.heartbeat_interval,
+            "heartbeat_interval": self.monitor_interval,
             "port": self.port,
         }

@@ -8,6 +8,7 @@ import os
 from decker.Application import Application
 import decker.config
 import decker.logging
+from decker.server import ServerManager
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -70,5 +71,10 @@ def main() -> None:
     logging.debug(args)
 
     # Start the application
-    app = Application()
-    app.run()
+    manager = ServerManager()
+    try:
+        manager.start()
+    except Exception as e:
+        logging.error("Error occurred while starting the server manager: %s", e)
+    finally:
+        manager.stop()
