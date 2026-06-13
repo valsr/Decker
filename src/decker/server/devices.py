@@ -1,16 +1,23 @@
 """Stream Deck device enumeration."""
 
 import logging
+import zlib
 from typing import Any
 
 from StreamDeck.DeviceManager import DeviceManager
+
+
+def _device_id(serial: str) -> str:
+    """Derive a stable hex ID from a device serial number via CRC-32."""
+    return format(zlib.crc32(serial.encode()) & 0xFFFFFFFF, "08x")
 
 
 def list_devices() -> list[dict[str, Any]]:
     """Return info for every connected Stream Deck device.
 
     Each device is opened briefly to read its serial number, then closed.
-    Devices that fail to open are included with a best-effort subset of info.
+    Devices that fail to open are included with a best-effort subset of info
+    and no id (serial could not be read).
     """
     try:
         decks = DeviceManager().enumerate()
@@ -21,7 +28,7 @@ def list_devices() -> list[dict[str, Any]]:
     result = []
     for deck in decks:
         info: dict[str, Any] = {
-            "id": deck.id(),
+            "id": None,
             "type": deck.deck_type(),
             "vendor_id": deck.vendor_id(),
             "product_id": deck.product_id(),
@@ -30,9 +37,11 @@ def list_devices() -> list[dict[str, Any]]:
         }
         try:
             deck.open()
-            info["serial"] = deck.get_serial_number()
+            serial = deck.get_serial_number()
+            info["serial"] = serial
+            info["id"] = _device_id(serial)
         except Exception as e:
-            logging.warning("Could not open device %s to read serial: %s", info["id"], e)
+            logging.warning("Could not open device to read serial: %s", e)
         finally:
             try:
                 deck.close()
