@@ -805,14 +805,14 @@ files = [
 
 [[package]]
 name = "streamdeck"
-version = "0.9.6"
+version = "0.9.8"
 description = "Library to control Elgato StreamDeck devices."
 optional = false
-python-versions = ">=3.8"
+python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "streamdeck-0.9.6-py3-none-any.whl", hash = "sha256:e5fdcce06d399e249cfee7f0363eb12343b90a8ed2bfc1cd8408ced021ab184b"},
-    {file = "streamdeck-0.9.6.tar.gz", hash = "sha256:ec42d9b711b352ea274ad305a6eb48ece1eed3a5bffe70b928e082dce0f788f0"},
+    {file = "streamdeck-0.9.8-py3-none-any.whl", hash = "sha256:95c5a0a5349ff8ed5f0b7dcec1a955afc29122cf89e4b2797ced01ac8d61ff32"},
+    {file = "streamdeck-0.9.8.tar.gz", hash = "sha256:acee4ad207a40d4cc2256d3a4c22b9f591e3c390efbe515e439ce518b31d0125"},
 ]
 
 [[package]]
@@ -1002,4 +1002,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.14"
-content-hash = "b64a0f81f9ffc05e401fb10b2de1af0e39fbcc3ca7a1afe95291594d3cd8753c"
+content-hash = "63319a69fc8f3ccbcc5a4ad9d5c1001344bb0625a4c999deb0a68fe745aaee2a"
