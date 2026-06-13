@@ -76,7 +76,7 @@ Run `format` before the others; it changes files that the linter then re-checks.
 - Server must support multiple simultaneous clients.
 - All hardware interaction goes through the server; the client never talks to hardware directly.
 - Fault-tolerance (restart, health checking, memory limiting) lives in the monitor, not in the server.
-- Configuration is TOML-based (`toml` library); use `flatten-dict` for nested config operations.
+- Configuration is YAML-based; use `flatten-dict` for nested config operations.
 - RPyC is the IPC layer between server and client.
 
 ## Custom type stubs
