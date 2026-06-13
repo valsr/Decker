@@ -1,5 +1,6 @@
 """RPyC service definition for the Decker server."""
 
+import inspect
 import logging
 import time
 from typing import Any
@@ -97,3 +98,21 @@ class DeckerService(Service):
             "application_running": self._application is not None,
             "last_heartbeat": self._last_heartbeat,
         }
+
+    @rpyc.utils.exposed
+    def commands(self) -> dict[str, dict[str, str]]:
+        """Return metadata for all user-defined exposed commands."""
+        result: dict[str, dict[str, str]] = {}
+        for attr, method in self.__class__.__dict__.items():
+            if not callable(method) or not getattr(method, "__exposed__", False) or attr == "commands":
+                continue
+            cmd_path = ".".join(attr.split("_"))
+            annotations = getattr(method, "__annotations__", {})
+            ret = annotations.get("return", type(None))
+            params = [p for p in inspect.signature(method).parameters if p != "self"]
+            result[cmd_path] = {
+                "description": (inspect.getdoc(method) or "").split("\n", maxsplit=1)[0],
+                "return_type": getattr(ret, "__name__", str(ret)),
+                "params": ", ".join(params),
+            }
+        return result
