@@ -7,7 +7,7 @@ import sys
 from typing import Any
 
 import rpyc.utils.factory
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QGridLayout,
@@ -36,6 +36,8 @@ _DEVICE_GRIDS: dict[str, tuple[int, int]] = {
 _BTN_SIZE = 64
 _BTN_GAP = 8
 _PAGE_MARGIN = 20
+_HEARTBEAT_MS = 5_000
+_RETRY_MS = 5_000
 
 _GLASS_BTN_STYLE = """
 QPushButton {
@@ -94,6 +96,8 @@ class _ConnectPage(QWidget):
         self._error_label.setWordWrap(True)
         self._error_label.setVisible(False)
         self._address_input = QLineEdit(f"{host}:{port}")
+        self._retry_timer = QTimer(self)
+        self._retry_timer.timeout.connect(self._on_retry_tick)
         self.setMinimumWidth(300)
         self._build_ui()
 
@@ -105,6 +109,15 @@ class _ConnectPage(QWidget):
     def clear_error(self) -> None:
         """Hide the current error message."""
         self._error_label.setVisible(False)
+
+    def start_auto_retry(self) -> None:
+        """Start retrying the connection every 5 seconds (no-op if already running)."""
+        if not self._retry_timer.isActive():
+            self._retry_timer.start(_RETRY_MS)
+
+    def stop_auto_retry(self) -> None:
+        """Stop the automatic retry loop."""
+        self._retry_timer.stop()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -140,6 +153,10 @@ class _ConnectPage(QWidget):
         root.addStretch()
 
     def _on_connect_clicked(self) -> None:
+        host, port = _parse_address(self._address_input.text(), self._default_port)
+        self.connect_requested.emit(host, port)
+
+    def _on_retry_tick(self) -> None:
         host, port = _parse_address(self._address_input.text(), self._default_port)
         self.connect_requested.emit(host, port)
 
@@ -212,6 +229,8 @@ class ClientWindow(QMainWindow):
         self._connect_page = _ConnectPage(self._host, self._port)
         self._device_page = _DevicePage()
         self._pages = QStackedWidget()
+        self._heartbeat_timer = QTimer(self)
+        self._heartbeat_timer.timeout.connect(self._heartbeat_check)
         self._build_ui()
 
     def show(self) -> None:
@@ -220,7 +239,9 @@ class ClientWindow(QMainWindow):
         self._try_connect(self._host, self._port)
 
     def closeEvent(self, event: Any) -> None:  # pylint: disable=invalid-name
-        """Disconnect cleanly before closing."""
+        """Stop timers and disconnect cleanly before closing."""
+        self._heartbeat_timer.stop()
+        self._connect_page.stop_auto_retry()
         self._disconnect()
         super().closeEvent(event)
 
@@ -244,8 +265,7 @@ class ClientWindow(QMainWindow):
             self._load_device()
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not connect to server: %s", e)
-            self._connect_page.show_error(f"Cannot connect to {host}:{port} — {e}")
-            self._pages.setCurrentIndex(0)
+            self._go_connect_page(f"Cannot connect to {host}:{port} — {e}")
 
     def _disconnect(self) -> None:
         if self._conn is not None:
@@ -255,35 +275,54 @@ class ClientWindow(QMainWindow):
                 pass
             self._conn = None
 
+    def _heartbeat_check(self) -> None:
+        """Periodic health check; returns to the connect page if the server is unreachable."""
+        if self._conn is None:
+            return
+        try:
+            response = self._conn.root.heartbeat()
+            if response.get("status") != "healthy":
+                raise ValueError(f"unexpected response: {response!r}")
+        except Exception as e:  # pylint: disable=broad-except
+            logging.warning("Server heartbeat failed: %s", e)
+            self._go_connect_page(f"Lost connection to server — {e}")
+
+    def _go_connect_page(self, error_msg: str = "") -> None:
+        """Switch to the connect page, show an error if given, and start auto-retry."""
+        self._heartbeat_timer.stop()
+        self._disconnect()
+        if error_msg:
+            self._connect_page.show_error(error_msg)
+        self._pages.setCurrentIndex(0)
+        self._connect_page.start_auto_retry()
+
     def _load_device(self) -> None:
-        """Fetch the device list and show the first device's button grid."""
+        """Fetch the device list and switch to the device grid on success."""
         if self._conn is None:
             return
         try:
             devices = list(self._conn.root.devices_list())
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not list devices: %s", e)
-            self._connect_page.show_error(f"Connected but could not list devices — {e}")
-            self._pages.setCurrentIndex(0)
+            self._go_connect_page(f"Connected but could not list devices — {e}")
             return
 
         if not devices:
-            self._connect_page.show_error("No Stream Deck devices found. Connect a device and try again.")
-            self._pages.setCurrentIndex(0)
+            self._go_connect_page("No Stream Deck devices found. Connect a device and try again.")
             return
 
-        self._show_device(dict(devices[0]))
+        self._go_device_page(dict(devices[0]))
 
-    def _show_device(self, device: dict[str, Any]) -> None:
-        """Persist the default device, build the grid, and resize the window."""
+    def _go_device_page(self, device: dict[str, Any]) -> None:
+        """Persist the default device, build the grid, switch page, and start heartbeat."""
         device_id = device.get("id")
         if device_id:
             config.set("client.default_device", str(device_id))
+        self._connect_page.stop_auto_retry()
         grid_w, grid_h = self._device_page.set_device(device)
         self._pages.setCurrentIndex(1)
-        win_w = grid_w + 2 * _PAGE_MARGIN
-        win_h = grid_h + 72  # title (22px) + spacing (10px) + margins (40px)
-        self.resize(win_w, win_h)
+        self.resize(grid_w + 2 * _PAGE_MARGIN, grid_h + 72)
+        self._heartbeat_timer.start(_HEARTBEAT_MS)
 
 
 def main() -> None:
