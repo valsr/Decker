@@ -1,541 +1,253 @@
-"""Module for managing application configurations."""
+"""Multilayer application configuration.
 
-import builtins
-import datetime
-import logging
-import os
-from collections.abc import Callable, Generator
-from typing import Any
+Precedence (lowest → highest): defaults (bundled YAML) < user (~/.decker/config.yaml) < memory (runtime overrides).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, get_args, get_origin
 
 import flatten_dict
-from _collections_abc import dict_items, dict_keys, dict_values
 
 from decker.common.config.backend import (
-    ConfigBackend,
-    ReadOnlyConfigBackend,
-    TomlFileBackend,
+    DefaultBackend,
+    MemoryBackend,
+    ReadOnlyBackend,
+    UserBackend,
+    WritableBackend,
 )
 
-ValueType = (
-    str
-    | int
-    | float
-    | complex
-    | list[Any]
-    | set[Any]  # pylint: disable=used-before-assignment
-    | frozenset[Any]
-    | bool
-    | bytes
-    | bytearray
-    | datetime.datetime
-)
+# ---------------------------------------------------------------------------
+# Public type alias
+# ---------------------------------------------------------------------------
 
-config_items = dict_items[str, ValueType]
-config_keys = dict_keys[str, ValueType]
-config_values = dict_values[str, ValueType]
+ValueType = str | int | float | bool | list[Any] | None
 
-KEY_SEPARATOR = "."
-USER_CONFIG_FILE = "~/.decker"
+# ---------------------------------------------------------------------------
+# Module-level paths
+# ---------------------------------------------------------------------------
 
+_DEFAULTS_PATH: Path = Path(__file__).parent / "defaults.yml"
+_USER_CONFIG_PATH: Path = Path.home() / ".decker" / "config.yaml"
 
-def is_valid_value_type(value: Any) -> bool:
-    """
-    Check if the value is of a valid type for configuration.
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
-    Args:
-        value (Any): The value to check.
-
-    Returns:
-        bool: True if the value is of a valid type, otherwise False.
-    """
-    return isinstance(
-        value, (str, int, float, complex, list, builtins.set, frozenset, bool, bytes, bytearray, datetime.datetime)
-    )
+_TRUTHY: frozenset[str] = frozenset(("true", "yes", "1", "y", "on"))
+_FALSY: frozenset[str] = frozenset(("false", "no", "0", "n", "off"))
 
 
-def _match_key_exactly(key: str, value: ValueType) -> bool:
-    return key == key
+def _flatten(data: dict[str, Any]) -> dict[str, ValueType]:
+    if not data:
+        return {}
+    return flatten_dict.flatten(data, reducer="dot")
 
 
-def _match_key_or_subkey(key: str, value: ValueType) -> bool:
-    return key == key or key.startswith(key + KEY_SEPARATOR)
+def _unflatten(data: dict[str, ValueType]) -> dict[str, Any]:
+    if not data:
+        return {}
+    return flatten_dict.unflatten(data, splitter="dot")
 
 
-class ReadOnlyConfigSource:
-    """
-    A class for managing configuration data from a single backend.
-    """
-
-    def __init__(self, name: str, backend: ReadOnlyConfigBackend):
-        """
-        Initialize the configuration instance with the given backend manager.
-
-        Args:
-            name (str): The name of the configuration source.
-            backend (decker.common.config.backend.ConfigBackend): An instance managing backend operations.
-        """
-        self._name = name
-        self._backend = backend
-        self._data: dict[str, ValueType] = {}  # flat dictionary
-
-    @property
-    def name(self) -> str:
-        """Get the name of the configuration source."""
-        return self._name
-
-    def get_backend(self) -> ReadOnlyConfigBackend:
-        """
-        Get the backend associated with this configuration source.
-
-        Returns:
-            ReadOnlyConfigBackend: The backend managing the configuration data.
-        """
-        return self._backend
-
-    def load(self):
-        """Load configuration data from the backend."""
-        data = self._backend.load()
-        self._data = flatten_dict.flatten(data, reducer="dot")
-
-    def has(self, key: str) -> bool:
-        """Check if the given key exists within the internal configuration data.
-
-        Args:
-            key (str): The key to search for in the configuration data.
-
-        Returns:
-            bool: True if the key is found in the configuration data, otherwise False.
-        """
-        return key in self._data
-
-    def get(self, key: str) -> ValueType:
-        """
-        Retrieve the configuration value for the given key.
-
-        Parameters:
-            key (str): The key for which to retrieve the configuration value.
-
-        Returns:
-            ValueType: The value associated with the key if it exists.
-
-        Raises:
-            KeyError: If the key is not found in the collection.
-        """
-        return self.__getitem__(key)
-
-    def items(self, key: str | None = None) -> config_items:
-        """
-        Retrieve configuration entries that match the provided key or its sub-keys.
-
-        Parameters:
-            key (str, Optional): The configuration key to filter by. If None, all entries are returned.
-
-        Returns:
-            list[tuple[str, ValueType]]: A list of tuples, where each tuple contains a key and its value.
-        """
-        if not key:
-            return self._data.items()
-        return dict(self.find(_match_key_or_subkey)).items()
-
-    def keys(self) -> config_keys:
-        """Retrieve all keys in the configuration data."""
-        return self._data.keys()
-
-    def values(self) -> config_values:
-        """Retrieve all values in the configuration data."""
-        return self._data.values()
-
-    def __getitem__(self, key: str) -> ValueType:
-        """
-        Retrieve the value associated with the given key.
-
-        Parameters:
-            key (str): The key whose corresponding value is to be returned.
-
-        Returns:
-            ValueType: The value associated with the provided key.
-
-        Raises:
-            KeyError: If the key is not found in the collection.
-        """
-        return self._data[key]
-
-    def find(self, callback: Callable[[str, ValueType], bool]) -> Generator[tuple[str, ValueType], None, None]:
-        """
-        Iterates over the internal data dictionary and yields key-value pairs for which the provided callback
-        returns True.
-
-        Parameters:
-            callback (Callable[[str, ValueType], bool]): A function that takes a key and a value from the
-                internal data dictionary and returns a boolean. If it returns True, the key-value pair is
-                yielded.
-
-        Yields:
-            tuple[str, ValueType]: A tuple containing key-value pairs from the internal data dictionary
-                for each entry where the callback returns True.
-
-        Raises:
-            TypeError: If the provided callback is not a callable function.
-        """
-        if not callable(callback):
-            raise TypeError("callback must be a callable function")
-
-        for key, value in self._data.items():
-            if callback(key, value):
-                yield (key, value)
+def _is_valid(value: Any) -> bool:
+    return isinstance(value, (str, int, float, bool, list, type(None)))
 
 
-class ConfigSource(ReadOnlyConfigSource):
-    """
-    A class for managing configuration data from a single backend.
-    """
+def _to_bool(value: ValueType) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lower = value.lower().strip()
+        if lower in _TRUTHY:
+            return True
+        if lower in _FALSY:
+            return False
+        raise ValueError(f"Cannot interpret {value!r} as bool")
+    raise TypeError(f"Cannot convert {type(value).__name__} to bool")
 
-    def __init__(self, name: str, backend: ConfigBackend):
-        """
-        Initialize the configuration instance with the given backend manager.
 
-        Args:
-            name (str): The name of the configuration source.
-            backend (decker.common.config.backend.ConfigBackend): An instance managing backend operations.
-        """
-        self._backend: ConfigBackend
-        super().__init__(name, backend)
+def _to_list(value: ValueType) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",")]
+    return [value]
 
-    def load(self):
-        """Load configuration data from the backend."""
-        data = self._backend.load()
-        self._data = flatten_dict.flatten(data, reducer="dot")
 
-    def save(self):
-        """Saves the current configuration data to the backend storage."""
-        data: dict[str, Any] = flatten_dict.unflatten(self._data, splitter="dot")
-        self._backend.save(data)
+def _convert(value: ValueType, target: type) -> Any:
+    """Convert value to target type, supporting generic aliases like list[int]."""
+    origin = get_origin(target)
 
-    def set(self, key: str, value: ValueType) -> None:
-        """
-        Sets a configuration key with the provided value. If any parent key exists, a ConfigurationKeyExists
-        exception is raised.
+    if origin is list or target is list:
+        lst = _to_list(value)
+        args = get_args(target)
+        if args:
+            return [_convert(item, args[0]) for item in lst]
+        return lst
 
-        Parameters:
-            key (str): The configuration key to set.
-            value (ValueType): The value to associate with the key.
+    if target is bool:
+        return _to_bool(value)
 
-        Raises:
-            ConfigurationKeyExists: If a parent key of the given key already exists in the configuration data.
-            InvalidConfigurationValue: If the value is not of a valid type.
-        """
-        self.__setitem__(key, value)
+    if isinstance(value, target):
+        return value
 
-    def __setitem__(self, key: str, value: ValueType) -> None:
-        """
-        Assign a configuration value using dictionary-like item assignment.
+    try:
+        return target(value)
+    except (ValueError, TypeError) as exc:
+        name = getattr(target, "__name__", str(target))
+        raise TypeError(f"Cannot convert {value!r} to {name}") from exc
 
-        Parameters:
-            key (str): The key identifying the configuration setting.
-            value (ValueType): The value to assign to the key.
 
-        Returns:
-            None
-        """
-        if not is_valid_value_type(value):
-            raise InvalidConfigurationValue(
-                f"Value for {key} is not a valid type must be one of "
-                "{str, int, float, list, complex, set, bool, bytes, bytearray, datetime.datetime}"
-            )
-
-        paths = key.split(".")
-        for i in range(1, len(paths)):
-            parent_key = ".".join(paths[:i])
-            if parent_key in self._data:
-                raise ConfigurationKeyExists(
-                    f"Can't add key {key}: parent key {parent_key} is already in the dictionary"
-                )
-
-        if isinstance(value, bytes):
-            value_str = value.decode("utf-8")
-        else:
-            value_str = str(value)
-        logging.debug("Setting configuration key %s to %s", key, value_str)
-        self._data[key] = value
-        self.save()
-
-    def unset(self, key: str) -> None:
-        """
-        Remove configuration key(s) that match the provided key.
-
-        Parameters:
-            key (str): The base key or key prefix identifying the configuration entries to be removed.
-        """
-        self.__delitem__(key)
-
-    def __delitem__(self, key: str) -> None:
-        """
-        Remove a configuration key using dictionary-like item deletion.
-
-        Parameters:
-            key (str): The key identifying the configuration setting to remove.
-
-        Returns:
-            None
-        """
-        keys = [key for key, _ in self.items(key)]
-        remove = False
-
-        for k in keys:
-            logging.debug("Removing configuration key %s", k)
-            self._data.pop(k)
-            remove = True
-
-        if remove:
-            self.save()
+# ---------------------------------------------------------------------------
+# Config class
+# ---------------------------------------------------------------------------
 
 
 class Config:
-    """
-    A class for managing configuration data that can be loaded from and saved to a backend(s).
-    """
+    """Multilayer configuration manager: defaults < user < memory."""
 
-    def __init__(self):
-        """Initialize the configuration instance with the given backend manager."""
-        self._sources: list[ReadOnlyConfigSource | ConfigSource] = []
+    def __init__(
+        self,
+        defaults_backend: ReadOnlyBackend,
+        user_backend: WritableBackend,
+        memory_backend: MemoryBackend,
+    ):
+        self._defaults_backend = defaults_backend
+        self._user_backend = user_backend
+        self._memory_backend = memory_backend
+        self._defaults: dict[str, ValueType] = {}
+        self._user: dict[str, ValueType] = {}
+        self._memory: dict[str, ValueType] = {}
 
-    def load(self):
-        """Load configuration data from the backend."""
-        for source in self._sources:
-            source.load()
-            # FIXME: Validate that the configuration data is valid when loading before loading the data
+    def load(self) -> None:
+        """Load defaults and user layers from their backends."""
+        self._defaults = _flatten(self._defaults_backend.load())
+        self._user = _flatten(self._user_backend.load())
 
-    def save(self):
-        """Saves the current configuration data to the backend storage."""
-        for s in self._sources:
-            if isinstance(s, ConfigSource):
-                s.save()
-            else:
-                logging.warning("Skipping save for read-only source: %s", s)
+    def load_memory(self, data: dict[str, Any]) -> None:
+        """Replace the memory layer with runtime overrides (e.g. parsed CLI args)."""
+        self._memory_backend.save(data)
+        self._memory = _flatten(self._memory_backend.load())
 
-    def add_source(self, name, source: ReadOnlyConfigSource | ConfigSource) -> None:
+    def has(self, path: str) -> bool:
+        """Return True if path exists in any layer."""
+        return path in self._memory or path in self._user or path in self._defaults
+
+    def get(self, path: str) -> ValueType:
+        """Return the value for path (memory > user > defaults). Raises KeyError if absent."""
+        if path in self._memory:
+            return self._memory[path]
+        if path in self._user:
+            return self._user[path]
+        if path in self._defaults:
+            return self._defaults[path]
+        raise KeyError(path)
+
+    def get_or_default(self, path: str, default: Any) -> Any:
+        """Return the value for path, or default if the path is not found."""
+        try:
+            return self.get(path)
+        except KeyError:
+            return default
+
+    def get_as(self, path: str, target_type: type) -> Any:
+        """Return the value for path converted to target_type. Raises KeyError if absent."""
+        return _convert(self.get(path), target_type)
+
+    def get_as_or_default(self, path: str, target_type: type, default: Any) -> Any:
+        """Return the converted value, or default if not found or conversion fails."""
+        try:
+            return self.get_as(path, target_type)
+        except (KeyError, TypeError, ValueError):
+            return default
+
+    def get_all(self, path: str | None = None) -> dict[str, ValueType]:
+        """Return a flat dict of all values merged across layers.
+
+        If path is given, only keys equal to or prefixed by ``path.`` are returned.
         """
-        Add a configuration source to the configuration manager.
+        merged: dict[str, ValueType] = {**self._defaults, **self._user, **self._memory}
+        if path is None:
+            return merged
+        prefix = path + "."
+        return {k: v for k, v in merged.items() if k == path or k.startswith(prefix)}
 
-        Parameters:
-            name (str): The name of the source.
-            source (ReadOnlyConfigSource | ConfigSource): The source to add.
+    def set(self, path: str, value: ValueType) -> None:
+        """Write value to the user layer and persist immediately.
 
-        Raises:
-            ValueError: If a source with the same name already exists.
+        Raises TypeError for unsupported value types.
         """
-        if self.has_source(name):
-            raise ValueError(f"Source with name '{name}' already exists.")
+        if not _is_valid(value):
+            raise TypeError(f"Invalid configuration value type: {type(value).__name__}")
+        self._user[path] = value
+        self._user_backend.save(_unflatten(self._user))
 
-        data = self.list()
-        new_source_data = source.list()
+    def unset(self, path: str) -> None:
+        """Remove path (and any sub-keys) from the user layer and persist.
 
-        return self._sources.insert(0, source)
-
-    def get_sources(self) -> list[ReadOnlyConfigSource | ConfigSource]:
-        """Retrieve all configuration sources."""
-        return list(self._sources)
-
-    def get_source(self, name: str) -> ReadOnlyConfigSource | ConfigSource:
+        No-op if path is not in the user layer.
         """
-        Retrieve a configuration source by its name.
-
-        Parameters:
-            name (str): The name of the source to retrieve.
-
-        Returns:
-            ReadOnlyConfigSource | ConfigSource: The requested configuration source.
-
-        Raises:
-            KeyError: If no source with the given name exists.
-        """
-        for source in self._sources:
-            if source.name == name:
-                return source
-        raise KeyError(f"No source found with name '{name}'.")
-
-    def has_source(self, name: str) -> bool:
-        """
-        Check if a configuration source with the given name exists.
-
-        Parameters:
-            name (str): The name of the source to check.
-
-        Returns:
-            bool: True if the source exists, otherwise False.
-        """
-        for source in self._sources:
-            if source.name == name:
-                return True
-        return False
-
-    def has(self, key: str) -> bool:
-        """Check if the given key exists within the internal configuration data.
-
-        Args:
-            key (str): The key to search for in the configuration data.
-
-        Returns:
-            bool: True if the key is found in the configuration data, otherwise False.
-        """
-        for source in self._sources:
-            if source.has(key):
-                return True
-        return False
-
-    def get(self, key: str) -> ValueType:
-        """
-        Retrieve the configuration value for the given key.
-
-        Parameters:
-            key (str): The key for which to retrieve the configuration value.
-
-        Returns:
-            ValueType: The value associated with the key if it exists.
-
-        Raises:
-            KeyError: If the key is not found in the collection.
-        """
-        for source in self._sources:
-            if source.has(key):
-                logging.debug("Found key %s in source %s", key, source.name)
-                return source.get(key)
-        raise KeyError(f"Key '{key}' not found in any configuration source.")
-
-    def _source_supports_set(self, source: ReadOnlyConfigSource | ConfigSource) -> bool:
-        """Check if the source supports setting values."""
-        return hasattr(source, "set") and callable(getattr(source, "set"))
-
-    def set(self, key: str, value: ValueType) -> None:
-        """
-        Sets a configuration key with the provided value.
-
-        Parameters:
-            key (str): The configuration key to set.
-            value (ValueType): The value to associate with the key.
-
-        Raises:
-            ConfigurationKeyExists: If a parent key of the given key already exists in the configuration data.
-            InvalidConfigurationValue: If the value is not of a valid type.
-        """
-        if not is_valid_value_type(value):
-            raise InvalidConfigurationValue(
-                f"Value for {key} is not a valid type must be one of "
-                "{str, int, float, list, complex, set, bool, bytes, bytearray, datetime.datetime}"
-            )
-
-        # FIXME: check if key is either a parent key or a sub-key of an existing key if so refuse to add
-        for source in self._sources:
-            if isinstance(source, ReadOnlyConfigSource) or not self._source_supports_set(source):
-                continue
-            try:
-                source.set(key, value)
-                logging.debug("Set key %s to %s in source %s", key, value, source.name)
-                break
-            except ConfigurationKeyExists:
-                logging.debug("Unable to set key %s in source %s", key, source.name)
-                continue
-
-    def unset(self, key: str) -> None:
-        """
-        Remove configuration key(s) that match the provided key.
-
-        Parameters:
-            key (str): The base key or key prefix identifying the configuration entries to be removed.
-        """
-        for source in self._sources:
-            if isinstance(source, ReadOnlyConfigSource) or not self._source_supports_set(source):
-                continue
-            try:
-                source.unset(key)
-                logging.debug("Unset key %s in source %s", key, source.name)
-                break
-            except ConfigurationKeyExists:
-                logging.debug("Unable to set key %s in source %s", key, source.name)
-                continue
-
-    def list(self, key: str | None = None) -> list[tuple[str, str, ValueType]]:
-        """
-        Retrieve configuration entries that match the provided key or its sub-keys.
-
-        Parameters:
-            key (str, Optional): The configuration key to filter by. If None, all entries are returned.
-
-        Returns:
-            list[tuple[str, str, ValueType]]: A list of tuples containing key, source name, and value.
-        """
-        merged_data: list[tuple[str, str, ValueType]] = []
-        keys: list[str] = []
-
-        for source in self._sources:
-            data = source.list(key)
-            for k, v in data:
-                if k not in keys:
-                    keys.append(k)
-                    merged_data.append((k, source.name, v))
-
-        return merged_data
-
-    def __getitem__(self, key: str) -> ValueType:
-        """Retrieve the value associated with the given key."""
-        return self.get(key)
-
-    def __setitem__(self, key: str, value: ValueType) -> None:
-        """Assign a configuration value using dictionary-like item assignment."""
-        self.set(key, value)
-
-    def find(self, callback: Callable[[str, ValueType], bool]) -> Generator[tuple[str, ValueType], None, None]:
-        """
-        Iterates over the internal data dictionary and yields key-value pairs for which the provided callback
-        returns True.
-
-        Parameters:
-            callback (Callable[[str, ValueType], bool]): A function that takes a key and a value from the
-                internal data dictionary and returns a boolean.
-
-        Yields:
-            tuple[str, ValueType]: A tuple containing a key and its corresponding value.
-
-        Raises:
-            TypeError: If the provided callback is not a callable function.
-        """
-        # FIXME
-        if not callable(callback):
-            raise TypeError("callback must be a callable function")
-
-        for key, value in self._data.items():
-            if callback(key, value):
-                yield key, value
+        prefix = path + "."
+        keys = [k for k in self._user if k == path or k.startswith(prefix)]
+        if not keys:
+            return
+        for k in keys:
+            del self._user[k]
+        self._user_backend.save(_unflatten(self._user))
 
 
-class InvalidConfigurationValue(Exception):
-    """
-    Exception raised when an invalid configuration value is encountered.
+# ---------------------------------------------------------------------------
+# Module-level singleton and API
+# ---------------------------------------------------------------------------
 
-    Attributes:
-        message (Optional[str]): An optional error message providing details about the invalid value.
-                                Defaults to "Invalid configuration value" if not provided.
-    """
-
-    def __init__(self, message: str | None = None):
-        super().__init__(message or "Invalid configuration value")
+_config: Config = Config(DefaultBackend(_DEFAULTS_PATH), UserBackend(_USER_CONFIG_PATH), MemoryBackend())
+_config.load()
 
 
-class ConfigurationKeyExists(Exception):
-    """
-    Exception raised when a configuration key already exists.
-
-    Parameters:
-        message (str, optional):
-            An optional string providing additional details about the error.
-    """
-
-    def __init__(self, message: str | None = None):
-        super().__init__(message or "Key already exists in the configuration")
+def has(path: str) -> bool:
+    """Return True if path exists in any configuration layer."""
+    return _config.has(path)
 
 
-# Initialize configuration with default backend
-user_config_path = os.path.expanduser(USER_CONFIG_FILE)
-if not os.path.exists(user_config_path):
-    with open(user_config_path, "w", encoding="utf-8") as config_file:
-        config_file.write("")
+def get(path: str) -> ValueType:
+    """Return the value for path. Raises KeyError if not found in any layer."""
+    return _config.get(path)
+
+
+def get_or_default(path: str, default: Any) -> Any:
+    """Return the value for path, or default if the path is not found."""
+    return _config.get_or_default(path, default)
+
+
+def get_as(path: str, target_type: type) -> Any:
+    """Return the value for path converted to target_type. Raises KeyError if not found."""
+    return _config.get_as(path, target_type)
+
+
+def get_as_or_default(path: str, target_type: type, default: Any) -> Any:
+    """Return the converted value, or default if not found or conversion fails."""
+    return _config.get_as_or_default(path, target_type, default)
+
+
+def get_all(path: str | None = None) -> dict[str, ValueType]:
+    """Return a flat dict of all values, optionally filtered by path prefix."""
+    return _config.get_all(path)
+
+
+def set(path: str, value: ValueType) -> None:  # pylint: disable=redefined-builtin
+    """Write value to the user layer and persist to disk."""
+    _config.set(path, value)
+
+
+def unset(path: str) -> None:
+    """Remove path from the user layer and persist to disk."""
+    _config.unset(path)
+
+
+def load_memory(data: dict[str, Any]) -> None:
+    """Populate the memory (highest-priority) layer with runtime overrides."""
+    _config.load_memory(data)
