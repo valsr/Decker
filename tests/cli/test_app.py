@@ -8,7 +8,6 @@ from assertpy import assert_that
 from decker.cli.app import create_parser, main
 
 _SAMPLE_COMMANDS = {
-    "start": {"description": "Start the application", "return_type": "bool", "params": ""},
     "stop": {"description": "Stop the application", "return_type": "bool", "params": ""},
     "status": {"description": "Get status", "return_type": "dict", "params": ""},
 }
@@ -65,7 +64,7 @@ class TestMain:
         code = self._run(["list"])
         assert_that(code).is_equal_to(0)
         out = capsys.readouterr().out
-        assert_that(out).contains("start").contains("stop").contains("status")
+        assert_that(out).contains("stop").contains("status")
 
     def test_help_subcommand_prints_description(self, capsys):
         code = self._run(["help", "status"])
@@ -83,12 +82,6 @@ class TestMain:
         assert_that(code).is_equal_to(0)
         out = capsys.readouterr().out
         assert_that(out).contains("service_status").contains("running")
-
-    def test_start_command_formats_bool_true(self, capsys):
-        conn = _make_conn(request_return=True)
-        code = self._run(["start"], conn)
-        assert_that(code).is_equal_to(0)
-        assert_that(capsys.readouterr().out.strip()).is_equal_to("ok")
 
     def test_stop_command_formats_bool_false(self, capsys):
         conn = _make_conn(request_return=False)

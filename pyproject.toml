@@ -490,7 +490,6 @@ per-file-ignores = [
     "/tests/:missing-function-docstring,missing-module-docstring,missing-class-docstring",
     "/stubs/",
     "/src/decker/server/application.py:import-outside-toplevel",
-    "/src/decker/server/server.py:import-outside-toplevel",
     "/src/decker/cli/app.py:import-outside-toplevel",
 ]
 
