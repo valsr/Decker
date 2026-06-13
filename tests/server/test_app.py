@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
 
-from decker.app import create_parser, main
+from decker.server.app import create_parser, main
 
 
 class TestMain:
@@ -28,7 +28,7 @@ class TestMain:
             parser = create_parser()
 
             # Assert
-            assert_that(parser._actions).is_not_empty() # pylint: disable=protected-access
+            assert_that(parser._actions).is_not_empty()  # pylint: disable=protected-access
             actions = {action.dest: action for action in parser._actions}  # pylint: disable=protected-access
             assert_that(actions).contains_key("version")
 
@@ -39,7 +39,7 @@ class TestMain:
             parser = create_parser()
 
             # Assert
-            actions = {action.dest: action for action in parser._actions} # pylint: disable=protected-access
+            actions = {action.dest: action for action in parser._actions}  # pylint: disable=protected-access
             assert_that(actions).contains_key("verbose")
             assert_that(actions["verbose"].default).is_equal_to(0)
 
@@ -57,8 +57,8 @@ class TestMain:
     class TestMain:
         """Tests for the main function."""
 
-        @patch("decker.app.InstanceManager")
-        @patch("decker.logging.configure")
+        @patch("decker.server.app.InstanceManager")
+        @patch("decker.common.logging.configure")
         @patch("argparse.ArgumentParser.parse_args")
         def test_main_configures_logging_with_different_verbosity(
             self, mock_parse_args: MagicMock, mock_configure: MagicMock, _mock_instance_manager: MagicMock
@@ -85,7 +85,7 @@ class TestMain:
                 # Assert
                 mock_configure.assert_called_with(level=test_case["expected_level"])
 
-        @patch("decker.app.InstanceManager")
+        @patch("decker.server.app.InstanceManager")
         @patch("argparse.ArgumentParser.parse_args")
         def test_main_starts_server_without_command(self, mock_parse_args: MagicMock, mock_instance_manager: MagicMock):
             # Tests if main starts server when no command is provided
@@ -106,7 +106,7 @@ class TestMain:
             mock_instance_manager.assert_called_once_with(dev_mode=False)
             instance.start_server.assert_called_once()
 
-        @patch("decker.app.InstanceManager")
+        @patch("decker.server.app.InstanceManager")
         @patch("argparse.ArgumentParser.parse_args")
         def test_main_starts_server_with_dev_mode(self, mock_parse_args: MagicMock, mock_instance_manager: MagicMock):
             # Tests if main starts server with dev mode when specified
@@ -126,7 +126,7 @@ class TestMain:
             # Assert
             mock_instance_manager.assert_called_once_with(dev_mode=True)
 
-        @patch("decker.app.handle_commands")
+        @patch("decker.server.app.handle_commands")
         @patch("argparse.ArgumentParser.parse_args")
         def test_main_handles_commands(self, mock_parse_args: MagicMock, mock_handle_commands: MagicMock):
             # Tests if main handles commands when provided

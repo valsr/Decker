@@ -1,25 +1,20 @@
 """Main application entry point."""
 
-import argparse  # Added import
+import argparse
 import importlib.metadata
 import logging
 import os
 
-from decker.Application import Application
-import decker.config
-import decker.logging
-from decker.server import ServerManager
+import decker.common.logging
+from decker.server.monitor import ServerMonitor
 
 
 def create_parser() -> argparse.ArgumentParser:
     """
     Create and configure the command-line argument parser for the Decker server application.
 
-    This function sets up the main parser with global options and configuration commands. It uses metadata
-    from the package to populate program name and description.
-
     Returns:
-        parse.ArgumentParser: A fully configured argument parser ready to parse command-line arguments
+        argparse.ArgumentParser: A fully configured argument parser ready to parse command-line arguments.
     """
     metadata = importlib.metadata.metadata("decker")
     parser = argparse.ArgumentParser(
@@ -42,7 +37,6 @@ def create_parser() -> argparse.ArgumentParser:
             "Defaults to WARNING if not provided."
         ),
     )
-
     parser.add_argument(
         "-d",
         "--dev",
@@ -65,16 +59,13 @@ def main() -> None:
     else:
         level = logging.WARNING
 
-    log_directory = decker.config.get("logging.directory") or os.getcwd()
-    decker.logging.configure(level=level, log_directory=str(log_directory))
-    logging.debug("Logging directory: %s", log_directory)
+    decker.common.logging.configure(level=level, log_directory=os.getcwd())
     logging.debug(args)
 
-    # Start the application
-    manager = ServerManager()
+    monitor = ServerMonitor()
     try:
-        manager.start()
+        monitor.start()
     except Exception as e:
-        logging.error("Error occurred while starting the server manager: %s", e)
+        logging.error("Error occurred while starting the server monitor: %s", e)
     finally:
-        manager.stop()
+        monitor.stop()

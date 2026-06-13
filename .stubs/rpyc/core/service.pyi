@@ -12,6 +12,7 @@ Note that the services by both parties need not be symmetric, e.g., one side may
 exposed *service A*, while the other may expose *service B*. As long as the two
 can interoperate, you're good to go.
 """
+
 class Service:
     """The service base-class. Derive from this class to implement custom RPyC
     services:
@@ -51,81 +52,73 @@ class Service:
        You can override ``_rpyc_getattr``, ``_rpyc_setattr`` and ``_rpyc_delattr``
        to change attribute lookup -- but beware of possible **security implications!**
     """
+
     __slots__ = ...
     ALIASES = ...
     _protocol = Connection
-    def on_connect(self, conn): # -> None:
+    def on_connect(self, conn):  # -> None:
         """called when the connection is established"""
         ...
-    
-    def on_disconnect(self, conn): # -> None:
+
+    def on_disconnect(self, conn):  # -> None:
         """called when the connection had already terminated for cleanup
         (must not perform any IO on the connection)"""
         ...
-    
+
     @classmethod
-    def get_service_aliases(cls): # -> tuple[str, ...] | tuple[str]:
+    def get_service_aliases(cls):  # -> tuple[str, ...] | tuple[str]:
         """returns a list of the aliases of this service"""
         ...
-    
+
     @classmethod
-    def get_service_name(cls): # -> str:
+    def get_service_name(cls):  # -> str:
         """returns the canonical name of the service (which is its first
         alias)"""
         ...
-    
     exposed_get_service_aliases = ...
     exposed_get_service_name = ...
 
-
 class VoidService(Service):
     """void service - an do-nothing service"""
-    __slots__ = ...
 
+    __slots__ = ...
 
 class ModuleNamespace:
     """used by the :class:`SlaveService` to implement the magical
     'module namespace'"""
+
     __slots__ = ...
-    def __init__(self, getmodule) -> None:
-        ...
-    
-    def __contains__(self, name): # -> bool:
+    def __init__(self, getmodule) -> None: ...
+    def __contains__(self, name):  # -> bool:
         """Returns True if a module CAN be imported (the loader may still fail to execute module)"""
         ...
-    
+
     def __getitem__(self, name):
         """Acts as a 'read-through-cache' for results of getmodule"""
         ...
-    
+
     def __getattr__(self, name):
         """Provides dot notation access to modules"""
         ...
-    
-
 
 class Slave:
     __slots__ = ...
-    def __init__(self) -> None:
-        ...
-    
-    def execute(self, text): # -> None:
+    def __init__(self) -> None: ...
+    def execute(self, text):  # -> None:
         """execute arbitrary code (using ``exec``)"""
         ...
-    
-    def eval(self, text): # -> Any:
+
+    def eval(self, text):  # -> Any:
         """evaluate arbitrary code (using ``eval``)"""
         ...
-    
-    def getmodule(self, name): # -> ModuleType:
+
+    def getmodule(self, name):  # -> ModuleType:
         """imports an arbitrary module"""
         ...
-    
-    def getconn(self): # -> None:
+
+    def getconn(self):  # -> None:
         """returns the local connection instance to the other side"""
         ...
-    
-
 
 class SlaveService(Slave, Service):
     """The SlaveService allows the other side to perform arbitrary imports and
@@ -134,16 +127,16 @@ class SlaveService(Slave, Service):
 
     This service is very useful in local, secure networks, but it exposes
     a **major security risk** otherwise."""
-    __slots__ = ...
-    def on_connect(self, conn): # -> None:
-        ...
-    
 
+    __slots__ = ...
+    def on_connect(self, conn):  # -> None:
+        ...
 
 class FakeSlaveService(VoidService):
     """VoidService that can be used for connecting to peers that operate a
     :class:`MasterService`, :class:`ClassicService`, or the old
     ``SlaveService`` (pre v3.5) without exposing any functionality to them."""
+
     __slots__ = ...
     exposed_namespace = ...
     exposed_execute = ...
@@ -151,27 +144,24 @@ class FakeSlaveService(VoidService):
     exposed_getmodule = ...
     exposed_getconn = ...
 
-
 class MasterService(Service):
     """Peer for a new-style (>=v3.5) :class:`SlaveService`. Use this service
     if you want to connect to a ``SlaveService`` without exposing any
     functionality to them."""
-    __slots__ = ...
-    def on_connect(self, conn): # -> None:
-        ...
-    
 
+    __slots__ = ...
+    def on_connect(self, conn):  # -> None:
+        ...
 
 class ClassicService(MasterService, SlaveService):
     """Full duplex master/slave service, i.e. both parties have full control
     over the other. Must be used by both parties."""
-    __slots__ = ...
 
+    __slots__ = ...
 
 class ClassicClient(MasterService, FakeSlaveService):
     """MasterService that can be used for connecting to peers that operate a
     :class:`MasterService`, :class:`ClassicService` without exposing any
     functionality to them."""
+
     __slots__ = ...
-
-

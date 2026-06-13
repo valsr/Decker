@@ -3,11 +3,11 @@ import tempfile
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from pytest import MonkeyPatch
 import toml
 from assertpy import assert_that, fail
+from pytest import MonkeyPatch
 
-from decker.config.backend import BackendManager, TomlFileBackend
+from decker.common.config.backend import BackendManager, TomlFileBackend
 
 
 class TestTomlBackendLoad:
@@ -81,13 +81,12 @@ class TestTomlBackendSave:
             tmp_file.write("server = { port = 8080 }")
             temp_path = tmp_file.name
 
-        # Mock the open function to raise PermissionError for this specific file
         original_open = open
 
         def mock_open(path: str, *args: Any, **kwargs: Any) -> Any:
             if path == temp_path and ("w" in kwargs.get("mode", "") or "w" in args[0] if args else False):
                 raise PermissionError(f"Permission denied: '{temp_path}'")
-            return original_open(path, *args, **kwargs) # pyright: ignore[reportUnknownVariableType]
+            return original_open(path, *args, **kwargs)  # pyright: ignore[reportUnknownVariableType]
 
         monkeypatch.setattr("builtins.open", mock_open)
 
@@ -105,7 +104,6 @@ class TestTomlBackendSave:
 
     def test_save_success(self, _monkeypatch: MonkeyPatch):
         # Arrange
-        # Create a temporary config file with initial content
         with tempfile.NamedTemporaryFile(delete=False, mode="w+", encoding="UTF-8") as tmp_file:
             toml.dump({"server": {"initial": "data"}}, tmp_file)
             temp_path = tmp_file.name
@@ -119,7 +117,6 @@ class TestTomlBackendSave:
         with open(temp_path, "r", encoding="UTF-8") as f:
             data = toml.load(f)
 
-        # Verify only 'server' key exists with new settings unflattened
         assert_that("server" in data).is_true()
 
         server_config = data["server"]
@@ -129,42 +126,24 @@ class TestTomlBackendSave:
 
 
 class DummyBackend(TomlFileBackend):
-    # see DummyBackend
-    def __init__(self): # pylint: disable=super-init-not-called
-        """Initializes the dummy backend.
-
-        Returns:
-            None.
-        """
+    def __init__(self):  # pylint: disable=super-init-not-called
+        """Initializes the dummy backend."""
         self.load_called = 0
         self.save_called = 0
         self.saved_settings = None
 
     def load(self):
-        """Simulates a synchronous load operation.
-
-        Returns:
-            list[Setting]: A list containing a dummy Setting.
-        """
+        """Simulates a synchronous load operation."""
         self.load_called += 1
-
         return {"dummy": {"key": "dummy.value"}}
 
     def save(self, settings: dict[str, Any]):
-        """Simulates a synchronous save operation.
-
-        Args:
-            settings (dict[str, Any]): Settings to save.
-
-        Returns:
-            None.
-        """
+        """Simulates a synchronous save operation."""
         self.save_called += 1
         self.saved_settings = settings
 
 
 class TestBackendManagerLoad:
-    # see TestConfigFileManagerLoad
     def test_load_calls_backend_load_and_returns_settings(self):
         """Tests that manager.load calls backend.load and returns correct settings."""
         # Arrange
@@ -179,7 +158,6 @@ class TestBackendManagerLoad:
 
 
 class TestBackendManagerSave:
-    # see TestConfigFileManagerSave
     def test_save_calls_backend_save_and_saves_settings(self):
         """Tests that manager.save calls backend.save and the settings are saved properly."""
         # Arrange

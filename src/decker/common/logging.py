@@ -5,7 +5,7 @@ import os
 import time
 from typing import Any
 
-from decker.theme import highlight, secondary, warning
+from decker.common.theme import highlight, secondary, warning
 
 LOG_LEVEL = logging.WARNING
 
@@ -82,14 +82,11 @@ def configure(
 
     Args:
         level(int): Log level. Defaults to logging.WARNING.
-        directory(str): The directory to store log files. Defaults to "".
+        log_directory(str): The directory to store log files. Defaults to "".
         server_id(str): The server ID (or None for the main process) to use in the log file name. Defaults to None.
-
-    Returns:
-
     """
     global LOG_LEVEL  # pylint: disable=global-statement
-    LOG_LEVEL = level # pyright: ignore[reportConstantRedefinition]
+    LOG_LEVEL = level  # pyright: ignore[reportConstantRedefinition]
 
     logger = logging.getLogger()
     logger.setLevel(LOG_LEVEL)
@@ -97,7 +94,6 @@ def configure(
     for handler in logger.handlers:
         logger.removeHandler(handler)
 
-    # configure logging to console
     handler = logging.StreamHandler()
     handler.addFilter(NamespaceFilter())
     handler.addFilter(SeverFilter(server_id))
@@ -110,7 +106,6 @@ def configure(
     handler.setFormatter(cli_formatter)
     logger.addHandler(handler)
 
-    # configure logging to file
     file_format = "%(asctime)s %(levelname)-8s "
     if server_id:
         file_format += "(%(server_id)s)"
@@ -178,7 +173,7 @@ def log_once(key: str, level: int, message: str, *args: tuple[Any], **kwargs: di
         message (str): The message to log.
     """
     if key not in LOGGED:
-        logging.log(level, message, *args, **kwargs) # type: ignore
+        logging.log(level, message, *args, **kwargs)  # type: ignore
         LOGGED.append(key)
 
 

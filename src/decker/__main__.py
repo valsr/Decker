@@ -1,6 +1,6 @@
 """Main entry point for the Decker server."""
 
-import decker.app
+import decker.server.app
 
 if __name__ == "__main__":
-    decker.app.main()
+    decker.server.app.main()

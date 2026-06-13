@@ -15,7 +15,10 @@ non-secure. Keep this in mind.
 REMOTE_LINE_START = ...
 REMOTE_LINE_END = ...
 REMOTE_LINE = ...
-def dump(typ, val, tb, include_local_traceback, include_local_version): # -> str | tuple[tuple[Any, Any], tuple[Any, ...], tuple[Any, ...], str] | Literal[1]:
+
+def dump(
+    typ, val, tb, include_local_traceback, include_local_version
+):  # -> str | tuple[tuple[Any, Any], tuple[Any, ...], tuple[Any, ...], str] | Literal[1]:
     """Dumps the given exceptions info, as returned by ``sys.exc_info()``
 
     :param typ: the exception's type (class)
@@ -33,7 +36,9 @@ def dump(typ, val, tb, include_local_traceback, include_local_version): # -> str
     """
     ...
 
-def load(val, import_custom_exceptions, instantiate_custom_exceptions, instantiate_oldstyle_exceptions): # -> type[StopIteration] | str | Derived:
+def load(
+    val, import_custom_exceptions, instantiate_custom_exceptions, instantiate_oldstyle_exceptions
+):  # -> type[StopIteration] | str | Derived:
     """
     Loads a dumped exception (the tuple returned by :func:`dump`) info a
     throwable exception object. If the exception cannot be instantiated for any
@@ -60,8 +65,8 @@ def load(val, import_custom_exceptions, instantiate_custom_exceptions, instantia
 class GenericException(Exception):
     """A 'generic exception' that is raised when the exception the gotten from
     the other party cannot be instantiated locally"""
-    ...
 
+    ...
 
 _generic_exceptions_cache = ...
 _exception_classes_cache = ...
