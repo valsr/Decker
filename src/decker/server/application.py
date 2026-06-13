@@ -33,6 +33,8 @@ class Application:
         self._running = True
         logging.info("Starting Decker application")
 
+        import tkinter as tk  # pylint: disable=import-outside-toplevel
+
         self._root = tk.Tk()
         self._root.title(self._initial_window_title)
         # TODO self._root.iconbitmap("src/decker/ui/assets/decker.ico")
@@ -80,7 +82,7 @@ class Application:
         return self._running and (self._root is not None)
 
     def _cleanup(self) -> None:
-        import tkinter as tk
+        import tkinter as tk  # pylint: disable=import-outside-toplevel
 
         logging.info("Cleaning up application resources")
         self._running = False

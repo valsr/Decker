@@ -4,7 +4,7 @@ import logging
 import time
 from typing import Any
 
-import decker.common.config as config
+from decker.common import config
 from decker.common.api import API
 from decker.server.server import ServerProcess
 
