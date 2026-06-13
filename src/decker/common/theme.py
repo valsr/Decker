@@ -27,7 +27,7 @@ def set_theme(theme: Theme):
         theme(Theme): The theme to set.
     """
     global THEME  # pylint: disable=global-statement
-    THEME = theme # pyright: ignore[reportConstantRedefinition]
+    THEME = theme  # pyright: ignore[reportConstantRedefinition]
     logging.debug("Theme set to %s", theme.value)
 
 
@@ -230,7 +230,6 @@ def get_light_theme_style(style: Style):
     if style == Style.H3:
         return "blue"
 
-    # Style default, all others
     return "black"
 
 
@@ -264,5 +263,4 @@ def get_dark_theme_style(style: Style):
     if style == Style.ERROR_ALT:
         return "red"
 
-    # Style default, all others
     return "light_grey"

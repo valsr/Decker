@@ -5,7 +5,7 @@ from typing import Any
 from assertpy import assert_that
 from pytest import MonkeyPatch
 
-from decker.logging import LOGGED, PerformanceLogger, configure, debug_once
+from decker.common.logging import LOGGED, PerformanceLogger, configure, debug_once
 
 
 class TestLogging:

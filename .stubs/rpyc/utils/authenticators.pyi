@@ -28,10 +28,11 @@ validate an incoming connection. Using them is pretty trivial ::
     s.start()
 """
 ssl = ...
+
 class AuthenticationError(Exception):
     """raised to signal a failed authentication attempt"""
-    ...
 
+    ...
 
 class SSLAuthenticator:
     """An implementation of the authenticator protocol for ``SSL``. The given
@@ -56,11 +57,7 @@ class SSLAuthenticator:
     :func:`rpyc.utils.classic.ssl_connect` which sets the correct
     service parameters.
     """
-    def __init__(self, keyfile, certfile, ca_certs=..., cert_reqs=..., ssl_version=..., ciphers=...) -> None:
-        ...
-    
-    def __call__(self, sock): # -> tuple[Any, Any]:
-        ...
-    
 
-
+    def __init__(self, keyfile, certfile, ca_certs=..., cert_reqs=..., ssl_version=..., ciphers=...) -> None: ...
+    def __call__(self, sock):  # -> tuple[Any, Any]:
+        ...

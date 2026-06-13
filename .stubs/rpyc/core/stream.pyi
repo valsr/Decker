@@ -13,27 +13,29 @@ win32pipe = ...
 win32event = ...
 ssl = ...
 retry_errnos = ...
+
 class Stream:
     """Base Stream"""
+
     __slots__ = ...
     def close(self):
         """closes the stream, releasing any system resources associated with it"""
         ...
-    
+
     @property
     def closed(self):
         """tests whether the stream is closed or not"""
         ...
-    
+
     def fileno(self):
         """returns the stream's file descriptor"""
         ...
-    
-    def poll(self, timeout): # -> bool:
+
+    def poll(self, timeout):  # -> bool:
         """indicates whether the stream has data to read (within *timeout*
         seconds)"""
         ...
-    
+
     def read(self, count):
         """reads **exactly** *count* bytes, or raise EOFError
 
@@ -42,50 +44,44 @@ class Stream:
         :returns: read data
         """
         ...
-    
+
     def write(self, data):
         """writes the entire *data*, or raise EOFError
 
         :param data: a string of binary data
         """
         ...
-    
-    def __enter__(self): # -> Self:
-        ...
-    
-    def __exit__(self, *exc_info): # -> None:
-        ...
-    
 
+    def __enter__(self):  # -> Self:
+        ...
+
+    def __exit__(self, *exc_info):  # -> None:
+        ...
 
 class ClosedFile:
     """Represents a closed file object (singleton)"""
-    __slots__ = ...
-    def __getattr__(self, name):
-        ...
-    
-    def close(self): # -> None:
-        ...
-    
-    @property
-    def closed(self): # -> Literal[True]:
-        ...
-    
-    def fileno(self):
-        ...
-    
 
+    __slots__ = ...
+    def __getattr__(self, name): ...
+    def close(self):  # -> None:
+        ...
+
+    @property
+    def closed(self):  # -> Literal[True]:
+        ...
+
+    def fileno(self): ...
 
 ClosedFile = ...
+
 class SocketStream(Stream):
     """A stream over a socket"""
+
     __slots__ = ...
     MAX_IO_CHUNK = ...
-    def __init__(self, sock) -> None:
-        ...
-    
+    def __init__(self, sock) -> None: ...
     @classmethod
-    def connect(cls, host, port, **kwargs): # -> Self:
+    def connect(cls, host, port, **kwargs):  # -> Self:
         """factory method that creates a ``SocketStream`` over a socket connected
         to *host* and *port*
 
@@ -105,9 +101,9 @@ class SocketStream(Stream):
         :returns: a :class:`SocketStream`
         """
         ...
-    
+
     @classmethod
-    def unix_connect(cls, path, timeout=...): # -> Self:
+    def unix_connect(cls, path, timeout=...):  # -> Self:
         """factory method that creates a ``SocketStream`` over a unix domain socket
         located in *path*
 
@@ -115,7 +111,7 @@ class SocketStream(Stream):
         :param timeout: socket timeout
         """
         ...
-    
+
     @classmethod
     def ssl_connect(cls, host, port, ssl_kwargs, **kwargs):
         """factory method that creates a ``SocketStream`` over an SSL-wrapped
@@ -134,137 +130,115 @@ class SocketStream(Stream):
         :returns: a :class:`SocketStream`
         """
         ...
-    
-    @property
-    def closed(self): # -> bool:
-        ...
-    
-    def close(self): # -> None:
-        ...
-    
-    def fileno(self):
-        ...
-    
-    def read(self, count): # -> LiteralString:
-        ...
-    
-    def write(self, data): # -> None:
-        ...
-    
 
+    @property
+    def closed(self):  # -> bool:
+        ...
+
+    def close(self):  # -> None:
+        ...
+
+    def fileno(self): ...
+    def read(self, count):  # -> LiteralString:
+        ...
+
+    def write(self, data):  # -> None:
+        ...
 
 class TunneledSocketStream(SocketStream):
     """A socket stream over an SSH tunnel (terminates the tunnel when the connection closes)"""
-    __slots__ = ...
-    def __init__(self, sock) -> None:
-        ...
-    
-    def close(self): # -> None:
-        ...
-    
 
+    __slots__ = ...
+    def __init__(self, sock) -> None: ...
+    def close(self):  # -> None:
+        ...
 
 class PipeStream(Stream):
     """A stream over two simplex pipes (one used to input, another for output)"""
+
     __slots__ = ...
     MAX_IO_CHUNK = ...
-    def __init__(self, incoming, outgoing) -> None:
-        ...
-    
+    def __init__(self, incoming, outgoing) -> None: ...
     @classmethod
-    def from_std(cls): # -> Self:
+    def from_std(cls):  # -> Self:
         """factory method that creates a PipeStream over the standard pipes
         (``stdin`` and ``stdout``)
 
         :returns: a :class:`PipeStream` instance
         """
         ...
-    
+
     @classmethod
-    def create_pair(cls): # -> tuple[Self, Self]:
+    def create_pair(cls):  # -> tuple[Self, Self]:
         """factory method that creates two pairs of anonymous pipes, and
         creates two PipeStreams over them. Useful for ``fork()``.
 
         :returns: a tuple of two :class:`PipeStream` instances
         """
         ...
-    
-    @property
-    def closed(self): # -> bool:
-        ...
-    
-    def close(self): # -> None:
-        ...
-    
-    def fileno(self):
-        ...
-    
-    def read(self, count): # -> LiteralString:
-        ...
-    
-    def write(self, data): # -> None:
-        ...
-    
 
+    @property
+    def closed(self):  # -> bool:
+        ...
+
+    def close(self):  # -> None:
+        ...
+
+    def fileno(self): ...
+    def read(self, count):  # -> LiteralString:
+        ...
+
+    def write(self, data):  # -> None:
+        ...
 
 class Win32PipeStream(Stream):
     """A stream over two simplex pipes (one used to input, another for output).
     This is an implementation for Windows pipes (which suck)"""
+
     __slots__ = ...
     PIPE_BUFFER_SIZE = ...
     MAX_IO_CHUNK = ...
-    def __init__(self, incoming, outgoing) -> None:
-        ...
-    
+    def __init__(self, incoming, outgoing) -> None: ...
     @classmethod
-    def from_std(cls): # -> Self:
+    def from_std(cls):  # -> Self:
         ...
-    
+
     @classmethod
-    def create_pair(cls): # -> tuple[Self, Self]:
+    def create_pair(cls):  # -> tuple[Self, Self]:
         ...
-    
-    def fileno(self):
-        ...
-    
+
+    def fileno(self): ...
     @property
-    def closed(self): # -> bool:
+    def closed(self):  # -> bool:
         ...
-    
-    def close(self): # -> None:
+
+    def close(self):  # -> None:
         ...
-    
-    def read(self, count): # -> LiteralString:
+
+    def read(self, count):  # -> LiteralString:
         ...
-    
-    def write(self, data): # -> None:
+
+    def write(self, data):  # -> None:
         ...
-    
-    def poll(self, timeout, interval=...): # -> bool:
+
+    def poll(self, timeout, interval=...):  # -> bool:
         """a Windows version of select()"""
         ...
-    
-
 
 class NamedPipeStream(Win32PipeStream):
     """A stream over two named pipes (one used to input, another for output).
     Windows implementation."""
+
     NAMED_PIPE_PREFIX = ...
     PIPE_IO_TIMEOUT = ...
     CONNECT_TIMEOUT = ...
-    def __init__(self, handle, is_server_side) -> None:
-        ...
-    
+    def __init__(self, handle, is_server_side) -> None: ...
     @classmethod
-    def from_std(cls):
-        ...
-    
+    def from_std(cls): ...
     @classmethod
-    def create_pair(cls):
-        ...
-    
+    def create_pair(cls): ...
     @classmethod
-    def create_server(cls, pipename, connect=...): # -> Self:
+    def create_server(cls, pipename, connect=...):  # -> Self:
         """factory method that creates a server-side ``NamedPipeStream``, over
         a newly-created *named pipe* of the given name.
 
@@ -276,14 +250,14 @@ class NamedPipeStream(Win32PipeStream):
         :returns: a :class:`NamedPipeStream` instance
         """
         ...
-    
-    def connect_server(self): # -> None:
+
+    def connect_server(self):  # -> None:
         """connects the server side of an unconnected named pipe (blocks
         until a connection arrives)"""
         ...
-    
+
     @classmethod
-    def create_client(cls, pipename): # -> Self:
+    def create_client(cls, pipename):  # -> Self:
         """factory method that creates a client-side ``NamedPipeStream``, over
         a newly-created *named pipe* of the given name.
 
@@ -294,21 +268,19 @@ class NamedPipeStream(Win32PipeStream):
         :returns: a :class:`NamedPipeStream` instance
         """
         ...
-    
-    def close(self): # -> None:
+
+    def close(self):  # -> None:
         ...
-    
-    def read(self, count): # -> LiteralString:
+
+    def read(self, count):  # -> LiteralString:
         ...
-    
-    def write(self, data): # -> None:
+
+    def write(self, data):  # -> None:
         ...
-    
-    def poll(self, timeout, interval=...): # -> Any | Literal[True]:
+
+    def poll(self, timeout, interval=...):  # -> Any | Literal[True]:
         """Windows version of select()"""
         ...
-    
-
 
 if sys.platform == "win32":
     ...

@@ -121,29 +121,21 @@ def stop_application(port: int = 18861) -> bool:
 def main():
     """Main entry point for the client utility."""
     parser = argparse.ArgumentParser(
-        prog="decker-client",
-        description="Client utility for interacting with the Decker daemon"
+        prog="decker-client", description="Client utility for interacting with the Decker daemon"
     )
 
     parser.add_argument(
         "--port",
         type=int,
         default=18861,
-        help="Port where the daemon is running (default: 18861)"
+        help="Port where the daemon is running (default: 18861)",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # Status command
     subparsers.add_parser("status", help="Get daemon status")
-
-    # Heartbeat command
     subparsers.add_parser("heartbeat", help="Send heartbeat to daemon")
-
-    # Start application command
     subparsers.add_parser("start", help="Start the application via daemon")
-
-    # Stop application command
     subparsers.add_parser("stop", help="Stop the application via daemon")
 
     args = parser.parse_args()

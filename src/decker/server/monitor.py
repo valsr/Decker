@@ -1,0 +1,178 @@
+"""Server monitor — starts, supervises, and auto-restarts the Decker server subprocess."""
+
+import logging
+import time
+from typing import Any
+
+from decker.common.api import API
+from decker.server.server import ServerProcess
+
+MEMORY_LIMIT_BYTES: int = 1 * 1024 * 1024 * 1024  # 1 GiB
+
+
+def _read_rss_bytes(pid: int) -> int | None:
+    """Read a process's RSS memory from /proc/<pid>/status (Linux only).
+
+    Returns:
+        int | None: RSS in bytes, or None if the file could not be read.
+    """
+    try:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    # "VmRSS:   123456 kB"
+                    return int(line.split()[1]) * 1024
+    except (FileNotFoundError, PermissionError, ValueError, OSError):
+        pass
+    return None
+
+
+class ServerMonitor:
+    """Monitors the server subprocess and restarts it when it becomes unhealthy."""
+
+    def __init__(
+        self,
+        port: int = 18861,
+        monitor_interval: float = 5.0,
+        max_failed_heartbeats: int = 2,
+        memory_limit_bytes: int = MEMORY_LIMIT_BYTES,
+    ):
+        """
+        Initialize the server monitor.
+
+        Args:
+            port (int): Port the server listens on.
+            monitor_interval (float): Seconds between health checks.
+            max_failed_heartbeats (int): Consecutive heartbeat failures before a restart.
+            memory_limit_bytes (int): RSS threshold in bytes above which the server is restarted.
+        """
+        self._server = ServerProcess(port)
+        self._interval = monitor_interval
+        self._max_failed_heartbeats = max_failed_heartbeats
+        self._memory_limit = memory_limit_bytes
+        self._failed_heartbeats: int = 0
+
+    def start(self) -> bool:
+        """
+        Start the server then enter the monitoring loop.
+
+        Returns:
+            bool: True after a clean shutdown, False if the server could not be started.
+        """
+        logging.info("Starting Decker server monitor")
+
+        if not self._server.start():
+            logging.error("Failed to start server process")
+            return False
+
+        if not API.request("start"):
+            logging.error("Failed to start application on server")
+            self._server.stop()
+            return False
+
+        try:
+            self._monitor()
+        except KeyboardInterrupt:
+            logging.info("Received interrupt, shutting down monitor")
+        finally:
+            self.stop()
+
+        return True
+
+    def stop(self) -> bool:
+        """Stop the server subprocess."""
+        logging.info("Stopping Decker server monitor")
+        return self._server.stop()
+
+    def status(self) -> dict[str, Any]:
+        """Return current monitor status."""
+        return {
+            "pid": self._server.pid,
+            "failed_heartbeats": self._failed_heartbeats,
+            "max_failed_heartbeats": self._max_failed_heartbeats,
+            "monitor_interval": self._interval,
+            "memory_limit_bytes": self._memory_limit,
+        }
+
+    # ------------------------------------------------------------------
+    # Internal monitoring loop
+    # ------------------------------------------------------------------
+
+    def _monitor(self) -> None:
+        """Main health-check loop. Runs until interrupted."""
+        logging.info(
+            "Monitor active (interval=%.1fs, max_heartbeat_fails=%d, memory_limit=%.0f MiB)",
+            self._interval,
+            self._max_failed_heartbeats,
+            self._memory_limit / (1024 * 1024),
+        )
+        while True:
+            try:
+                self._check_once()
+                time.sleep(self._interval)
+            except Exception as e:
+                logging.error("Unexpected error in monitor loop: %s", e)
+                time.sleep(self._interval)
+
+    def _check_once(self) -> None:
+        """Run a single round of health checks and restart if needed."""
+        if not self._server.is_running:
+            logging.warning("Server process died unexpectedly, restarting")
+            self._restart_server()
+            return
+
+        if not self._heartbeat_ok():
+            self._restart_server()
+            return
+
+        if not self._memory_ok():
+            self._restart_server()
+
+    def _heartbeat_ok(self) -> bool:
+        """Send a heartbeat and return True while the server is still within its failure budget."""
+        try:
+            response = API.request("heartbeat")
+            if response is not None and response.get("status") == "healthy":
+                self._failed_heartbeats = 0
+                logging.debug("Heartbeat OK")
+                return True
+            logging.warning("Unexpected heartbeat response: %s", response)
+        except Exception as e:
+            logging.warning("Heartbeat failed: %s", e)
+
+        self._failed_heartbeats += 1
+        logging.warning("Failed heartbeats: %d/%d", self._failed_heartbeats, self._max_failed_heartbeats)
+        return self._failed_heartbeats < self._max_failed_heartbeats
+
+    def _memory_ok(self) -> bool:
+        """Return False if the server's RSS exceeds the configured limit."""
+        pid = self._server.pid
+        if pid is None:
+            return True
+
+        rss = _read_rss_bytes(pid)
+        if rss is None:
+            return True
+
+        rss_mib = rss / (1024 * 1024)
+        limit_mib = self._memory_limit / (1024 * 1024)
+        logging.debug("Server RSS: %.1f MiB (limit %.0f MiB)", rss_mib, limit_mib)
+
+        if rss > self._memory_limit:
+            logging.error("Server RSS %.1f MiB exceeds limit %.0f MiB, restarting", rss_mib, limit_mib)
+            return False
+        return True
+
+    def _restart_server(self) -> None:
+        """Stop the server, reset state, and start it again."""
+        logging.info("Restarting server process")
+        self._server.stop()
+        self._failed_heartbeats = 0
+
+        if not self._server.start():
+            logging.error("Failed to restart server — will retry on next cycle")
+            return
+
+        if not API.request("start"):
+            logging.error("Failed to start application on restarted server")
+            self._server.stop()

@@ -13,72 +13,67 @@ Refer to :file:`rpyc/scripts/rpyc_registry.py` for more info.
 DEFAULT_PRUNING_TIMEOUT = ...
 MAX_DGRAM_SIZE = ...
 REGISTRY_PORT = ...
+
 class RegistryServer:
     """Base registry server"""
-    def __init__(self, listenersock, pruning_timeout=..., logger=..., allow_listing=...) -> None:
-        ...
-    
-    def on_service_added(self, name, addrinfo): # -> None:
+
+    def __init__(self, listenersock, pruning_timeout=..., logger=..., allow_listing=...) -> None: ...
+    def on_service_added(self, name, addrinfo):  # -> None:
         """called when a new service joins the registry (but not on keepalives).
         override this to add custom logic"""
         ...
-    
-    def on_service_removed(self, name, addrinfo): # -> None:
+
+    def on_service_removed(self, name, addrinfo):  # -> None:
         """called when a service unregisters or is pruned.
         override this to add custom logic"""
         ...
-    
-    def cmd_query(self, host, name): # -> tuple[()] | tuple[Any, ...]:
+
+    def cmd_query(self, host, name):  # -> tuple[()] | tuple[Any, ...]:
         """implementation of the ``query`` command"""
         ...
-    
-    def cmd_list(self, host, filter_host): # -> tuple[Any, ...] | None:
+
+    def cmd_list(self, host, filter_host):  # -> tuple[Any, ...] | None:
         """implementation for the ``list`` command"""
         ...
-    
-    def cmd_register(self, host, names, port): # -> Literal['OK']:
+
+    def cmd_register(self, host, names, port):  # -> Literal['OK']:
         """implementation of the ``register`` command"""
         ...
-    
-    def cmd_unregister(self, host, port): # -> Literal['OK']:
+
+    def cmd_unregister(self, host, port):  # -> Literal['OK']:
         """implementation of the ``unregister`` command"""
         ...
-    
-    def start(self): # -> None:
+
+    def start(self):  # -> None:
         """Starts the registry server (blocks)"""
         ...
-    
-    def close(self): # -> None:
+
+    def close(self):  # -> None:
         """Closes (terminates) the registry server"""
         ...
-    
-
 
 class UDPRegistryServer(RegistryServer):
     """UDP-based registry server. The server listens to UDP broadcasts and
     answers them. Useful in local networks, were broadcasts are allowed"""
-    TIMEOUT = ...
-    def __init__(self, host=..., port=..., pruning_timeout=..., logger=..., allow_listing=...) -> None:
-        ...
-    
 
+    TIMEOUT = ...
+    def __init__(self, host=..., port=..., pruning_timeout=..., logger=..., allow_listing=...) -> None: ...
 
 class TCPRegistryServer(RegistryServer):
     """TCP-based registry server. The server listens to a certain TCP port and
     answers requests. Useful when you need to cross routers in the network, since
     they block UDP broadcasts"""
-    TIMEOUT = ...
-    def __init__(self, host=..., port=..., pruning_timeout=..., logger=..., reuse_addr=..., allow_listing=...) -> None:
-        ...
-    
 
+    TIMEOUT = ...
+    def __init__(
+        self, host=..., port=..., pruning_timeout=..., logger=..., reuse_addr=..., allow_listing=...
+    ) -> None: ...
 
 class RegistryClient:
     """Base registry client. Also known as **registrar**"""
+
     REREGISTER_INTERVAL = ...
-    def __init__(self, ip, port, timeout, logger=...) -> None:
-        ...
-    
+    def __init__(self, ip, port, timeout, logger=...) -> None: ...
     def discover(self, name):
         """Sends a query for the specified service name.
 
@@ -87,14 +82,14 @@ class RegistryClient:
         :returns: a list of ``(host, port)`` tuples
         """
         ...
-    
+
     def list(self, filter_host=...):
         """
         Send a query for the full lists of exposed servers
         :returns: a list of `` service_name ``
         """
         ...
-    
+
     def register(self, aliases, port):
         """Registers the given service aliases with the given TCP port. This
         API is intended to be called only by an RPyC server.
@@ -103,7 +98,7 @@ class RegistryClient:
         :param port: the listening TCP port of the server
         """
         ...
-    
+
     def unregister(self, port):
         """Unregisters the given RPyC server. This API is intended to be called
         only by an RPyC server.
@@ -111,8 +106,6 @@ class RegistryClient:
         :param port: the listening TCP port of the RPyC server to unregister
         """
         ...
-    
-
 
 class UDPRegistryClient(RegistryClient):
     """UDP-based registry clients. By default, it sends UDP broadcasts (requires
@@ -128,22 +121,19 @@ class UDPRegistryClient(RegistryClient):
     .. note::
        Consider using :func:`rpyc.utils.factory.discover` instead
     """
-    def __init__(self, ip=..., port=..., timeout=..., bcast=..., logger=..., ipv6=...) -> None:
-        ...
-    
-    def discover(self, name): # -> int | tuple[()]:
-        ...
-    
-    def list(self, filter_host=...): # -> int | tuple[()]:
-        ...
-    
-    def register(self, aliases, port, interface=...): # -> bool:
-        ...
-    
-    def unregister(self, port): # -> None:
-        ...
-    
 
+    def __init__(self, ip=..., port=..., timeout=..., bcast=..., logger=..., ipv6=...) -> None: ...
+    def discover(self, name):  # -> int | tuple[()]:
+        ...
+
+    def list(self, filter_host=...):  # -> int | tuple[()]:
+        ...
+
+    def register(self, aliases, port, interface=...):  # -> bool:
+        ...
+
+    def unregister(self, port):  # -> None:
+        ...
 
 class TCPRegistryClient(RegistryClient):
     """TCP-based registry client. You must specify the host (registry server)
@@ -158,20 +148,16 @@ class TCPRegistryClient(RegistryClient):
     .. note::
        Consider using :func:`rpyc.utils.factory.discover` instead
     """
-    def __init__(self, ip, port=..., timeout=..., logger=...) -> None:
-        ...
-    
-    def discover(self, name): # -> int | tuple[()]:
-        ...
-    
-    def list(self, filter_host=...): # -> int | tuple[()]:
-        ...
-    
-    def register(self, aliases, port, interface=...): # -> bool:
-        ...
-    
-    def unregister(self, port): # -> None:
-        ...
-    
 
+    def __init__(self, ip, port=..., timeout=..., logger=...) -> None: ...
+    def discover(self, name):  # -> int | tuple[()]:
+        ...
 
+    def list(self, filter_host=...):  # -> int | tuple[()]:
+        ...
+
+    def register(self, aliases, port, interface=...):  # -> bool:
+        ...
+
+    def unregister(self, port):  # -> None:
+        ...

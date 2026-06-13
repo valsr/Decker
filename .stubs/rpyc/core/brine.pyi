@@ -56,10 +56,11 @@ I8I8 = ...
 _dump_registry = ...
 _load_registry = ...
 IMM_INTS_LOADER = ...
-def register(coll, key): # -> Callable[..., Any]:
+
+def register(coll, key):  # -> Callable[..., Any]:
     ...
 
-def dump(obj): # -> bytes:
+def dump(obj):  # -> bytes:
     """Converts (dumps) the given object to a byte-string representation
 
     :param obj: any :func:`dumpable` object
@@ -68,7 +69,7 @@ def dump(obj): # -> bytes:
     """
     ...
 
-def load(data): # -> int:
+def load(data):  # -> int:
     """Recreates (loads) an object from its byte-string representation
 
     :param data: the byte-string representation of an object
@@ -78,7 +79,8 @@ def load(data): # -> int:
     ...
 
 simple_types = ...
-def dumpable(obj): # -> bool:
+
+def dumpable(obj):  # -> bool:
     """Indicates whether the given object is *dumpable* by brine
 
     :returns: ``True`` if the object is dumpable (e.g., :func:`dump` would succeed),

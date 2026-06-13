@@ -11,6 +11,7 @@ class Application:
     This class serves as the entry point for the application, handling command-line arguments,
     logging configuration, and starting the GUI.
     """
+
     def __init__(self):
         self._initial_window_size = (1200, 800)  # Default window size
         self._initial_window_title = importlib.metadata.metadata("decker")["Name"]
@@ -48,11 +49,9 @@ class Application:
         )
         self._root.resizable(True, True)
 
-        # Set up close handler
         self._root.protocol("WM_DELETE_WINDOW", self.stop)
 
         try:
-            # Start the GUI event loop
             self._root.mainloop()
         except Exception as e:
             logging.error("Application encountered an error: %s", e)
@@ -74,9 +73,7 @@ class Application:
         logging.info("Application started in thread")
 
     def stop(self):
-        """
-        Stop the application gracefully.
-        """
+        """Stop the application gracefully."""
         if not self._running:
             logging.warning("Application is not running")
             return
@@ -85,16 +82,10 @@ class Application:
         self._running = False
 
         if self._root:
-            # Schedule the GUI to close on the main thread
             self._root.quit()
 
     def is_running(self) -> bool:
-        """
-        Check if the application is currently running.
-
-        Returns:
-            bool: True if the application is running, False otherwise.
-        """
+        """Check if the application is currently running."""
         return self._running and (self._root is not None)
 
     def _cleanup(self):
@@ -105,6 +96,5 @@ class Application:
             try:
                 self._root.destroy()
             except tk.TclError:
-                # Window was already destroyed
                 pass
             self._root = None

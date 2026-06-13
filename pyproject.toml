@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.14"
 termcolor = "^2.5.0"
 toml = "^0.10.2"
 flatten-dict = "^0.4.2"
@@ -36,9 +36,7 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poe.tasks]
-start = { cmd = "python -m decker" }
-run = { cmd = "python -m decker" }
-app = { cmd = "python -m decker" }
+server = { cmd = "python -m decker" }
 client = { cmd = "python -m decker.client" }
 test  = { cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker tests" }
 mypy  = { cmd  = "mypy ." }

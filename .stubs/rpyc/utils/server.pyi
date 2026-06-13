@@ -7,6 +7,7 @@ rpyc plug-in server (threaded or forking)
 """
 signal = ...
 gevent = ...
+
 class Server:
     """Base server implementation
 
@@ -31,27 +32,39 @@ class Server:
     :param listener_timeout: the timeout of the listener socket; set to ``None`` to disable (e.g.
                              on embedded platforms with limited battery)
     """
-    def __init__(self, service, hostname=..., ipv6=..., port=..., backlog=..., reuse_addr=..., authenticator=..., registrar=..., auto_register=..., protocol_config=..., logger=..., listener_timeout=..., socket_path=...) -> None:
-        ...
-    
-    def close(self): # -> None:
+
+    def __init__(
+        self,
+        service,
+        hostname=...,
+        ipv6=...,
+        port=...,
+        backlog=...,
+        reuse_addr=...,
+        authenticator=...,
+        registrar=...,
+        auto_register=...,
+        protocol_config=...,
+        logger=...,
+        listener_timeout=...,
+        socket_path=...,
+    ) -> None: ...
+    def close(self):  # -> None:
         """Closes (terminates) the server and all of its clients. If applicable,
         also unregisters from the registry server"""
         ...
-    
-    def fileno(self): # -> int:
+
+    def fileno(self):  # -> int:
         """returns the listener socket's file descriptor"""
         ...
-    
-    def accept(self): # -> None:
+
+    def accept(self):  # -> None:
         """accepts an incoming socket connection (blocking)"""
         ...
-    
-    def start(self): # -> None:
+
+    def start(self):  # -> None:
         """Starts the server (blocking). Use :meth:`close` to stop"""
         ...
-    
-
 
 class OneShotServer(Server):
     """
@@ -59,8 +72,8 @@ class OneShotServer(Server):
 
     Parameters: see :class:`Server`
     """
-    ...
 
+    ...
 
 class ThreadedServer(Server):
     """
@@ -69,8 +82,8 @@ class ThreadedServer(Server):
 
     Parameters: see :class:`Server`
     """
-    ...
 
+    ...
 
 class ThreadPoolServer(Server):
     """This server is threaded like the ThreadedServer but reuses threads so that
@@ -85,15 +98,14 @@ class ThreadPoolServer(Server):
 
     Parameters: see :class:`Server`
     """
-    def __init__(self, *args, **kwargs) -> None:
-        '''Initializes a ThreadPoolServer. In particular, instantiate the thread pool.'''
-        ...
-    
-    def close(self): # -> None:
-        '''closes a ThreadPoolServer. In particular, joins the thread pool.'''
-        ...
-    
 
+    def __init__(self, *args, **kwargs) -> None:
+        """Initializes a ThreadPoolServer. In particular, instantiate the thread pool."""
+        ...
+
+    def close(self):  # -> None:
+        """closes a ThreadPoolServer. In particular, joins the thread pool."""
+        ...
 
 class ForkingServer(Server):
     """
@@ -102,16 +114,12 @@ class ForkingServer(Server):
 
     Parameters: see :class:`Server`
     """
-    def __init__(self, *args, **kwargs) -> None:
-        ...
-    
-    def close(self): # -> None:
-        ...
-    
 
+    def __init__(self, *args, **kwargs) -> None: ...
+    def close(self):  # -> None:
+        ...
 
 class GeventServer(Server):
     """gevent based Server. Requires using ``gevent.monkey.patch_all()``."""
+
     ...
-
-

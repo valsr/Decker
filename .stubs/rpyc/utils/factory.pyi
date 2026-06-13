@@ -7,13 +7,9 @@ RPyC connection factories: ease the creation of a connection for the common
 cases)
 """
 ssl = ...
-class DiscoveryError(Exception):
-    ...
 
-
-class ForbiddenError(Exception):
-    ...
-
+class DiscoveryError(Exception): ...
+class ForbiddenError(Exception): ...
 
 def connect_channel(channel, service=..., config=...):
     """creates a connection over a given channel
@@ -88,7 +84,21 @@ def unix_connect(path, service=..., config=...):
     """
     ...
 
-def ssl_connect(host, port, keyfile=..., certfile=..., ca_certs=..., cert_reqs=..., ssl_version=..., ciphers=..., service=..., config=..., ipv6=..., keepalive=..., verify_mode=...):
+def ssl_connect(
+    host,
+    port,
+    keyfile=...,
+    certfile=...,
+    ca_certs=...,
+    cert_reqs=...,
+    ssl_version=...,
+    ciphers=...,
+    service=...,
+    config=...,
+    ipv6=...,
+    keepalive=...,
+    verify_mode=...,
+):
     """
     creates an SSL-wrapped connection to the given host (encrypted and
     authenticated).
@@ -117,6 +127,7 @@ def ssl_connect(host, port, keyfile=..., certfile=..., ca_certs=..., cert_reqs=.
     ...
 
 _ssh_connect_lock = ...
+
 def ssh_connect(remote_machine, remote_port, service=..., config=...):
     """
     Connects to an RPyC server over an SSH tunnel (created by plumbum).
@@ -137,7 +148,7 @@ def ssh_connect(remote_machine, remote_port, service=..., config=...):
     """
     ...
 
-def discover(service_name, host=..., registrar=..., timeout=...): # -> list[tuple[Any, Any]] | int:
+def discover(service_name, host=..., registrar=..., timeout=...):  # -> list[tuple[Any, Any]] | int:
     """
     discovers hosts running the given service
 
@@ -153,7 +164,7 @@ def discover(service_name, host=..., registrar=..., timeout=...): # -> list[tupl
     """
     ...
 
-def list_services(registrar=..., filter_host=..., timeout=...): # -> int | tuple[()]:
+def list_services(registrar=..., filter_host=..., timeout=...):  # -> int | tuple[()]:
     ...
 
 def connect_by_service(service_name, host=..., registrar=..., timeout=..., service=..., config=...):
@@ -205,4 +216,3 @@ def connect_multiprocess(service=..., config=..., remote_service=..., remote_con
     Contributed by *@tvanzyl*
     """
     ...
-

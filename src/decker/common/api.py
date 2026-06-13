@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+
 import rpyc
 import rpyc.utils.factory
 
@@ -20,7 +21,7 @@ class ApiHandler:
         try:
             self._connection.close()
         except Exception:
-            pass  # Ignore errors during cleanup
+            pass
         finally:
             self._connection = None
 
@@ -46,9 +47,8 @@ class ApiHandler:
             return None
 
         remote_func = getattr(self._connection.root, func_name)
-
         response = remote_func(*args, **kwargs)
         return response
 
-# Create a global instance of ApiHandler for use in the application
+
 API = ApiHandler()

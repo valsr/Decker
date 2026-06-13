@@ -7,23 +7,22 @@ class AsyncResult:
     will eventually have a result. Use the :attr:`value` property to access the
     result (which will block if the result has not yet arrived).
     """
+
     __slots__ = ...
-    def __init__(self, conn) -> None:
+    def __init__(self, conn) -> None: ...
+    def __repr__(self):  # -> str:
         ...
-    
-    def __repr__(self): # -> str:
+
+    def __call__(self, is_exc, obj):  # -> None:
         ...
-    
-    def __call__(self, is_exc, obj): # -> None:
-        ...
-    
-    def wait(self): # -> None:
+
+    def wait(self):  # -> None:
         """Waits for the result to arrive. If the AsyncResult object has an
         expiry set, and the result did not arrive within that timeout,
         an :class:`AsyncResultTimeout` exception is raised"""
         ...
-    
-    def add_callback(self, func): # -> None:
+
+    def add_callback(self, func):  # -> None:
         """Adds a callback to be invoked when the result arrives. The callback
         function takes a single argument, which is the current AsyncResult
         (``self``). If the result has already arrived, the function is invoked
@@ -32,32 +31,32 @@ class AsyncResult:
         :param func: the callback function to add
         """
         ...
-    
-    def set_expiry(self, timeout): # -> None:
+
+    def set_expiry(self, timeout):  # -> None:
         """Sets the expiry time (in seconds, relative to now) or ``None`` for
         unlimited time
 
         :param timeout: the expiry time in seconds or ``None``
         """
         ...
-    
+
     @property
-    def ready(self): # -> bool:
+    def ready(self):  # -> bool:
         """Indicates whether the result has arrived"""
         ...
-    
+
     @property
-    def error(self): # -> Literal[False] | None:
+    def error(self):  # -> Literal[False] | None:
         """Indicates whether the returned result is an exception"""
         ...
-    
+
     @property
-    def expired(self): # -> Literal[False]:
+    def expired(self):  # -> Literal[False]:
         """Indicates whether the AsyncResult has expired"""
         ...
-    
+
     @property
-    def value(self): # -> None:
+    def value(self):  # -> None:
         """Returns the result of the operation. If the result has not yet
         arrived, accessing this property will wait for it. If the result does
         not arrive before the expiry time elapses, :class:`AsyncResultTimeout`
@@ -65,6 +64,3 @@ class AsyncResult:
         here. Otherwise, the result is returned directly.
         """
         ...
-    
-
-
