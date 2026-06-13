@@ -14,6 +14,7 @@ streamdeck = "^0.9.6"
 xxhash = "^3.5.0"
 rpyc = "^6.0.1"
 pyyaml = "^6.0.3"
+PyQt6 = "^6.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^25.1.0"
@@ -118,7 +119,7 @@ spelling-private-dict-file = "spell.dic"
 # A comma-separated list of package or module names from where C extensions may
 # be loaded. Extensions are loading into the active Python interpreter and may
 # run arbitrary code.
-# extension-pkg-allow-list =
+extension-pkg-allow-list = ["PyQt6"]
 
 # A comma-separated list of package or module names from where C extensions may
 # be loaded. Extensions are loading into the active Python interpreter and may
@@ -343,7 +344,7 @@ valid-metaclass-classmethod-first-arg = ["cls"]
 max-args = 5
 
 # Maximum number of attributes for a class (see R0902).
-max-attributes = 7
+max-attributes = 10
 
 # Maximum number of boolean expressions in an if statement (see R0916).
 max-bool-expr = 5
@@ -486,6 +487,8 @@ enable = ["c-extension-no-member"]
 per-file-ignores = [
     "/tests/:missing-function-docstring,missing-module-docstring,missing-class-docstring",
     "/stubs/",
+    "/src/decker/server/application.py:import-outside-toplevel",
+    "/src/decker/server/server.py:import-outside-toplevel",
 ]
 
 [tool.pylint.method_args]
