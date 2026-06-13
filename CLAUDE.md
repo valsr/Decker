@@ -5,8 +5,9 @@
 **Decker** is a Linux application for Elgato Stream Deck hardware. The architecture has three components in the same repo:
 
 - **Server monitor** (`src/decker/server/monitor.py`) — the process launched by `poe server`. Starts the server subprocess, then polls it continuously for health (RPyC heartbeat) and memory usage. If the server fails to respond or exceeds the memory limit (1 GiB), the monitor kills it and restarts it automatically.
-- **Server** (`src/decker/server/`) — handles hardware communication via `python-elgato-streamdeck`. Runs as a separate subprocess (RPyC on port 18861) and supports multiple simultaneous clients (local and networked). Started and supervised exclusively by the server monitor.
-- **Client / UI** (`src/decker/client/`) — a GUI application that connects to a single server instance. Each client communicates with the server over RPyC.
+- **Server** (`src/decker/server/`) — handles hardware communication via `python-elgato-streamdeck`. Runs **headlessly** as a separate subprocess (RPyC on port 18861), supports multiple simultaneous clients. Started and supervised exclusively by the server monitor. Exposed RPC commands: `stop`, `heartbeat`, `status`, `devices.list`, `commands`. There is no `start` RPC — the server is already running when clients connect.
+- **Client / UI** (`src/decker/client/`) — a PyQt6 GUI that connects to a single server instance over RPyC. On startup it attempts to connect; if unreachable it shows a connect form and retries automatically every 5 s. While connected it polls the server heartbeat every 5 s and returns to the connect form if the server disappears.
+- **CLI client** (`src/decker/cli/`) — a terminal client (`poe cli <command>`) that introspects the server's live RPC surface via `commands()` — no hardcoded command list.
 
 Early alpha; the hardware integration layer and server/client separation are the current focus.
 
@@ -18,7 +19,8 @@ Early alpha; the hardware integration layer and server/client separation are the
 2. Periodically sends an RPyC heartbeat; a non-response counts as a failed check.
 3. Periodically samples the server process's RSS memory via `/proc/<pid>/status` or `psutil`.
 4. If consecutive failed heartbeats reach the threshold **or** RSS exceeds **1 GiB**, the monitor kills the child and restarts it.
-5. Restart backoff and max-restart limits are configurable.
+5. If the server exits with **code 0** (triggered by the `stop` RPC), the monitor treats it as an intentional shutdown and exits cleanly — it does **not** restart. Any non-zero exit code is treated as a crash and triggers a restart.
+6. Restart backoff and max-restart limits are configurable.
 
 The server itself has no self-healing logic — fault tolerance is entirely the monitor's responsibility.
 
@@ -31,11 +33,13 @@ poe server
 # Run the server in daemon mode
 poe server --daemon --verbose
 
-# Run the client
+# Run the GUI client
 poe client
 
-# Run the client with a specific command
-poe client status
+# Run the CLI client
+poe cli list            # list all server commands
+poe cli status          # call a specific command
+poe cli stop            # gracefully stop the server (monitor exits too)
 ```
 
 System dependency required: `libhidapi` (`sudo pacman -S hidapi` on Arch/Manjaro).
@@ -72,10 +76,14 @@ Run `format` before the others; it changes files that the linter then re-checks.
 ## Architecture constraints
 
 - `poe server` launches the monitor, which launches the server — never start the server directly in production.
+- The server runs headlessly; it has no GUI of its own. `application.py` exists for potential future use but is not loaded server-side.
+- Do not add a `start` RPC to `DeckerService` — the server is already running when clients connect.
+- `stop` RPC exits the server with code 0; the monitor interprets code 0 as intentional and stops itself. Never restart on code 0.
 - Server and client are separate entry points; keep their modules decoupled.
 - Server must support multiple simultaneous clients.
 - All hardware interaction goes through the server; the client never talks to hardware directly.
 - Fault-tolerance (restart, health checking, memory limiting) lives in the monitor, not in the server.
+- Device IDs are stable 8-char CRC-32 hex strings derived from the device serial number. The selected device is persisted as `client.default_device` in the user config layer.
 - Configuration is YAML-based; use `flatten-dict` for nested config operations.
 - RPyC is the IPC layer between server and client.
 
