@@ -14,17 +14,23 @@ from decker.server.application import Application
 class DeckerService(Service):
     """RPyC service exposed to clients for controlling the Decker application."""
 
-    def __init__(self):
+    _application: Application | None = None
+
+    @classmethod
+    def configure(cls, application: Application) -> None:
+        """Bind the shared Application instance before starting the server."""
+        cls._application = application
+
+    def __init__(self) -> None:
         """Initialize the Decker service."""
         super().__init__()
-        self._application: Application | None = None
-        self._last_heartbeat = time.time()
+        self._last_heartbeat: float = time.time()
 
-    def on_connect(self, conn: Any):
+    def on_connect(self, conn: Any) -> None:
         """Handle client connection."""
         logging.info("Client connected to Decker service")
 
-    def on_disconnect(self, conn: Any):
+    def on_disconnect(self, conn: Any) -> None:
         """Handle client disconnection."""
         logging.info("Client disconnected from Decker service")
 
@@ -36,15 +42,16 @@ class DeckerService(Service):
         Returns:
             bool: True if the application was started successfully, False otherwise.
         """
-        try:
-            if self._application is None:
-                logging.info("Starting Decker application")
-                self._application = Application()
-                self._application.run_threaded()
-                logging.info("Decker application started successfully")
-                return True
-            logging.warning("Application is already running")
+        if self._application is None:
+            logging.error("Application not configured")
             return False
+        try:
+            if self._application.is_running():
+                logging.warning("Application is already running")
+                return False
+            self._application.run_threaded()
+            logging.info("Decker application start scheduled")
+            return True
         except Exception as e:
             logging.error("Failed to start application: %s", e)
             return False
@@ -57,15 +64,16 @@ class DeckerService(Service):
         Returns:
             bool: True if the application was stopped successfully, False otherwise.
         """
-        try:
-            if self._application is not None:
-                logging.info("Stopping Decker application")
-                self._application.stop()
-                self._application = None
-                logging.info("Decker application stopped successfully")
-                return True
-            logging.warning("No application is currently running")
+        if self._application is None:
+            logging.error("Application not configured")
             return False
+        try:
+            if not self._application.is_running():
+                logging.warning("No application is currently running")
+                return False
+            self._application.stop()
+            logging.info("Decker application stop scheduled")
+            return True
         except Exception as e:
             logging.error("Failed to stop application: %s", e)
             return False
@@ -82,7 +90,7 @@ class DeckerService(Service):
         return {
             "status": "healthy",
             "timestamp": self._last_heartbeat,
-            "application_running": self._application is not None,
+            "application_running": self._application is not None and self._application.is_running(),
         }
 
     @rpyc.utils.exposed
@@ -95,7 +103,7 @@ class DeckerService(Service):
         """
         return {
             "service_status": "running",
-            "application_running": self._application is not None,
+            "application_running": self._application is not None and self._application.is_running(),
             "last_heartbeat": self._last_heartbeat,
         }
 
