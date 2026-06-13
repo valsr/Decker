@@ -4,10 +4,9 @@ import logging
 import time
 from typing import Any
 
+import decker.common.config as config
 from decker.common.api import API
 from decker.server.server import ServerProcess
-
-MEMORY_LIMIT_BYTES: int = 1 * 1024 * 1024 * 1024  # 1 GiB
 
 
 def _read_rss_bytes(pid: int) -> int | None:
@@ -30,26 +29,14 @@ def _read_rss_bytes(pid: int) -> int | None:
 class ServerMonitor:
     """Monitors the server subprocess and restarts it when it becomes unhealthy."""
 
-    def __init__(
-        self,
-        port: int = 18861,
-        monitor_interval: float = 5.0,
-        max_failed_heartbeats: int = 2,
-        memory_limit_bytes: int = MEMORY_LIMIT_BYTES,
-    ):
-        """
-        Initialize the server monitor.
-
-        Args:
-            port (int): Port the server listens on.
-            monitor_interval (float): Seconds between health checks.
-            max_failed_heartbeats (int): Consecutive heartbeat failures before a restart.
-            memory_limit_bytes (int): RSS threshold in bytes above which the server is restarted.
-        """
-        self._server = ServerProcess(port)
-        self._interval = monitor_interval
-        self._max_failed_heartbeats = max_failed_heartbeats
-        self._memory_limit = memory_limit_bytes
+    def __init__(self) -> None:
+        """Initialize the server monitor from configuration."""
+        port = config.get_as("server.port", int)
+        startup_wait = config.get_as("server.startup_wait", float)
+        self._server = ServerProcess(port, startup_wait)
+        self._interval: float = config.get_as("server.health_check_interval", float)
+        self._max_failed_heartbeats: int = config.get_as("server.max_failed_heartbeats", int)
+        self._memory_limit: int = config.get_as("server.memory_limit", int)
         self._failed_heartbeats: int = 0
 
     def start(self) -> bool:

@@ -1,174 +1,123 @@
-import os
-import tempfile
-from typing import Any
-from unittest.mock import MagicMock, patch
+"""Tests for configuration backends."""
 
-import toml
-from assertpy import assert_that, fail
-from pytest import MonkeyPatch
+from pathlib import Path
 
-from decker.common.config.backend import BackendManager, TomlFileBackend
+import yaml
+from assertpy import assert_that
 
+from decker.common.config.backend import DefaultBackend, MemoryBackend, UserBackend
 
-class TestTomlBackendLoad:
-    def test_load_file_not_found(self):
-        # Arrange
-        temp_path = "non_existent_config.toml"
-        backend = TomlFileBackend(temp_path)
-
-        # Act & Assert
-        try:
-            backend.load()
-            assert False, "Expected FileNotFoundError"
-        except FileNotFoundError as e:
-            assert_that(str(e)).contains(temp_path)
-
-    @patch("os.path.exists")
-    @patch("os.access")
-    def test_load_not_readable(self, mock_os_access: MagicMock, mock_path_exists: MagicMock):
-        # Arrange
-        temp_path = "config.toml"
-        mock_path_exists.return_value = True
-        mock_os_access.return_value = False
-        backend = TomlFileBackend(temp_path)
-
-        # Act & Assert
-        try:
-            backend.load()
-            fail("Expected PermissionError")
-        except PermissionError as e:
-            assert_that(str(e)).contains(temp_path)
-
-    def test_load_without_server_key(self):
-        # Arrange
-        with tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="UTF-8") as tmp_file:
-            toml.dump({"not_server": {"key": "value"}}, tmp_file)
-            temp_path = tmp_file.name
-        backend = TomlFileBackend(temp_path)
-
-        # Act
-        settings = backend.load()
-
-        # Assert
-        assert_that(settings).is_empty()
-        os.remove(temp_path)
-
-    def test_load_with_server_key(self):
-        # Arrange
-        sample_config = {"server": {"port": 8080, "host": "localhost", "debug": True}}
-        with tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="UTF-8") as tmp_file:
-            toml.dump(sample_config, tmp_file)
-            temp_path = tmp_file.name
-        backend = TomlFileBackend(temp_path)
-
-        # Act
-        settings = backend.load()
-
-        # Assert
-        expected_keys = {"port", "host", "debug"}
-        for k in expected_keys:
-            assert_that(settings).contains_key(k)
-        assert_that(settings["port"]).is_equal_to(8080)
-        assert_that(settings["host"]).is_equal_to("localhost")
-        assert_that(settings["debug"]).is_equal_to(True)
-        os.remove(temp_path)
+# ---------------------------------------------------------------------------
+# DefaultBackend
+# ---------------------------------------------------------------------------
 
 
-class TestTomlBackendSave:
-    def test_save_not_readable(self, monkeypatch: MonkeyPatch):
-        # Arrange
-        with tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="UTF-8") as tmp_file:
-            tmp_file.write("server = { port = 8080 }")
-            temp_path = tmp_file.name
+class TestDefaultBackend:
+    def test_load_returns_nested_dict(self, tmp_path: Path):
+        cfg = tmp_path / "defaults.yml"
+        cfg.write_text("server:\n  port: 18861\n", encoding="utf-8")
 
-        original_open = open
+        result = DefaultBackend(cfg).load()
 
-        def mock_open(path: str, *args: Any, **kwargs: Any) -> Any:
-            if path == temp_path and ("w" in kwargs.get("mode", "") or "w" in args[0] if args else False):
-                raise PermissionError(f"Permission denied: '{temp_path}'")
-            return original_open(path, *args, **kwargs)  # pyright: ignore[reportUnknownVariableType]
+        assert_that(result).is_equal_to({"server": {"port": 18861}})
 
-        monkeypatch.setattr("builtins.open", mock_open)
+    def test_load_empty_file_returns_empty_dict(self, tmp_path: Path):
+        cfg = tmp_path / "empty.yml"
+        cfg.write_text("", encoding="utf-8")
 
-        backend = TomlFileBackend(temp_path)
-        settings = {"new": {"key": "value"}}
+        result = DefaultBackend(cfg).load()
 
-        # Act & Assert
-        try:
-            backend.save(settings)
-            fail("Expected PermissionError")
-        except PermissionError as e:
-            assert_that(str(e)).contains(temp_path)
-        finally:
-            os.remove(temp_path)
+        assert_that(result).is_equal_to({})
 
-    def test_save_success(self, _monkeypatch: MonkeyPatch):
-        # Arrange
-        with tempfile.NamedTemporaryFile(delete=False, mode="w+", encoding="UTF-8") as tmp_file:
-            toml.dump({"server": {"initial": "data"}}, tmp_file)
-            temp_path = tmp_file.name
-        backend = TomlFileBackend(temp_path)
-        new_settings = {"app": {"mode": "production", "debug": False}}
+    def test_load_missing_file_raises(self, tmp_path: Path):
+        backend = DefaultBackend(tmp_path / "nonexistent.yml")
 
-        # Act
-        backend.save(new_settings)
-
-        # Assert
-        with open(temp_path, "r", encoding="UTF-8") as f:
-            data = toml.load(f)
-
-        assert_that("server" in data).is_true()
-
-        server_config = data["server"]
-        assert_that(server_config).is_equal_to({"app": {"mode": "production", "debug": False}})
-
-        os.remove(temp_path)
+        assert_that(backend.load).raises(FileNotFoundError).when_called_with()
 
 
-class DummyBackend(TomlFileBackend):
-    def __init__(self):  # pylint: disable=super-init-not-called
-        """Initializes the dummy backend."""
-        self.load_called = 0
-        self.save_called = 0
-        self.saved_settings = None
-
-    def load(self):
-        """Simulates a synchronous load operation."""
-        self.load_called += 1
-        return {"dummy": {"key": "dummy.value"}}
-
-    def save(self, settings: dict[str, Any]):
-        """Simulates a synchronous save operation."""
-        self.save_called += 1
-        self.saved_settings = settings
+# ---------------------------------------------------------------------------
+# UserBackend — load
+# ---------------------------------------------------------------------------
 
 
-class TestBackendManagerLoad:
-    def test_load_calls_backend_load_and_returns_settings(self):
-        """Tests that manager.load calls backend.load and returns correct settings."""
-        # Arrange
-        dummy_backend = DummyBackend()
-        manager = BackendManager(dummy_backend)
+class TestUserBackendLoad:
+    def test_load_returns_nested_dict(self, tmp_path: Path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("server:\n  port: 9000\n", encoding="utf-8")
 
-        # Act
-        settings = manager.load()
+        result = UserBackend(cfg).load()
 
-        # Assert
-        assert_that(settings).is_equal_to({"dummy": {"key": "dummy.value"}})
+        assert_that(result).is_equal_to({"server": {"port": 9000}})
+
+    def test_load_missing_file_returns_empty_dict(self, tmp_path: Path):
+        result = UserBackend(tmp_path / "config.yaml").load()
+
+        assert_that(result).is_equal_to({})
 
 
-class TestBackendManagerSave:
-    def test_save_calls_backend_save_and_saves_settings(self):
-        """Tests that manager.save calls backend.save and the settings are saved properly."""
-        # Arrange
-        dummy_backend = DummyBackend()
-        manager = BackendManager(dummy_backend)
-        new_settings = {"new": {"key": "value"}}
+# ---------------------------------------------------------------------------
+# UserBackend — save
+# ---------------------------------------------------------------------------
 
-        # Act
-        manager.save(new_settings)
-        manager.flush()
 
-        # Assert
-        assert_that(dummy_backend.save_called).is_equal_to(1)
-        assert_that(dummy_backend.saved_settings).is_equal_to(new_settings)
+class TestUserBackendSave:
+    def test_save_creates_file_and_parent_dirs(self, tmp_path: Path):
+        cfg = tmp_path / "nested" / "dir" / "config.yaml"
+        backend = UserBackend(cfg)
+
+        backend.save({"server": {"port": 1234}})
+
+        assert_that(cfg.exists()).is_true()
+        with open(cfg, encoding="utf-8") as fh:
+            assert_that(yaml.safe_load(fh)).is_equal_to({"server": {"port": 1234}})
+
+    def test_save_overwrites_existing_file(self, tmp_path: Path):
+        cfg = tmp_path / "config.yaml"
+        backend = UserBackend(cfg)
+        backend.save({"a": 1})
+
+        backend.save({"b": 2})
+
+        with open(cfg, encoding="utf-8") as fh:
+            assert_that(yaml.safe_load(fh)).is_equal_to({"b": 2})
+
+    def test_roundtrip(self, tmp_path: Path):
+        cfg = tmp_path / "config.yaml"
+        data = {"server": {"port": 18861, "host": "localhost"}}
+        backend = UserBackend(cfg)
+
+        backend.save(data)
+        result = backend.load()
+
+        assert_that(result).is_equal_to(data)
+
+
+# ---------------------------------------------------------------------------
+# MemoryBackend
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryBackend:
+    def test_load_initially_empty(self):
+        assert_that(MemoryBackend().load()).is_equal_to({})
+
+    def test_save_and_load_roundtrip(self):
+        backend = MemoryBackend()
+        data = {"server": {"port": 42}}
+
+        backend.save(data)
+
+        assert_that(backend.load()).is_equal_to(data)
+
+    def test_save_replaces_previous_data(self):
+        backend = MemoryBackend()
+        backend.save({"a": 1})
+
+        backend.save({"b": 2})
+
+        assert_that(backend.load()).is_equal_to({"b": 2})
+
+    def test_save_does_not_write_to_disk(self, tmp_path: Path):
+        backend = MemoryBackend()
+        backend.save({"x": 99})
+        assert_that(list(tmp_path.iterdir())).is_empty()

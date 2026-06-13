@@ -13,14 +13,8 @@ from decker.server.service import DeckerService
 class ServerProcess:
     """Spawns and owns the RPyC server subprocess."""
 
-    def __init__(self, port: int = 18861, startup_wait: float = 5.0):
-        """
-        Initialize the server process.
-
-        Args:
-            port (int): Port to bind the RPyC server to.
-            startup_wait (float): Seconds to wait after spawning before declaring the server ready.
-        """
+    def __init__(self, port: int = 18861, startup_wait: float = 5.0) -> None:
+        """Initialize the server process."""
         self.port = port
         self._startup_wait = startup_wait
         self._process: multiprocessing.Process | None = None

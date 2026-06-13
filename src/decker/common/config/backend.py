@@ -1,145 +1,69 @@
-"""Configuration backends for loading and saving settings."""
+"""Configuration storage backends."""
 
-import os
-from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
-import toml
+import yaml
 
 
-class ReadOnlyConfigBackend:
-    """
-    Base class for readonly configuration backends.
-
-    This class defines the interface for loading configuration data.
-    Subclasses should implement the `load` methods.
-    """
+class ReadOnlyBackend:
+    """Base class for read-only configuration backends."""
 
     def load(self) -> dict[str, Any]:
-        """Load configuration data."""
-        raise NotImplementedError("Subclasses must implement this method.")
+        """Load and return raw (nested) configuration data."""
+        raise NotImplementedError
 
 
-class ConfigBackend(ReadOnlyConfigBackend):
-    """
-    Base class for configuration backends.
+class WritableBackend(ReadOnlyBackend):
+    """Base class for read-write configuration backends."""
 
-    This class defines the interface for loading and saving configuration data.
-    Subclasses should implement the `load` and `save` methods.
-    """
-
-    def save(self, settings: dict[str, Any]) -> None:
-        """Save configuration settings."""
-        raise NotImplementedError("Subclasses must implement this method.")
+    def save(self, data: dict[str, Any]) -> None:
+        """Persist raw (nested) configuration data."""
+        raise NotImplementedError
 
 
-class MemoryBackend(ConfigBackend):
-    """
-    MemoryBackend provides functionality to load and save configuration data
-    in memory.
+class DefaultBackend(ReadOnlyBackend):
+    """Loads bundled application defaults from a YAML file."""
 
-    Notes:
-        This class does not persist configuration data to a file and is intended
-        for use cases where configuration is managed entirely in memory.
-    """
-
-    def __init__(self, data: dict[str, Any] | None = None):
-        """Initialize a new instance of the configuration."""
-        self._config = data if data is not None else {}
+    def __init__(self, path: str | Path):
+        self._path = Path(path)
 
     def load(self) -> dict[str, Any]:
-        """
-        Load configuration data from memory.
-
-        Returns:
-            dict[str, Any]: The current in-memory configuration data.
-        """
-        return deepcopy(self._config)
-
-    def save(self, settings: dict[str, Any]) -> None:
-        """
-        Saves configuration settings to memory.
-
-        Parameters:
-            settings (dict[str, Any]): A dictionary containing the configuration settings.
-        """
-        self._config = settings
+        """Load and return the YAML file contents. Raises FileNotFoundError if missing."""
+        with open(self._path, encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
 
 
-class ReadOnlyMemoryBackend(ReadOnlyConfigBackend):
-    """
-    ReadOnlyMemoryBackend provides functionality to load configuration data
-    from memory.
+class UserBackend(WritableBackend):
+    """Loads and saves user configuration as a YAML file, creating it on first save."""
 
-    Notes:
-        This class does not persist configuration data to a file and is intended
-        for use cases where configuration is managed entirely in memory.
-    """
-
-    def __init__(self, data: dict[str, Any] | None = None):
-        """Initialize a new instance of the configuration."""
-        self._config = data if data is not None else {}
+    def __init__(self, path: str | Path):
+        self._path = Path(path)
 
     def load(self) -> dict[str, Any]:
-        """
-        Load configuration data from memory.
+        """Load and return the YAML file contents, or an empty dict if the file does not exist."""
+        if not self._path.exists():
+            return {}
+        with open(self._path, encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
 
-        Returns:
-            dict[str, Any]: The current in-memory configuration data.
-        """
-        return deepcopy(self._config)
+    def save(self, data: dict[str, Any]) -> None:
+        """Persist data to the YAML file, creating parent directories as needed."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._path, "w", encoding="utf-8") as fh:
+            yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
 
 
-class TomlFileBackend(ConfigBackend):
-    """
-    TomlFileBackend provides functionality to load and save configuration data
-    from a TOML formatted file.
+class MemoryBackend(WritableBackend):
+    """In-memory runtime overrides; never persisted to disk."""
 
-    Notes:
-        This class depends on an external constant (e.g., CONFIG_KEY) and the toml
-        module for serialization and deserialization of configuration data.
-    """
-
-    def __init__(self, path: str):
-        """
-        Initialize a new instance of the configuration.
-
-        Parameters:
-            path (str): The file path for storing or accessing configuration data.
-        """
-        self._path = path
+    def __init__(self) -> None:
+        self._data: dict[str, Any] = {}
 
     def load(self) -> dict[str, Any]:
-        """
-        Load configuration data from a TOML file.
+        """Return the current in-memory data."""
+        return self._data
 
-        Returns:
-            dict[str, Any]: Parsed configuration data from toml file.
-
-        Raises:
-            FileNotFoundError: If the configuration file is not found at self._path.
-            PermissionError: If the configuration file cannot be read.
-        """
-        if not os.path.exists(self._path):
-            raise FileNotFoundError(f"Config file not found: {self._path}")
-        if not os.access(self._path, os.R_OK):
-            raise PermissionError(f"Cannot read config file: {self._path}")
-
-        return toml.load(self._path)
-
-    def save(self, settings: dict[str, Any]) -> None:
-        """
-        Saves configuration settings to a file in TOML format.
-
-        Parameters:
-            settings (dict[str, Any]): A dictionary containing the configuration settings.
-
-        Raises:
-            PermissionError: If the configuration file exists but cannot be read.
-        """
-        if os.path.exists(self._path):
-            if not os.access(self._path, os.R_OK):
-                raise PermissionError(f"Cannot read config file: {self._path}")
-
-        with open(self._path, "w", encoding="UTF-8") as file:
-            toml.dump(settings, file)
+    def save(self, data: dict[str, Any]) -> None:
+        """Replace the in-memory data entirely."""
+        self._data = data

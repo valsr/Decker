@@ -1,7 +1,9 @@
+"""Tkinter-based GUI application wrapper."""
+
 import importlib.metadata
 import logging
 import threading
-import tkinter as tk
+from typing import Any
 
 
 class Application:
@@ -12,20 +14,18 @@ class Application:
     logging configuration, and starting the GUI.
     """
 
-    def __init__(self):
-        self._initial_window_size = (1200, 800)  # Default window size
+    def __init__(self) -> None:
+        self._initial_window_size = (1200, 800)
         self._initial_window_title = importlib.metadata.metadata("decker")["Name"]
-        self._window_stack = []
-        self._root: tk.Tk | None = None
+        self._window_stack: list[Any] = []
+        self._root: Any = None
         self._running = False
         self._thread: threading.Thread | None = None
 
-    def run(self):
-        """
-        Run the application.
+    def run(self) -> None:
+        """Run the application, initializing the GUI event loop."""
+        import tkinter as tk
 
-        This method initializes the application, sets up logging, and starts the GUI event loop.
-        """
         if self._running:
             logging.warning("Application is already running")
             return
@@ -40,12 +40,7 @@ class Application:
         position_down = int(self._root.winfo_screenheight() / 2 - self._initial_window_size[1] / 2)
 
         self._root.geometry(
-            "{}x{}+{}+{}".format(
-                self._initial_window_size[0],
-                self._initial_window_size[1],
-                position_right,
-                position_down,
-            )
+            f"{self._initial_window_size[0]}x{self._initial_window_size[1]}+{position_right}+{position_down}"
         )
         self._root.resizable(True, True)
 
@@ -58,12 +53,8 @@ class Application:
         finally:
             self._cleanup()
 
-    def run_threaded(self):
-        """
-        Run the application in a separate thread.
-
-        This is useful when the application needs to be controlled by a daemon.
-        """
+    def run_threaded(self) -> None:
+        """Run the application in a separate thread."""
         if self._thread and self._thread.is_alive():
             logging.warning("Application thread is already running")
             return
@@ -72,7 +63,7 @@ class Application:
         self._thread.start()
         logging.info("Application started in thread")
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the application gracefully."""
         if not self._running:
             logging.warning("Application is not running")
@@ -88,8 +79,9 @@ class Application:
         """Check if the application is currently running."""
         return self._running and (self._root is not None)
 
-    def _cleanup(self):
-        """Perform cleanup when the application stops."""
+    def _cleanup(self) -> None:
+        import tkinter as tk
+
         logging.info("Cleaning up application resources")
         self._running = False
         if self._root:
