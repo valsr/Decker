@@ -9,6 +9,7 @@ from typing import Any
 
 from rpyc.utils.server import ThreadPoolServer
 
+from decker.server.application import Application
 from decker.server.service import DeckerService
 
 
@@ -108,7 +109,7 @@ class ServerProcess:
         """RPyC blocking loop — runs in a background thread inside the child process."""
         try:
             self._server = ThreadPoolServer(
-                DeckerService(),
+                DeckerService,
                 port=self.port,
                 protocol_config={"allow_public_attrs": True},
             )
@@ -121,6 +122,8 @@ class ServerProcess:
         """Entry point for the server subprocess.
 
         Qt event loop runs in this (main) thread; RPyC runs in a daemon thread.
+        Application is created here so it lives in the main thread, which is
+        required for Qt's signal queuing to route cross-thread emissions correctly.
         """
         from PyQt6.QtWidgets import (
             QApplication,  # pylint: disable=import-outside-toplevel
@@ -130,6 +133,8 @@ class ServerProcess:
         signal.signal(signal.SIGINT, self._signal_handler)
 
         qt_app = QApplication(sys.argv)
+        qt_app.setQuitOnLastWindowClosed(False)
+        DeckerService.configure(Application())
 
         rpyc_thread = threading.Thread(target=self._run_rpyc, daemon=True)
         rpyc_thread.start()

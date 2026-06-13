@@ -1,54 +1,48 @@
 """Server-side GUI application — a PyQt6 window managed by the RPyC service."""
 
-from __future__ import annotations
-
 import importlib.metadata
 import logging
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QMainWindow
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtWidgets import QMainWindow
 
 
-class Application:
+class Application(QObject):
     """PyQt6 window launched by the server when a client calls start().
 
-    Window creation and teardown are always scheduled onto the Qt main thread
-    via QTimer.singleShot so this class is safe to drive from RPyC service threads.
+    Must be created in the Qt main thread. Cross-thread invocations of
+    run_threaded() and stop() are safe because Qt queues signal emissions
+    from non-main threads automatically.
     """
 
     _WIDTH = 1200
     _HEIGHT = 800
 
+    _show_requested = pyqtSignal()
+    _close_requested = pyqtSignal()
+
     def __init__(self) -> None:
+        super().__init__()
         self._title: str = importlib.metadata.metadata("decker")["Name"]
-        self._window: "QMainWindow | None" = None
+        self._window: QMainWindow | None = None
         self._running: bool = False
+        self._show_requested.connect(self._do_show)
+        self._close_requested.connect(self._do_close)
 
     def run_threaded(self) -> None:
         """Schedule window creation on the Qt main thread (thread-safe)."""
-        from PyQt6.QtCore import QTimer  # pylint: disable=import-outside-toplevel
-        from PyQt6.QtWidgets import (
-            QApplication,  # pylint: disable=import-outside-toplevel
-        )
-
         if self._running:
             logging.warning("Application is already running")
             return
-        QTimer.singleShot(0, QApplication.instance(), self._show)  # type: ignore[call-overload]
+        self._show_requested.emit()
         logging.info("Application scheduled to start")
 
     def stop(self) -> None:
         """Schedule window teardown on the Qt main thread (thread-safe)."""
-        from PyQt6.QtCore import QTimer  # pylint: disable=import-outside-toplevel
-        from PyQt6.QtWidgets import (
-            QApplication,  # pylint: disable=import-outside-toplevel
-        )
-
         if not self._running:
             logging.warning("Application is not running")
             return
-        QTimer.singleShot(0, QApplication.instance(), self._close)  # type: ignore[call-overload]
+        self._close_requested.emit()
         logging.info("Application scheduled to stop")
 
     def is_running(self) -> bool:
@@ -56,14 +50,11 @@ class Application:
         return self._running
 
     # ------------------------------------------------------------------
-    # Main-thread callbacks
+    # Main-thread callbacks (connected via signals — do not call directly)
     # ------------------------------------------------------------------
 
-    def _show(self) -> None:
-        from PyQt6.QtWidgets import (
-            QMainWindow,  # pylint: disable=import-outside-toplevel
-        )
-
+    @pyqtSlot()
+    def _do_show(self) -> None:
         window = QMainWindow()
         window.setWindowTitle(self._title)
         window.resize(self._WIDTH, self._HEIGHT)
@@ -73,7 +64,8 @@ class Application:
         self._running = True
         logging.info("Application window shown")
 
-    def _close(self) -> None:
+    @pyqtSlot()
+    def _do_close(self) -> None:
         if self._window is not None:
             self._window.close()
 
