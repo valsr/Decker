@@ -38,3 +38,19 @@ class TestFormatResult:
     def test_dict_multiple_keys_each_on_own_line(self):
         result = format_result({"a": "1", "b": "2"})
         assert_that(result.split("\n")).is_length(2)
+
+    def test_empty_list_returns_none_placeholder(self):
+        assert_that(format_result([])).is_equal_to("(none)")
+
+    def test_list_of_dicts_shows_indexed_blocks(self):
+        result = format_result([{"type": "StreamDeck", "serial": "ABC"}])
+        assert_that(result).contains("[0]").contains("type").contains("StreamDeck")
+
+    def test_list_of_scalars_shows_indexed_items(self):
+        result = format_result(["a", "b"])
+        assert_that(result).contains("[0] a").contains("[1] b")
+
+    def test_list_multiple_devices_each_gets_own_block(self):
+        devices = [{"id": "1"}, {"id": "2"}]
+        result = format_result(devices)
+        assert_that(result).contains("[0]").contains("[1]")
