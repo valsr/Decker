@@ -9,6 +9,7 @@ import rpyc
 from rpyc.core.service import Service
 
 from decker.server.application import Application
+from decker.server.devices import list_devices
 
 
 class DeckerService(Service):
@@ -106,6 +107,16 @@ class DeckerService(Service):
             "application_running": self._application is not None and self._application.is_running(),
             "last_heartbeat": self._last_heartbeat,
         }
+
+    @rpyc.utils.exposed
+    def devices_list(self) -> list[dict[str, Any]]:
+        """
+        List all connected Stream Deck devices.
+
+        Returns:
+            list[dict[str, Any]]: One entry per device with id, type, keys, serial, vendor_id, product_id.
+        """
+        return list_devices()
 
     @rpyc.utils.exposed
     def commands(self) -> dict[str, dict[str, str]]:
