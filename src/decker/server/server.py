@@ -3,13 +3,10 @@
 import logging
 import multiprocessing
 import signal
-import sys
-import threading
 from typing import Any
 
 from rpyc.utils.server import ThreadPoolServer
 
-from decker.server.application import Application
 from decker.server.service import DeckerService
 
 
@@ -59,6 +56,10 @@ class ServerProcess:
             logging.warning("No server process to stop")
             return False
 
+        if not self._process.is_alive():
+            self._process = None
+            return True
+
         try:
             logging.info("Stopping RPyC server (pid %d)", self._process.pid or -1)
             self._process.terminate()
@@ -88,55 +89,39 @@ class ServerProcess:
             return self._process.pid
         return None
 
+    @property
+    def exit_code(self) -> int | None:
+        """Exit code of the subprocess, or None if still running or not started."""
+        if self._process is not None and not self._process.is_alive():
+            return self._process.exitcode
+        return None
+
+    @property
+    def exited_cleanly(self) -> bool:
+        """True when the subprocess stopped with exit code 0 (intentional stop)."""
+        return self.exit_code == 0
+
     # ------------------------------------------------------------------
     # Child-process internals
     # ------------------------------------------------------------------
 
     def _signal_handler(self, signum: int, _: Any) -> None:
-        """Graceful shutdown: close RPyC then quit the Qt event loop."""
-        from PyQt6.QtWidgets import (
-            QApplication,  # pylint: disable=import-outside-toplevel
-        )
-
+        """Graceful shutdown: close the RPyC server."""
         logging.info("Received signal %d, shutting down", signum)
         if self._server:
             self._server.close()
-        app = QApplication.instance()
-        if app:
-            app.quit()
-
-    def _run_rpyc(self) -> None:
-        """RPyC blocking loop — runs in a background thread inside the child process."""
-        try:
-            self._server = ThreadPoolServer(
-                DeckerService,
-                port=self.port,
-                protocol_config={"allow_public_attrs": True},
-            )
-            logging.info("RPyC server listening on port %d", self.port)
-            self._server.start()
-        except Exception as e:
-            logging.error("RPyC server error: %s", e)
 
     def _run_server(self) -> None:
-        """Entry point for the server subprocess.
-
-        Qt event loop runs in this (main) thread; RPyC runs in a daemon thread.
-        Application is created here so it lives in the main thread, which is
-        required for Qt's signal queuing to route cross-thread emissions correctly.
-        """
-        from PyQt6.QtWidgets import (
-            QApplication,  # pylint: disable=import-outside-toplevel
-        )
-
+        """Entry point for the server subprocess. Runs RPyC in the main thread."""
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        qt_app = QApplication(sys.argv)
-        qt_app.setQuitOnLastWindowClosed(False)
-        DeckerService.configure(Application())
-
-        rpyc_thread = threading.Thread(target=self._run_rpyc, daemon=True)
-        rpyc_thread.start()
-
-        qt_app.exec()
+        self._server = ThreadPoolServer(
+            DeckerService,
+            port=self.port,
+            protocol_config={"allow_public_attrs": True},
+        )
+        DeckerService.configure_server(self._server)
+        logging.info("RPyC server listening on port %d", self.port)
+        self._server.start()  # blocks until close() is called
+        # Normal return → subprocess exits with code 0 (intentional stop)

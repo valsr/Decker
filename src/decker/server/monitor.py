@@ -38,6 +38,7 @@ class ServerMonitor:
         self._max_failed_heartbeats: int = config.get_as("server.max_failed_heartbeats", int)
         self._memory_limit: int = config.get_as("server.memory_limit", int)
         self._failed_heartbeats: int = 0
+        self._stop_requested: bool = False
 
     def start(self) -> bool:
         """
@@ -50,11 +51,6 @@ class ServerMonitor:
 
         if not self._server.start():
             logging.error("Failed to start server process")
-            return False
-
-        if not API.request("start"):
-            logging.error("Failed to start application on server")
-            self._server.stop()
             return False
 
         try:
@@ -86,7 +82,7 @@ class ServerMonitor:
     # ------------------------------------------------------------------
 
     def _monitor(self) -> None:
-        """Main health-check loop. Runs until interrupted."""
+        """Main health-check loop. Runs until interrupted or a clean server stop."""
         logging.info(
             "Monitor active (interval=%.1fs, max_heartbeat_fails=%d, memory_limit=%.0f MiB)",
             self._interval,
@@ -96,14 +92,19 @@ class ServerMonitor:
         while True:
             try:
                 self._check_once()
-                time.sleep(self._interval)
             except Exception as e:
                 logging.error("Unexpected error in monitor loop: %s", e)
-                time.sleep(self._interval)
+            if self._stop_requested:
+                break
+            time.sleep(self._interval)
 
     def _check_once(self) -> None:
         """Run a single round of health checks and restart if needed."""
         if not self._server.is_running:
+            if self._server.exited_cleanly:
+                logging.info("Server stopped cleanly, shutting down monitor")
+                self._stop_requested = True
+                return
             logging.warning("Server process died unexpectedly, restarting")
             self._restart_server()
             return
@@ -158,8 +159,3 @@ class ServerMonitor:
 
         if not self._server.start():
             logging.error("Failed to restart server — will retry on next cycle")
-            return
-
-        if not API.request("start"):
-            logging.error("Failed to start application on restarted server")
-            self._server.stop()

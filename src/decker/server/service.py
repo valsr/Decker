@@ -2,25 +2,26 @@
 
 import inspect
 import logging
+import threading
 import time
 from typing import Any
 
 import rpyc
 from rpyc.core.service import Service
+from rpyc.utils.server import ThreadPoolServer
 
-from decker.server.application import Application
 from decker.server.devices import list_devices
 
 
 class DeckerService(Service):
     """RPyC service exposed to clients for controlling the Decker application."""
 
-    _application: Application | None = None
+    _rpyc_server: ThreadPoolServer | None = None
 
     @classmethod
-    def configure(cls, application: Application) -> None:
-        """Bind the shared Application instance before starting the server."""
-        cls._application = application
+    def configure_server(cls, server: ThreadPoolServer) -> None:
+        """Bind the shared ThreadPoolServer instance before clients connect."""
+        cls._rpyc_server = server
 
     def __init__(self) -> None:
         """Initialize the Decker service."""
@@ -36,48 +37,19 @@ class DeckerService(Service):
         logging.info("Client disconnected from Decker service")
 
     @rpyc.utils.exposed
-    def start(self) -> bool:
-        """
-        Start the Decker application.
-
-        Returns:
-            bool: True if the application was started successfully, False otherwise.
-        """
-        if self._application is None:
-            logging.error("Application not configured")
-            return False
-        try:
-            if self._application.is_running():
-                logging.warning("Application is already running")
-                return False
-            self._application.run_threaded()
-            logging.info("Decker application start scheduled")
-            return True
-        except Exception as e:
-            logging.error("Failed to start application: %s", e)
-            return False
-
-    @rpyc.utils.exposed
     def stop(self) -> bool:
-        """
-        Stop the Decker application.
+        """Gracefully shut down the server. The monitor exits on detecting a clean shutdown."""
+        if self._rpyc_server is None:
+            logging.error("Server reference not configured")
+            return False
 
-        Returns:
-            bool: True if the application was stopped successfully, False otherwise.
-        """
-        if self._application is None:
-            logging.error("Application not configured")
-            return False
-        try:
-            if not self._application.is_running():
-                logging.warning("No application is currently running")
-                return False
-            self._application.stop()
-            logging.info("Decker application stop scheduled")
-            return True
-        except Exception as e:
-            logging.error("Failed to stop application: %s", e)
-            return False
+        def _shutdown() -> None:
+            time.sleep(0.1)  # let the RPC response be delivered first
+            self._rpyc_server.close()  # type: ignore[union-attr]
+
+        threading.Thread(target=_shutdown, daemon=True).start()
+        logging.info("Server shutdown scheduled")
+        return True
 
     @rpyc.utils.exposed
     def heartbeat(self) -> dict[str, Any]:
@@ -91,20 +63,18 @@ class DeckerService(Service):
         return {
             "status": "healthy",
             "timestamp": self._last_heartbeat,
-            "application_running": self._application is not None and self._application.is_running(),
         }
 
     @rpyc.utils.exposed
     def status(self) -> dict[str, Any]:
         """
-        Get detailed service and application status.
+        Get detailed service status.
 
         Returns:
             dict[str, Any]: Detailed status information.
         """
         return {
             "service_status": "running",
-            "application_running": self._application is not None and self._application.is_running(),
             "last_heartbeat": self._last_heartbeat,
         }
 
