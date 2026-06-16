@@ -11,6 +11,12 @@
 
 Early alpha; the hardware integration layer and server/client separation are the current focus.
 
+## Workflow Setup
+
+notion_project_page: https://www.notion.so/valsr/Decker-37fe2db9c65e8032803de24a8234d5d5
+notion_project_ref: Development
+notion_project_area: decker
+
 ## Server fault-tolerance model
 
 `poe server` launches the **server monitor**, not the server directly. The monitor:

@@ -41,3 +41,6 @@ report.xml
 /tmp
 /.stubs
 /.idea
+
+# Generated icon PNGs (source: src/decker/assets/decker.svg; run: poe icons)
+/src/decker/assets/icons/
