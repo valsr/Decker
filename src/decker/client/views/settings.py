@@ -29,6 +29,12 @@ class SettingsView(BaseView):
         save_btn.clicked.connect(self._on_save)
         layout.addWidget(save_btn)
         layout.addWidget(self._saved_label)
+
+        layout.addWidget(QLabel("Failed plugins"))
+        self._failed_plugins_label = QLabel("(none)")
+        self._failed_plugins_label.setStyleSheet("color: #f38ba8; font-size: 12px;")
+        layout.addWidget(self._failed_plugins_label)
+
         layout.addStretch()
 
     def on_activate(self) -> None:

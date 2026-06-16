@@ -7,7 +7,7 @@ from typing import Any
 from StreamDeck.DeviceManager import DeviceManager
 
 
-def _device_id(serial: str) -> str:
+def device_id_for_serial(serial: str) -> str:
     """Derive a stable hex ID from a device serial number via CRC-32."""
     return format(zlib.crc32(serial.encode()) & 0xFFFFFFFF, "08x")
 
@@ -39,7 +39,7 @@ def list_devices() -> list[dict[str, Any]]:
             deck.open()
             serial = deck.get_serial_number()
             info["serial"] = serial
-            info["id"] = _device_id(serial)
+            info["id"] = device_id_for_serial(serial)
         except Exception as e:
             logging.warning("Could not open device to read serial: %s", e)
         finally:

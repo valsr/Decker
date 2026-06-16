@@ -5,6 +5,7 @@ from assertpy import assert_that
 from decker.client.events import (
     DeviceListUpdatedEvent,
     KeyEvent,
+    PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
@@ -30,3 +31,8 @@ class TestEvents:
         assert_that(event.device_id).is_equal_to("abc123")
         assert_that(event.key_index).is_equal_to(2)
         assert_that(event.pressed).is_true()
+
+    def test_plugin_load_failed_event_holds_uuid_and_error(self):
+        event = PluginLoadFailedEvent(plugin_uuid="com.decker.broken", error="boom")
+        assert_that(event.plugin_uuid).is_equal_to("com.decker.broken")
+        assert_that(event.error).is_equal_to("boom")

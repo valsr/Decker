@@ -10,6 +10,7 @@ from rpyc.core.protocol import Connection
 from decker.client.event_hub import EventHub
 from decker.client.events import (
     DeviceListUpdatedEvent,
+    PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
@@ -32,6 +33,7 @@ class ConnectionManager:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self.connected: bool = False
+        self._reported_plugin_failures: set[str] = set()
 
     def start(self) -> None:
         """Start the background connection thread. No-op if already running."""
@@ -72,6 +74,7 @@ class ConnectionManager:
         self.connected = True
         EventHub.get().push(ServerConnectedEvent(host=self._host, port=self._port))
         self._refresh_devices()
+        self._check_plugin_failures()
 
     def _check_heartbeat(self) -> None:
         try:
@@ -85,6 +88,22 @@ class ConnectionManager:
             EventHub.get().push(ServerDisconnectedEvent(reason=str(e)))
             return
         self._refresh_devices()
+        self._check_plugin_failures()
+
+    def _check_plugin_failures(self) -> None:
+        if self._conn is None:
+            return
+        try:
+            failures: list[dict[str, Any]] = [dict(f) for f in self._conn.root.plugins_load_failures()]
+        except Exception as e:  # pylint: disable=broad-except
+            logging.warning("Could not fetch plugin load failures: %s", e)
+            return
+        for failure in failures:
+            plugin_uuid = str(failure.get("plugin_uuid", ""))
+            if plugin_uuid in self._reported_plugin_failures:
+                continue
+            self._reported_plugin_failures.add(plugin_uuid)
+            EventHub.get().push(PluginLoadFailedEvent(plugin_uuid=plugin_uuid, error=str(failure.get("error", ""))))
 
     def _refresh_devices(self) -> None:
         if self._conn is None:

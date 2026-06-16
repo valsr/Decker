@@ -138,3 +138,35 @@ class TestMain:
             with pytest.raises(SystemExit):
                 main()
         assert_that(captured["port"]).is_equal_to(9999)
+
+
+class TestPluginSubcommand:
+    def test_plugin_command_does_not_open_connection(self):
+        with (
+            patch.object(sys, "argv", ["decker-cli", "plugin", "list"]),
+            patch("decker.cli.app.CliConnection") as mock_conn_cls,
+        ):
+            with pytest.raises(SystemExit):
+                main()
+        mock_conn_cls.assert_not_called()
+
+    def test_plugin_list_exits_0(self, capsys, tmp_path, monkeypatch):
+        monkeypatch.setattr("decker.cli.plugin._PLUGINS_DIR", tmp_path / "plugins")
+        with patch.object(sys, "argv", ["decker-cli", "plugin", "list"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert_that(exc_info.value.code).is_equal_to(0)
+        assert_that(capsys.readouterr().out).contains("No plugins installed")
+
+    def test_plugin_install_missing_path_exits_1(self):
+        with patch.object(sys, "argv", ["decker-cli", "plugin", "install"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert_that(exc_info.value.code).is_equal_to(1)
+
+    def test_plugin_unknown_subcommand_exits_1(self, capsys):
+        with patch.object(sys, "argv", ["decker-cli", "plugin", "bogus"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert_that(exc_info.value.code).is_equal_to(1)
+        assert_that(capsys.readouterr().out).contains("unknown plugin subcommand")
