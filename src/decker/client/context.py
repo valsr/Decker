@@ -1,9 +1,10 @@
 """Process-wide, read-mostly state shared across client views."""
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
+    from decker.client.connection_manager import ConnectionManager
     from decker.client.window import MainWindow
 
 
@@ -15,6 +16,7 @@ class AppContext:
     active_device: str | None = None
     last_command: str | None = None
     window: "MainWindow | None" = None
+    connection_manager: "ConnectionManager | None" = field(default=None, repr=False)
 
     _instance: ClassVar["AppContext | None"] = None
 

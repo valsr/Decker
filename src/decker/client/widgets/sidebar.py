@@ -1,7 +1,12 @@
 """Collapsible sidebar: searchable plugin action list, plus theme/settings/device buttons."""
 
-from PyQt6.QtCore import pyqtSignal
+import json
+from typing import Any
+
+from PyQt6.QtCore import QByteArray, QMimeData, Qt, pyqtSignal
+from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QFrame,
     QHBoxLayout,
     QLineEdit,
@@ -10,6 +15,23 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
 )
+
+_MIME_TYPE = "application/x-decker-action"
+
+
+class _DraggableActionList(QListWidget):
+    """QListWidget that starts a custom MIME drag for plugin actions."""
+
+    def startDrag(self, supported_actions: Qt.DropAction) -> None:
+        item = self.currentItem()
+        if item is None:
+            return
+        data: dict[str, str] = item.data(Qt.ItemDataRole.UserRole) or {}
+        mime = QMimeData()
+        mime.setData(_MIME_TYPE, QByteArray(json.dumps(data).encode()))
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.CopyAction)
 
 
 class SidebarWidget(QFrame):
@@ -27,7 +49,9 @@ class SidebarWidget(QFrame):
         self._search.setPlaceholderText("Search actions...")
         self._search.textChanged.connect(self._apply_filter)
 
-        self._action_list = QListWidget()
+        self._action_list = _DraggableActionList()
+        self._action_list.setDragEnabled(True)
+        self._action_list.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
 
         theme_btn = QToolButton()
         theme_btn.setText("Theme")
@@ -69,5 +93,5 @@ class SidebarWidget(QFrame):
             if needle and needle not in name.lower():
                 continue
             item = QListWidgetItem(name)
-            item.setData(1, action.get("action_uuid", ""))
+            item.setData(Qt.ItemDataRole.UserRole, action)
             self._action_list.addItem(item)

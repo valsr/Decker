@@ -128,15 +128,16 @@ class TestPluginManagerLifecycle:
         assert_that(manager._native_plugins).contains_key("com.decker.test")  # pylint: disable=protected-access
 
     def test_list_actions_returns_native_plugin_actions(self, manager):
-        assert_that(manager.list_actions()).is_equal_to(
-            [
-                {
-                    "plugin_uuid": "com.decker.test",
-                    "plugin_name": "Test",
-                    "action_uuid": "com.decker.test.show",
-                    "action_name": "Show",
-                }
-            ]
+        actions = manager.list_actions()
+        assert_that(actions).extracting("plugin_uuid").contains("com.decker.test")
+        test_action = next(a for a in actions if a["plugin_uuid"] == "com.decker.test")
+        assert_that(test_action).is_equal_to(
+            {
+                "plugin_uuid": "com.decker.test",
+                "plugin_name": "Test",
+                "action_uuid": "com.decker.test.show",
+                "action_name": "Show",
+            }
         )
 
     def test_activate_action_dispatches_on_will_appear(self, manager):

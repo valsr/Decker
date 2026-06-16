@@ -11,6 +11,7 @@ from decker.client.event_hub import EventHub
 from decker.client.events import (
     ActionListUpdatedEvent,
     DeviceListUpdatedEvent,
+    KeyDisplayStatesUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
@@ -64,6 +65,7 @@ class ConnectionManager:
             if self._stop_event.is_set():
                 break
             self._check_heartbeat()
+            self._refresh_key_display_states()
 
     def _try_connect(self) -> None:
         try:
@@ -77,6 +79,7 @@ class ConnectionManager:
         self._refresh_devices()
         self._refresh_actions()
         self._check_plugin_failures()
+        self._refresh_key_display_states()
 
     def _check_heartbeat(self) -> None:
         try:
@@ -127,6 +130,37 @@ class ConnectionManager:
             logging.warning("Could not list plugin actions: %s", e)
             return
         EventHub.get().push(ActionListUpdatedEvent(actions=actions))
+
+    def call(self, method: str, *args: Any) -> Any:
+        """Call an RPC method on the server and return the result. Returns None on error."""
+        if self._conn is None:
+            return None
+        try:
+            return getattr(self._conn.root, method)(*args)
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("RPC %s failed: %s", method, exc)
+            return None
+
+    def _refresh_key_display_states(self) -> None:
+        if self._conn is None:
+            return
+        from decker.client.context import (
+            AppContext,  # pylint: disable=import-outside-toplevel
+        )
+
+        device_id = AppContext.get().active_device
+        if device_id is None:
+            return
+        try:
+            raw = self._conn.root.key_get_display_states(device_id)
+            states: list[dict[str, Any]] = [dict(s) for s in raw]
+            for state in states:
+                if "settings" in state and not isinstance(state["settings"], dict):
+                    state["settings"] = dict(state["settings"])
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Could not fetch key display states: %s", exc)
+            return
+        EventHub.get().push(KeyDisplayStatesUpdatedEvent(device_id=device_id, states=states))
 
     def _close_connection(self) -> None:
         if self._conn is None:

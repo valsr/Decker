@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 from assertpy import assert_that
 
 from decker.client.context import AppContext
-from decker.client.events import ActionListUpdatedEvent, DeviceListUpdatedEvent
+from decker.client.events import (
+    ActionListUpdatedEvent,
+    DeviceListUpdatedEvent,
+    KeyDisplayStatesUpdatedEvent,
+)
 from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
 from decker.client.views.dashboard import DashboardView
@@ -194,3 +198,147 @@ class TestSettingsButton:
         view._sidebar.settings_clicked.emit()  # pylint: disable=protected-access
 
         mock_window.switch_to.assert_called_once_with(ViewName.SETTINGS)
+
+
+class TestKeyDisplayStates:
+    def setup_method(self):
+        AppContext._instance = None  # pylint: disable=protected-access
+
+    def test_display_states_event_updates_key_labels(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        AppContext.get().active_device = "dev1"
+        view._grid.set_key_count(15)  # pylint: disable=protected-access
+
+        view.handle_event(
+            KeyDisplayStatesUpdatedEvent(
+                device_id="dev1",
+                states=[
+                    {
+                        "key_index": 2,
+                        "label": "42",
+                        "plugin_uuid": "p",
+                        "action_uuid": "a",
+                        "context_id": "c",
+                        "settings": {"step": 1},
+                    }
+                ],
+            )
+        )
+
+        btn = view._grid._buttons.get(2)  # pylint: disable=protected-access
+        assert btn is not None
+        assert_that(btn.text()).is_equal_to("42")
+
+    def test_display_states_event_ignored_for_different_device(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        AppContext.get().active_device = "dev1"
+        view._grid.set_key_count(15)  # pylint: disable=protected-access
+        view.handle_event(
+            KeyDisplayStatesUpdatedEvent(
+                device_id="other-dev",
+                states=[
+                    {
+                        "key_index": 0,
+                        "label": "99",
+                        "plugin_uuid": "p",
+                        "action_uuid": "a",
+                        "context_id": "c",
+                        "settings": {},
+                    }
+                ],
+            )
+        )
+        btn = view._grid._buttons.get(0)  # pylint: disable=protected-access
+        assert btn is not None
+        assert_that(btn.text()).is_equal_to("1")  # default label unchanged
+
+    def test_display_states_populates_key_slots(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        AppContext.get().active_device = "dev1"
+        view._grid.set_key_count(15)  # pylint: disable=protected-access
+        view.handle_event(
+            KeyDisplayStatesUpdatedEvent(
+                device_id="dev1",
+                states=[
+                    {
+                        "key_index": 5,
+                        "label": "7",
+                        "plugin_uuid": "com.p",
+                        "action_uuid": "com.p.a",
+                        "context_id": "ctx1",
+                        "settings": {"step": 2},
+                    }
+                ],
+            )
+        )
+        assert_that(view._key_slots).contains_key(5)  # pylint: disable=protected-access
+        assert_that(view._key_slots[5]["plugin_uuid"]).is_equal_to("com.p")  # pylint: disable=protected-access
+
+
+class TestKeyInteractions:
+    def setup_method(self):
+        AppContext._instance = None  # pylint: disable=protected-access
+
+    def test_key_selected_without_slot_shows_placeholder(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        view._grid.set_key_count(6)  # pylint: disable=protected-access
+        view._on_key_selected(0)  # pylint: disable=protected-access
+        assert_that(view._config_panel.currentIndex()).is_equal_to(0)
+
+    def test_key_selected_with_slot_simulates_press(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        AppContext.get().active_device = "dev1"
+        mock_cm = MagicMock()
+        AppContext.get().connection_manager = mock_cm
+        view._key_slots[3] = {
+            "plugin_uuid": "p",
+            "action_uuid": "a",
+            "context_id": "c",
+            "settings": {},
+        }  # pylint: disable=protected-access
+        view._grid.set_key_count(15)  # pylint: disable=protected-access
+        view._on_key_selected(3)  # pylint: disable=protected-access
+        mock_cm.call.assert_called_once_with("key_simulate_press", "dev1", 3)
+
+    def test_key_long_pressed_simulates_long_press(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        AppContext.get().active_device = "dev1"
+        mock_cm = MagicMock()
+        AppContext.get().connection_manager = mock_cm
+        view._key_slots[1] = {
+            "plugin_uuid": "p",
+            "action_uuid": "a",
+            "context_id": "c",
+            "settings": {},
+        }  # pylint: disable=protected-access
+        view._on_key_long_pressed(1)  # pylint: disable=protected-access
+        mock_cm.call.assert_called_once_with("key_simulate_long_press", "dev1", 1)
+
+    def test_action_dropped_calls_key_assign_rpc(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        AppContext.get().active_device = "dev1"
+        mock_cm = MagicMock()
+        mock_cm.call.return_value = True
+        AppContext.get().connection_manager = mock_cm
+        view._grid.set_key_count(15)  # pylint: disable=protected-access
+        view._on_action_dropped(
+            4, {"plugin_uuid": "com.p", "action_uuid": "com.p.a"}
+        )  # pylint: disable=protected-access
+        assert_that(mock_cm.call.call_args[0][0]).is_equal_to("key_assign")
+        assert_that(view._key_slots).contains_key(4)  # pylint: disable=protected-access
+
+    def test_save_key_settings_calls_update_settings_rpc(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        import json
+
+        view = _make_view(tmp_path)
+        AppContext.get().active_device = "dev1"
+        mock_cm = MagicMock()
+        AppContext.get().connection_manager = mock_cm
+        view._key_slots[2] = {
+            "plugin_uuid": "p",
+            "action_uuid": "a",
+            "context_id": "c",
+            "settings": {},
+        }  # pylint: disable=protected-access
+        view._save_key_settings(2, {"step": 5, "max": 10})  # pylint: disable=protected-access
+        mock_cm.call.assert_called_once_with("key_update_settings", "dev1", 2, json.dumps({"step": 5, "max": 10}))

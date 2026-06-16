@@ -1,89 +1,44 @@
-import io
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from assertpy import assert_that
-from PIL import Image
 
-from decker.server.devices import device_id_for_serial
 from decker.server.plugins import _StreamDeckHardwareSink
 
 
-def _make_deck(serial="ABC123"):
-    deck = MagicMock()
-    deck.get_serial_number.return_value = serial
-    deck.KEY_PIXEL_WIDTH = 72
-    deck.KEY_PIXEL_HEIGHT = 72
-    deck.key_image_format.return_value = {"size": (72, 72), "format": "JPEG", "flip": (False, False), "rotation": 0}
-    return deck
+def _make_sink(device_runner=None):
+    labels: dict[tuple[str, int], str] = {}
 
+    def _label_setter(device_id: str, key_index: int, label: str) -> None:
+        labels[(device_id, key_index)] = label
 
-def _png_bytes() -> bytes:
-    buf = io.BytesIO()
-    Image.new("RGBA", (10, 10), (255, 0, 0, 255)).save(buf, format="PNG")
-    return buf.getvalue()
+    sink = _StreamDeckHardwareSink(device_runner=device_runner, label_setter=_label_setter)
+    return sink, labels
 
 
 class TestStreamDeckHardwareSink:
-    def test_set_image_calls_set_key_image_on_matching_device(self):
-        deck = _make_deck()
-        with patch("decker.server.plugins.DeviceManager") as mock_dm:
-            mock_dm.return_value.enumerate.return_value = [deck]
-            _StreamDeckHardwareSink().set_image(device_id_for_serial("ABC123"), 2, b"img")
-        deck.set_key_image.assert_called_once_with(2, b"img")
+    def test_set_image_delegates_to_device_runner(self):
+        runner = MagicMock()
+        sink, _ = _make_sink(device_runner=runner)
+        sink.set_image("dev1", 3, b"imgbytes")
+        runner.set_image_bytes.assert_called_once_with("dev1", 3, b"imgbytes")
 
-    def test_set_image_skips_non_matching_device(self):
-        deck = _make_deck(serial="OTHER")
-        with patch("decker.server.plugins.DeviceManager") as mock_dm:
-            mock_dm.return_value.enumerate.return_value = [deck]
-            _StreamDeckHardwareSink().set_image(device_id_for_serial("ABC123"), 2, b"img")
-        deck.set_key_image.assert_not_called()
+    def test_set_image_no_runner_does_not_raise(self):
+        sink, _ = _make_sink(device_runner=None)
+        sink.set_image("dev1", 0, b"imgbytes")  # should not raise
 
-    def test_set_image_closes_device_after_use(self):
-        deck = _make_deck()
-        with patch("decker.server.plugins.DeviceManager") as mock_dm:
-            mock_dm.return_value.enumerate.return_value = [deck]
-            _StreamDeckHardwareSink().set_image(device_id_for_serial("ABC123"), 2, b"img")
-        deck.close.assert_called_once()
+    def test_set_title_stores_label(self):
+        sink, labels = _make_sink()
+        sink.set_title("dev1", 2, "hello")
+        assert_that(labels[("dev1", 2)]).is_equal_to("hello")
 
-    def test_enumerate_failure_does_not_raise(self):
-        with patch("decker.server.plugins.DeviceManager") as mock_dm:
-            mock_dm.return_value.enumerate.side_effect = RuntimeError("no hidapi")
-            _StreamDeckHardwareSink().set_image("abc12345", 0, b"img")  # should not raise
+    def test_set_state_is_no_op(self):
+        sink, _ = _make_sink()
+        sink.set_state("dev", 0, 1)  # should not raise
 
-    def test_no_matching_device_does_not_raise(self):
-        with patch("decker.server.plugins.DeviceManager") as mock_dm:
-            mock_dm.return_value.enumerate.return_value = []
-            _StreamDeckHardwareSink().set_image("abc12345", 0, b"img")  # should not raise
+    def test_show_alert_is_no_op(self):
+        sink, _ = _make_sink()
+        sink.show_alert("dev", 0)  # should not raise
 
-    def test_hardware_operation_error_is_caught(self):
-        deck = _make_deck()
-        deck.set_key_image.side_effect = RuntimeError("hardware failure")
-        with patch("decker.server.plugins.DeviceManager") as mock_dm:
-            mock_dm.return_value.enumerate.return_value = [deck]
-            _StreamDeckHardwareSink().set_image(device_id_for_serial("ABC123"), 0, b"img")  # should not raise
-        deck.close.assert_called_once()
-
-    def test_unimplemented_methods_are_no_ops(self):
-        sink = _StreamDeckHardwareSink()
-        sink.set_title("dev", 0, "title")
-        sink.set_state("dev", 0, 1)
-        sink.show_alert("dev", 0)
-        sink.show_ok("dev", 0)
-        assert_that(True).is_true()
-
-    def test_set_image_renders_png_to_native_format(self):
-        deck = _make_deck()
-        with patch("decker.server.plugins.DeviceManager") as mock_dm:
-            mock_dm.return_value.enumerate.return_value = [deck]
-            _StreamDeckHardwareSink().set_image(device_id_for_serial("ABC123"), 5, _png_bytes())
-        args, _ = deck.set_key_image.call_args
-        assert_that(args[0]).is_equal_to(5)
-        assert_that(args[1]).is_instance_of(bytes)
-        assert_that(len(args[1])).is_greater_than(0)
-
-    def test_set_image_passes_through_unrecognized_bytes_unchanged(self):
-        deck = _make_deck()
-        with patch("decker.server.plugins.DeviceManager") as mock_dm:
-            mock_dm.return_value.enumerate.return_value = [deck]
-            _StreamDeckHardwareSink().set_image(device_id_for_serial("ABC123"), 5, b"already-native-bytes")
-        deck.set_key_image.assert_called_once_with(5, b"already-native-bytes")
+    def test_show_ok_is_no_op(self):
+        sink, _ = _make_sink()
+        sink.show_ok("dev", 0)  # should not raise
