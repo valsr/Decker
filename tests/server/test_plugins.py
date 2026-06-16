@@ -127,6 +127,18 @@ class TestPluginManagerLifecycle:
         assert_that(manager.load_failures()).is_empty()
         assert_that(manager._native_plugins).contains_key("com.decker.test")  # pylint: disable=protected-access
 
+    def test_list_actions_returns_native_plugin_actions(self, manager):
+        assert_that(manager.list_actions()).is_equal_to(
+            [
+                {
+                    "plugin_uuid": "com.decker.test",
+                    "plugin_name": "Test",
+                    "action_uuid": "com.decker.test.show",
+                    "action_name": "Show",
+                }
+            ]
+        )
+
     def test_activate_action_dispatches_on_will_appear(self, manager):
         manager.activate_action(_TARGET)
         assert _wait_for(lambda: manager._sink.set_state.called)  # pylint: disable=protected-access

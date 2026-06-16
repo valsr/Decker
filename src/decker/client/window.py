@@ -16,6 +16,7 @@ from decker.client.events import (
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
+from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
 from decker.client.views import (
     BaseView,
@@ -26,6 +27,8 @@ from decker.client.views import (
     SettingsView,
 )
 
+_WINDOW_GEOMETRY_KEY = "window_geometry"
+
 _DRAIN_INTERVAL_MS = 16
 _INITIAL_VIEW_RECHECK_MS = 50
 _TOAST_DURATION_MS = 4000
@@ -34,9 +37,11 @@ _TOAST_DURATION_MS = 4000
 class MainWindow(QMainWindow):
     """Owns the QStackedWidget of registered views and routes AppEvents to them."""
 
-    def __init__(self, connection_manager: ConnectionManager) -> None:
+    def __init__(self, connection_manager: ConnectionManager, ui_state_store: UiStateStore | None = None) -> None:
         super().__init__()
         self._connection_manager: ConnectionManager = connection_manager
+        self._ui_state_store: UiStateStore = ui_state_store or UiStateStore()
+        self._geometry_restored: bool = False
         self._views: dict[ViewName, BaseView] = {}
         self._active: ViewName | None = None
         self._last_view: ViewName | None = None
@@ -72,6 +77,10 @@ class MainWindow(QMainWindow):
         AppContext.get().active_device = serial
         self.switch_to(ViewName.DEVICE)
 
+    def set_active_device(self, serial: str) -> None:
+        """Set the active device without changing the active view."""
+        AppContext.get().active_device = serial
+
     def dispatch(self, event: AppEvent) -> None:
         """Route a drained AppEvent to connection-state handling or the active view."""
         if isinstance(event, ServerDisconnectedEvent):
@@ -99,9 +108,32 @@ class MainWindow(QMainWindow):
         self._connection_manager.start()
 
     def closeEvent(self, event: Any) -> None:  # pylint: disable=invalid-name
-        """Stop the connection manager's worker thread before the window closes."""
+        """Persist window geometry and view state, then stop the connection manager."""
+        self._save_geometry()
+        for view in self._views.values():
+            view.save_state()
         self._connection_manager.stop()
         super().closeEvent(event)
+
+    def showEvent(self, event: Any) -> None:  # pylint: disable=invalid-name
+        """Restore window geometry after the first show — required for Wayland compatibility."""
+        super().showEvent(event)
+        if not self._geometry_restored:
+            self._geometry_restored = True
+            self._restore_geometry()
+
+    def _save_geometry(self) -> None:
+        geometry = self.geometry()
+        self._ui_state_store.set(
+            _WINDOW_GEOMETRY_KEY,
+            {"x": geometry.x(), "y": geometry.y(), "w": geometry.width(), "h": geometry.height()},
+        )
+
+    def _restore_geometry(self) -> None:
+        saved = self._ui_state_store.get(_WINDOW_GEOMETRY_KEY)
+        if saved is None:
+            return
+        self.setGeometry(saved["x"], saved["y"], saved["w"], saved["h"])
 
     def check_initial_view(self) -> None:
         """Land on DashboardView if already connected, otherwise wait briefly and recheck.

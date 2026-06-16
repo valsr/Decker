@@ -28,3 +28,6 @@ class BaseView(QWidget, metaclass=_ViewMeta):  # pylint: disable=invalid-metacla
 
     def handle_event(self, event: AppEvent) -> None:
         """Handle an AppEvent not already intercepted by MainWindow.dispatch(). No-op by default."""
+
+    def save_state(self) -> None:
+        """Persist any view-owned UI state before the window closes. No-op by default."""

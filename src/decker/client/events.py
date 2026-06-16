@@ -43,4 +43,18 @@ class PluginLoadFailedEvent:
     error: str
 
 
-AppEvent = ServerConnectedEvent | ServerDisconnectedEvent | DeviceListUpdatedEvent | KeyEvent | PluginLoadFailedEvent
+@dataclass(frozen=True)
+class ActionListUpdatedEvent:
+    """The set of plugin actions known to the server has changed."""
+
+    actions: list[dict[str, str]]
+
+
+AppEvent = (
+    ServerConnectedEvent
+    | ServerDisconnectedEvent
+    | DeviceListUpdatedEvent
+    | KeyEvent
+    | PluginLoadFailedEvent
+    | ActionListUpdatedEvent
+)

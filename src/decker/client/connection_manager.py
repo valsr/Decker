@@ -9,6 +9,7 @@ from rpyc.core.protocol import Connection
 
 from decker.client.event_hub import EventHub
 from decker.client.events import (
+    ActionListUpdatedEvent,
     DeviceListUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
@@ -74,6 +75,7 @@ class ConnectionManager:
         self.connected = True
         EventHub.get().push(ServerConnectedEvent(host=self._host, port=self._port))
         self._refresh_devices()
+        self._refresh_actions()
         self._check_plugin_failures()
 
     def _check_heartbeat(self) -> None:
@@ -88,6 +90,7 @@ class ConnectionManager:
             EventHub.get().push(ServerDisconnectedEvent(reason=str(e)))
             return
         self._refresh_devices()
+        self._refresh_actions()
         self._check_plugin_failures()
 
     def _check_plugin_failures(self) -> None:
@@ -114,6 +117,16 @@ class ConnectionManager:
             logging.warning("Could not list devices: %s", e)
             return
         EventHub.get().push(DeviceListUpdatedEvent(devices=devices))
+
+    def _refresh_actions(self) -> None:
+        if self._conn is None:
+            return
+        try:
+            actions: list[dict[str, Any]] = [dict(a) for a in self._conn.root.plugins_actions_list()]
+        except Exception as e:  # pylint: disable=broad-except
+            logging.warning("Could not list plugin actions: %s", e)
+            return
+        EventHub.get().push(ActionListUpdatedEvent(actions=actions))
 
     def _close_connection(self) -> None:
         if self._conn is None:

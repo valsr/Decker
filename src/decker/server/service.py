@@ -108,6 +108,18 @@ class DeckerService(Service):
         return [{"plugin_uuid": f.plugin_uuid, "error": f.error} for f in self._plugin_manager.load_failures()]
 
     @rpyc.utils.exposed
+    def plugins_actions_list(self) -> list[dict[str, str]]:
+        """
+        List every action declared across all loaded plugin manifests.
+
+        Returns:
+            list[dict[str, str]]: One entry per action with plugin_uuid, plugin_name, action_uuid, action_name.
+        """
+        if self._plugin_manager is None:
+            return []
+        return self._plugin_manager.list_actions()
+
+    @rpyc.utils.exposed
     def commands(self) -> dict[str, dict[str, str]]:
         """Return metadata for all user-defined exposed commands."""
         result: dict[str, dict[str, str]] = {}

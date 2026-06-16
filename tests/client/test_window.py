@@ -1,6 +1,6 @@
 """Tests for decker.client.window.MainWindow."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from assertpy import assert_that
@@ -14,6 +14,7 @@ from decker.client.events import (
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
+from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
 from decker.client.window import MainWindow
 
@@ -26,14 +27,15 @@ def connection_manager() -> MagicMock:
 
 
 @pytest.fixture
-def window(qapp, connection_manager) -> MainWindow:  # pylint: disable=unused-argument,redefined-outer-name
+def window(qapp, connection_manager, tmp_path):  # pylint: disable=unused-argument,redefined-outer-name
     AppContext._instance = None  # pylint: disable=protected-access
     EventHub._instance = None  # pylint: disable=protected-access
-    win = MainWindow(connection_manager)
+    win = MainWindow(connection_manager, ui_state_store=UiStateStore(tmp_path / "config.db"))
     for view in win._views.values():  # pylint: disable=protected-access
         view.on_activate = MagicMock()  # type: ignore[method-assign]
         view.on_deactivate = MagicMock()  # type: ignore[method-assign]
         view.handle_event = MagicMock()  # type: ignore[method-assign]
+        view.save_state = MagicMock()  # type: ignore[method-assign]
     return win
 
 
@@ -188,3 +190,47 @@ class TestCloseEvent:
         window.closeEvent(QCloseEvent())
 
         connection_manager.stop.assert_called_once()
+
+    def test_saves_window_geometry(self, window):  # pylint: disable=redefined-outer-name
+        window.setGeometry(10, 20, 300, 400)
+
+        window.closeEvent(QCloseEvent())
+
+        saved = window._ui_state_store.get("window_geometry")  # pylint: disable=protected-access
+        assert_that(saved).is_equal_to({"x": 10, "y": 20, "w": 300, "h": 400})
+
+    def test_calls_save_state_on_every_view(self, window):  # pylint: disable=redefined-outer-name
+        window.closeEvent(QCloseEvent())
+
+        for view in window._views.values():  # pylint: disable=protected-access
+            view.save_state.assert_called_once()
+
+
+class TestShowEvent:
+    def test_restores_saved_geometry_on_first_show(self, window):  # pylint: disable=redefined-outer-name
+        window._ui_state_store.set(  # pylint: disable=protected-access
+            "window_geometry", {"x": 5, "y": 6, "w": 333, "h": 222}
+        )
+
+        with patch.object(MainWindow, "setGeometry") as mock_set_geometry:
+            window.show()
+
+        mock_set_geometry.assert_called_once_with(5, 6, 333, 222)
+
+    def test_does_not_restore_again_on_subsequent_shows(self, window):  # pylint: disable=redefined-outer-name
+        window._ui_state_store.set(  # pylint: disable=protected-access
+            "window_geometry", {"x": 5, "y": 6, "w": 333, "h": 222}
+        )
+        window.show()
+
+        with patch.object(MainWindow, "setGeometry") as mock_set_geometry:
+            window.hide()
+            window.show()
+
+        mock_set_geometry.assert_not_called()
+
+    def test_no_saved_geometry_does_not_call_set_geometry(self, window):  # pylint: disable=redefined-outer-name
+        with patch.object(MainWindow, "setGeometry") as mock_set_geometry:
+            window.show()
+
+        mock_set_geometry.assert_not_called()
