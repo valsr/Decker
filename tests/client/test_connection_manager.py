@@ -6,10 +6,12 @@ from unittest.mock import MagicMock, patch
 from assertpy import assert_that
 
 from decker.client.connection_manager import ConnectionManager
+from decker.client.context import AppContext
 from decker.client.event_hub import EventHub
 from decker.client.events import (
     ActionListUpdatedEvent,
     DeviceListUpdatedEvent,
+    KeyDisplayStatesUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
@@ -151,6 +153,45 @@ class TestConnectionManager:
         self.manager._refresh_actions()  # pylint: disable=protected-access
 
         assert_that(EventHub.get().drain()).is_empty()
+
+    def test_call_delegates_to_rpc_root(self):
+        mock_conn = MagicMock()
+        mock_conn.root.some_method.return_value = "result"
+        self.manager._conn = mock_conn  # pylint: disable=protected-access
+        result = self.manager.call("some_method", "arg1", 42)
+        mock_conn.root.some_method.assert_called_once_with("arg1", 42)
+        assert_that(result).is_equal_to("result")
+
+    def test_call_returns_none_when_not_connected(self):
+        result = self.manager.call("some_method")
+        assert_that(result).is_none()
+
+    def test_call_returns_none_and_logs_on_rpc_error(self):
+        mock_conn = MagicMock()
+        mock_conn.root.some_method.side_effect = RuntimeError("rpc error")
+        self.manager._conn = mock_conn  # pylint: disable=protected-access
+        result = self.manager.call("some_method")
+        assert_that(result).is_none()
+
+    def test_refresh_key_display_states_pushes_event(self):
+        mock_conn = MagicMock()
+        mock_conn.root.key_get_display_states.return_value = [{"key_index": 0, "label": "5", "settings": {}}]
+        self.manager._conn = mock_conn  # pylint: disable=protected-access
+        AppContext.reset()
+        AppContext.get().active_device = "dev1"
+        self.manager._refresh_key_display_states()  # pylint: disable=protected-access
+        events = [e for e in EventHub.get().drain() if isinstance(e, KeyDisplayStatesUpdatedEvent)]
+        assert_that(events).is_length(1)
+        assert_that(events[0].device_id).is_equal_to("dev1")
+        AppContext.reset()
+
+    def test_refresh_key_display_states_no_op_without_device(self):
+        mock_conn = MagicMock()
+        self.manager._conn = mock_conn  # pylint: disable=protected-access
+        AppContext.reset()
+        self.manager._refresh_key_display_states()  # pylint: disable=protected-access
+        mock_conn.root.key_get_display_states.assert_not_called()
+        AppContext.reset()
 
     @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
     def test_start_spawns_a_worker_thread_and_stop_joins_it(self, mock_connect: MagicMock):

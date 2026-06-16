@@ -10,6 +10,8 @@ from rpyc.utils.server import ThreadPoolServer
 from decker.asset.iconpack import IconPackManager
 from decker.asset.paths import ensure_asset_dirs
 from decker.common.db import migrate_legacy_db
+from decker.server.device_runner import DeviceRunner
+from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
 from decker.server.service import DeckerService
 
@@ -110,6 +112,46 @@ class ServerProcess:
     # Child-process internals
     # ------------------------------------------------------------------
 
+    def _on_hardware_key_event(self, device_id: str, key_index: int, pressed: bool) -> None:
+        """Route a hardware key event to the plugin whose action is assigned to this key."""
+        if self._plugin_manager is None:
+            return
+        from decker.server.key_assignments import (
+            KeyAssignmentStore,  # pylint: disable=import-outside-toplevel
+        )
+
+        store = DeckerService._key_assignment_store  # pylint: disable=protected-access
+        if store is None:
+            return
+        assignment = store.get(device_id, key_index)
+        if assignment is None:
+            return
+        if pressed:
+            self._plugin_manager.dispatch_key_down(assignment.target)
+        else:
+            self._plugin_manager.dispatch_key_up(assignment.target)
+
+    def _replay_assignments(self, key_store: Any) -> None:
+        """Re-activate all persisted key assignments and reopen their devices."""
+        if self._plugin_manager is None:
+            return
+        from decker.server.devices import (
+            list_devices,  # pylint: disable=import-outside-toplevel
+        )
+
+        device_ids = {d["id"] for d in list_devices() if d.get("id")}
+        for device_id in device_ids:
+            for _key_index, assignment in key_store.all_for_device(device_id):
+                if self._plugin_manager._device_runner is not None:  # pylint: disable=protected-access
+                    self._plugin_manager._device_runner.open_device(device_id)  # pylint: disable=protected-access
+                self._plugin_manager._settings_store.set_settings(  # pylint: disable=protected-access
+                    assignment.target.plugin_uuid,
+                    assignment.target.action_uuid,
+                    assignment.target.context_id,
+                    assignment.settings,
+                )
+                self._plugin_manager.activate_action(assignment.target)
+
     def _signal_handler(self, signum: int, _: Any) -> None:
         """Graceful shutdown: close the RPyC server."""
         logging.info("Received signal %d, shutting down", signum)
@@ -124,8 +166,13 @@ class ServerProcess:
         migrate_legacy_db()
         ensure_asset_dirs()
         IconPackManager().discover_manual_dropins()
+
+        key_store = KeyAssignmentStore()
         self._plugin_manager = PluginManager()
+        device_runner = DeviceRunner(on_key_event=self._on_hardware_key_event)
+        self._plugin_manager.set_device_runner(device_runner)
         self._plugin_manager.start()
+        self._replay_assignments(key_store)
 
         self._server = ThreadPoolServer(
             DeckerService,
@@ -134,9 +181,11 @@ class ServerProcess:
         )
         DeckerService.configure_server(self._server)
         DeckerService.configure_plugin_manager(self._plugin_manager)
+        DeckerService.configure_key_assignment_store(key_store)
         logging.info("RPyC server listening on port %d", self.port)
         try:
             self._server.start()  # blocks until close() is called
         finally:
             self._plugin_manager.stop()
+            key_store.close()
         # Normal return → subprocess exits with code 0 (intentional stop)

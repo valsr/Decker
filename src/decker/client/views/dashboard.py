@@ -1,5 +1,9 @@
 """Dashboard view — the main working surface: sidebar, page pills, key grid, config panel."""
 
+import json
+import logging
+import uuid
+from collections.abc import Callable
 from typing import Any
 
 from PyQt6.QtCore import Qt
@@ -10,6 +14,7 @@ from decker.client.events import (
     ActionListUpdatedEvent,
     AppEvent,
     DeviceListUpdatedEvent,
+    KeyDisplayStatesUpdatedEvent,
 )
 from decker.client.mock_page_model import MockPageModel
 from decker.client.ui_state_store import UiStateStore
@@ -41,6 +46,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._last_expanded_sidebar_width = _DEFAULT_SIDEBAR_WIDTH
         self._page_model = MockPageModel(key_count=_DEFAULT_KEY_COUNT)
         self._device_popup: DeviceSwitcherPopup | None = None
+        self._selected_key: int | None = None
+        self._key_slots: dict[int, dict[str, Any]] = {}  # key_index → assignment metadata
 
         self._sidebar = SidebarWidget()
         self._pill_bar = PagePillBar()
@@ -87,6 +94,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             self._on_devices_updated(event.devices)
         elif isinstance(event, ActionListUpdatedEvent):
             self._sidebar.set_actions(event.actions)
+        elif isinstance(event, KeyDisplayStatesUpdatedEvent):
+            self._on_display_states_updated(event.device_id, event.states)
 
     def save_state(self) -> None:
         """Persist splitter sizes and sidebar-collapsed state to config.db."""
@@ -101,6 +110,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     def _wire_signals(self) -> None:
         self._pill_bar.sidebar_toggle_requested.connect(self._toggle_sidebar)
         self._grid.key_selected.connect(self._on_key_selected)
+        self._grid.key_long_pressed.connect(self._on_key_long_pressed)
+        self._grid.action_dropped.connect(self._on_action_dropped)
         self._sidebar.device_switcher_clicked.connect(self._show_device_switcher)
         self._sidebar.settings_clicked.connect(self._open_settings)
 
@@ -159,6 +170,9 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if serial == self._active_device_serial:
             return
         self._active_device_serial = serial
+        self._key_slots = {}
+        self._selected_key = None
+        self._config_panel.show_placeholder()
         key_count = self._key_count_for_serial(serial)
         self._page_model = MockPageModel(key_count=key_count)
         self._grid.set_key_count(key_count)
@@ -183,11 +197,113 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._refresh_grid_for_device(serial)
 
     # ------------------------------------------------------------------
-    # Other widget callbacks
+    # Key grid interactions
     # ------------------------------------------------------------------
 
-    def _on_key_selected(self, _index: int) -> None:
-        self._config_panel.setCurrentIndex(0)
+    def _on_key_selected(self, index: int) -> None:
+        self._selected_key = index
+        slot = self._key_slots.get(index)
+        if slot is not None:
+            self._config_panel.show_counter_config(
+                slot.get("settings", {}),
+                self._make_save_callback(index),
+            )
+        else:
+            self._config_panel.show_placeholder()
+        # Simulate a short press so the counter increments.
+        device_id = AppContext.get().active_device
+        if device_id and index in self._key_slots:
+            cm = AppContext.get().connection_manager
+            if cm is not None:
+                cm.call("key_simulate_press", device_id, index)
+
+    def _on_key_long_pressed(self, index: int) -> None:
+        device_id = AppContext.get().active_device
+        if not device_id or index not in self._key_slots:
+            return
+        cm = AppContext.get().connection_manager
+        if cm is not None:
+            cm.call("key_simulate_long_press", device_id, index)
+
+    def _on_action_dropped(self, key_index: int, action_data: Any) -> None:
+        device_id = AppContext.get().active_device
+        if not device_id:
+            return
+        plugin_uuid = str(action_data.get("plugin_uuid", ""))
+        action_uuid = str(action_data.get("action_uuid", ""))
+        if not plugin_uuid or not action_uuid:
+            return
+        context_id = uuid.uuid4().hex
+        settings: dict[str, Any] = {"step": 1, "max": 0}
+        cm = AppContext.get().connection_manager
+        if cm is None:
+            return
+        ok = cm.call(
+            "key_assign",
+            device_id,
+            key_index,
+            plugin_uuid,
+            action_uuid,
+            context_id,
+            json.dumps(settings),
+        )
+        if ok:
+            self._key_slots[key_index] = {
+                "plugin_uuid": plugin_uuid,
+                "action_uuid": action_uuid,
+                "context_id": context_id,
+                "settings": settings,
+            }
+            self._grid.set_key_label(key_index, "0")
+            logging.debug("Assigned %s/%s to key %d", plugin_uuid, action_uuid, key_index)
+
+    def _on_display_states_updated(self, device_id: str, states: list[dict[str, Any]]) -> None:
+        if device_id != AppContext.get().active_device:
+            return
+        for state in states:
+            key_index = int(state.get("key_index", -1))
+            if key_index < 0:
+                continue
+            label = str(state.get("label", ""))
+            self._grid.set_key_label(key_index, label)
+            # Keep slot metadata in sync with server state.
+            if key_index not in self._key_slots:
+                self._key_slots[key_index] = {
+                    "plugin_uuid": str(state.get("plugin_uuid", "")),
+                    "action_uuid": str(state.get("action_uuid", "")),
+                    "context_id": str(state.get("context_id", "")),
+                    "settings": dict(state.get("settings", {})),
+                }
+            else:
+                self._key_slots[key_index]["settings"] = dict(state.get("settings", {}))
+        # Refresh config panel if the selected key's state just changed.
+        if self._selected_key is not None and self._selected_key in self._key_slots:
+            slot = self._key_slots[self._selected_key]
+            self._config_panel.show_counter_config(
+                slot.get("settings", {}),
+                self._make_save_callback(self._selected_key),
+            )
+
+    def _make_save_callback(self, key_index: int) -> "Callable[[dict[str, Any]], None]":
+        def _cb(settings: dict[str, Any]) -> None:
+            self._save_key_settings(key_index, settings)
+
+        return _cb
+
+    def _save_key_settings(self, key_index: int, settings: dict[str, Any]) -> None:
+        device_id = AppContext.get().active_device
+        if not device_id:
+            return
+        cm = AppContext.get().connection_manager
+        if cm is None:
+            return
+        cm.call("key_update_settings", device_id, key_index, json.dumps(settings))
+        if key_index in self._key_slots:
+            self._key_slots[key_index]["settings"] = settings
+
+    # ------------------------------------------------------------------
+    # Other widget callbacks
+    # ------------------------------------------------------------------
 
     def _open_settings(self) -> None:
         window = AppContext.get().window

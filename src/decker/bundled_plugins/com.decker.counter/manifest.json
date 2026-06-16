@@ -1,0 +1,12 @@
+{
+  "UUID": "com.decker.counter",
+  "Name": "Counter",
+  "Version": "1.0.0",
+  "Author": "Decker",
+  "Actions": [
+    {
+      "UUID": "com.decker.counter.counter",
+      "Name": "Counter"
+    }
+  ]
+}

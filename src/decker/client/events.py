@@ -50,6 +50,14 @@ class ActionListUpdatedEvent:
     actions: list[dict[str, str]]
 
 
+@dataclass(frozen=True)
+class KeyDisplayStatesUpdatedEvent:
+    """The display label for one or more assigned keys on the active device has changed."""
+
+    device_id: str
+    states: list[dict[str, Any]]
+
+
 AppEvent = (
     ServerConnectedEvent
     | ServerDisconnectedEvent
@@ -57,4 +65,5 @@ AppEvent = (
     | KeyEvent
     | PluginLoadFailedEvent
     | ActionListUpdatedEvent
+    | KeyDisplayStatesUpdatedEvent
 )

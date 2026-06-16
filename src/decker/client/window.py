@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
         self._last_view: ViewName | None = None
 
         AppContext.get().window = self
+        AppContext.get().connection_manager = connection_manager
 
         self._stack: QStackedWidget = QStackedWidget()
         self._toast: QLabel = QLabel(self)
@@ -103,6 +104,7 @@ class MainWindow(QMainWindow):
         self._connection_manager.stop()
         AppContext.reset()
         AppContext.get().window = self
+        AppContext.get().connection_manager = self._connection_manager
         self._last_view = None
         self.switch_to(ViewName.CONNECTING)
         self._connection_manager.start()

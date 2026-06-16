@@ -1,12 +1,10 @@
 """Owns plugin discovery, the action registry, callback execution, and the Elgato bridge."""
 
 import logging
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
-from StreamDeck.DeviceManager import DeviceManager
-from StreamDeck.ImageHelpers import PILHelper
 
 from decker.asset.renderer import AssetRenderer
 from decker.common import config
@@ -25,72 +23,49 @@ from decker.plugin.manifest import PluginManifest
 from decker.plugin.native_loader import LoadedNativePlugin
 from decker.plugin.registry import ActionRegistry
 from decker.plugin.settings_store import PluginSettingsStore
-from decker.server.devices import device_id_for_serial
+
+_BUNDLED_PLUGINS_DIR = Path(__file__).parent.parent / "bundled_plugins"
 
 
 class _StreamDeckHardwareSink:
-    """Applies hardware effects to a Stream Deck device, opened on demand by its stable id.
+    """Applies hardware effects via DeviceRunner; falls back gracefully if no device is open.
 
-    Only image rendering is implemented today — title overlays, multi-state icons, and
-    alert/ok indicators require a rendering pipeline beyond plain images, which doesn't
-    exist yet.
+    set_title is deliberately lightweight — it stores the label in the shared label dict
+    for client polling instead of rendering text to hardware (the plugin handles its own
+    hardware rendering via set_image).
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        device_runner: Any,  # DeviceRunner | None — avoid circular import at module level
+        label_setter: Callable[[str, int, str], None],
+    ) -> None:
+        self._device_runner = device_runner
+        self._label_setter = label_setter
         self._renderer = AssetRenderer()
 
     def set_image(self, device_id: str, key_index: int, image: bytes) -> None:
-        """Render image (SVG/PNG/JPEG bytes, or already-native bytes) on the given device's key."""
-        self._with_device(device_id, lambda deck: self._render_and_push(deck, key_index, image))
-
-    def _render_and_push(self, deck: Any, key_index: int, image: bytes) -> None:
-        pil_image = self._renderer.render_bytes(image, deck.KEY_PIXEL_WIDTH, deck.KEY_PIXEL_HEIGHT)
-        if pil_image is None:
-            deck.set_key_image(key_index, image)
-            return
-        scaled = PILHelper.create_scaled_key_image(deck, pil_image)
-        native_image = PILHelper.to_native_key_format(deck, scaled)
-        deck.set_key_image(key_index, native_image)
+        """Render image (SVG/PNG/JPEG bytes) on the given device's key."""
+        if self._device_runner is not None:
+            self._device_runner.set_image_bytes(device_id, key_index, image)
+        else:
+            logging.debug("set_image: no DeviceRunner available")
 
     def set_title(self, device_id: str, key_index: int, title: str) -> None:
-        """No-op: text rendering is not implemented yet."""
-        logging.debug("set_title(%s, %d, %r): no rendering pipeline yet, ignored", device_id, key_index, title)
+        """Store the display label for client polling (hardware text not rendered)."""
+        self._label_setter(device_id, key_index, title)
 
     def set_state(self, device_id: str, key_index: int, state: int) -> None:
         """No-op: multi-state icon rendering is not implemented yet."""
-        logging.debug("set_state(%s, %d, %d): no rendering pipeline yet, ignored", device_id, key_index, state)
+        logging.debug("set_state(%s, %d, %d): not implemented", device_id, key_index, state)
 
     def show_alert(self, device_id: str, key_index: int) -> None:
         """No-op: indicator rendering is not implemented yet."""
-        logging.debug("show_alert(%s, %d): no rendering pipeline yet, ignored", device_id, key_index)
+        logging.debug("show_alert(%s, %d): not implemented", device_id, key_index)
 
     def show_ok(self, device_id: str, key_index: int) -> None:
         """No-op: indicator rendering is not implemented yet."""
-        logging.debug("show_ok(%s, %d): no rendering pipeline yet, ignored", device_id, key_index)
-
-    def _with_device(self, device_id: str, apply: Callable[..., None]) -> None:
-        try:
-            decks = DeviceManager().enumerate()
-        except Exception as exc:  # pylint: disable=broad-except
-            logging.error("Could not enumerate Stream Deck devices: %s", exc)
-            return
-
-        for deck in decks:
-            try:
-                deck.open()
-                if device_id_for_serial(deck.get_serial_number()) != device_id:
-                    continue
-                apply(deck)
-                return
-            except Exception as exc:  # pylint: disable=broad-except
-                logging.error("Hardware operation failed for device %s: %s", device_id, exc)
-                return
-            finally:
-                try:
-                    deck.close()
-                except Exception:  # pylint: disable=broad-except
-                    pass
-        logging.warning("Device %s not found", device_id)
+        logging.debug("show_ok(%s, %d): not implemented", device_id, key_index)
 
 
 class PluginManager:  # pylint: disable=too-many-instance-attributes
@@ -100,46 +75,62 @@ class PluginManager:  # pylint: disable=too-many-instance-attributes
         self._registry = ActionRegistry()
         self._executor = PluginExecutor()
         self._settings_store = PluginSettingsStore()
-        self._sink = _StreamDeckHardwareSink()
-        self._loader = PluginLoader(plugins_dir) if plugins_dir is not None else PluginLoader()
-        self._bridge = ElgatoBridge(self._sink, self._settings_store)
+        self._user_loader = PluginLoader(plugins_dir) if plugins_dir is not None else PluginLoader()
+        self._bundled_loader = PluginLoader(_BUNDLED_PLUGINS_DIR)
+        self._bridge: ElgatoBridge | None = None
         self._failures: list[PluginLoadFailedEvent] = []
         self._native_plugins: dict[str, LoadedNativePlugin] = {}
         self._elgato_plugins: dict[str, DiscoveredElgatoPlugin] = {}
         self._elgato_processes: dict[str, ElgatoPluginProcess] = {}
         self._elgato_live_contexts: dict[str, set[str]] = {}
+        self._key_labels: dict[str, dict[int, str]] = {}  # device_id → {key_index → label}
+        self._labels_lock = threading.Lock()
+        self._device_runner: Any = None  # set via set_device_runner before start()
+        self._sink: _StreamDeckHardwareSink = _StreamDeckHardwareSink(None, self._set_key_label)
+
+    def set_device_runner(self, device_runner: Any) -> None:
+        """Inject the DeviceRunner. Call before start()."""
+        self._device_runner = device_runner
+        self._sink = _StreamDeckHardwareSink(device_runner, self._set_key_label)
+        self._bridge = ElgatoBridge(self._sink, self._settings_store)
 
     def start(self) -> None:
-        """Scan and load plugins, then start the Elgato WebSocket bridge."""
-        result = self._loader.scan()
-        self._failures = result.failures
-        for loaded in result.native:
+        """Scan and load plugins (bundled first, then user), then start the Elgato bridge."""
+        bundled = self._bundled_loader.scan()
+        user = self._user_loader.scan()
+        self._failures = bundled.failures + user.failures
+        for loaded in bundled.native + user.native:
             self._native_plugins[loaded.manifest.uuid] = loaded
-        for discovered in result.elgato:
+        for discovered in bundled.elgato + user.elgato:
             self._elgato_plugins[discovered.manifest.uuid] = discovered
+        if self._bridge is None:
+            self._bridge = ElgatoBridge(self._sink, self._settings_store)
         self._bridge.start()
         logging.info(
             "PluginManager started: %d native, %d Elgato, %d failed to load",
-            len(result.native),
-            len(result.elgato),
-            len(result.failures),
+            len(self._native_plugins),
+            len(self._elgato_plugins),
+            len(self._failures),
         )
 
     def stop(self) -> None:
-        """Stop the Elgato bridge, any running plugin subprocesses, and release plugin resources."""
+        """Stop the Elgato bridge, plugin subprocesses, and release resources."""
         for process in self._elgato_processes.values():
             process.stop()
         self._elgato_processes.clear()
-        self._bridge.stop()
+        if self._bridge is not None:
+            self._bridge.stop()
         self._executor.shutdown()
         self._settings_store.close()
+        if self._device_runner is not None:
+            self._device_runner.close_all()
 
     def load_failures(self) -> list[PluginLoadFailedEvent]:
         """Return the plugins that failed to load at startup."""
         return list(self._failures)
 
     def list_actions(self) -> list[dict[str, str]]:
-        """Return every action declared across all loaded plugin manifests (native and Elgato)."""
+        """Return every action declared across all loaded plugin manifests."""
         actions: list[dict[str, str]] = []
         for loaded in self._native_plugins.values():
             actions.extend(self._manifest_actions(loaded.manifest))
@@ -147,17 +138,11 @@ class PluginManager:  # pylint: disable=too-many-instance-attributes
             actions.extend(self._manifest_actions(discovered.manifest))
         return actions
 
-    @staticmethod
-    def _manifest_actions(manifest: PluginManifest) -> list[dict[str, str]]:
-        return [
-            {
-                "plugin_uuid": manifest.uuid,
-                "plugin_name": manifest.name,
-                "action_uuid": plugin_action.uuid,
-                "action_name": plugin_action.name,
-            }
-            for plugin_action in manifest.actions
-        ]
+    def get_key_display_states(self, device_id: str) -> list[dict[str, Any]]:
+        """Return current display labels for all keys on this device."""
+        with self._labels_lock:
+            labels = dict(self._key_labels.get(device_id, {}))
+        return [{"key_index": k, "label": v} for k, v in labels.items()]
 
     def activate_action(self, target: ActionTarget) -> None:
         """Instantiate a native action for this target and dispatch on_will_appear."""
@@ -178,6 +163,8 @@ class PluginManager:  # pylint: disable=too-many-instance-attributes
         ctx = ActionContext(target, self._sink, self._settings_store)
         self._executor.dispatch(target.plugin_uuid, instance.on_will_disappear, ctx)
         self._registry.unregister(target.plugin_uuid, target.action_uuid, target.context_id)
+        with self._labels_lock:
+            self._key_labels.get(target.device_id, {}).pop(target.key_index, None)
 
     def activate_elgato_action(self, plugin_uuid: str, context_id: str) -> None:
         """Spawn the plugin's Node.js subprocess if this is its first live action instance."""
@@ -226,6 +213,14 @@ class PluginManager:  # pylint: disable=too-many-instance-attributes
         """Dispatch on_settings_changed to the live action instance for this target."""
         self._dispatch(target, "on_settings_changed")
 
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _set_key_label(self, device_id: str, key_index: int, label: str) -> None:
+        with self._labels_lock:
+            self._key_labels.setdefault(device_id, {})[key_index] = label
+
     def _dispatch(self, target: ActionTarget, handler_name: str) -> None:
         instance = self._registry.get(target.plugin_uuid, target.action_uuid, target.context_id)
         if instance is None:
@@ -235,3 +230,15 @@ class PluginManager:  # pylint: disable=too-many-instance-attributes
             return
         ctx = ActionContext(target, self._sink, self._settings_store)
         self._executor.dispatch(target.plugin_uuid, getattr(instance, handler_name), ctx)
+
+    @staticmethod
+    def _manifest_actions(manifest: PluginManifest) -> list[dict[str, str]]:
+        return [
+            {
+                "plugin_uuid": manifest.uuid,
+                "plugin_name": manifest.name,
+                "action_uuid": plugin_action.uuid,
+                "action_name": plugin_action.name,
+            }
+            for plugin_action in manifest.actions
+        ]
