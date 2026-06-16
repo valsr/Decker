@@ -7,6 +7,9 @@ from typing import Any
 
 from rpyc.utils.server import ThreadPoolServer
 
+from decker.asset.iconpack import IconPackManager
+from decker.asset.paths import ensure_asset_dirs
+from decker.common.db import migrate_legacy_db
 from decker.server.plugins import PluginManager
 from decker.server.service import DeckerService
 
@@ -118,6 +121,9 @@ class ServerProcess:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
+        migrate_legacy_db()
+        ensure_asset_dirs()
+        IconPackManager().discover_manual_dropins()
         self._plugin_manager = PluginManager()
         self._plugin_manager.start()
 

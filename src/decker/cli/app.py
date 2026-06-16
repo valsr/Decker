@@ -4,6 +4,7 @@ import sys
 from argparse import ArgumentParser
 from typing import Any
 
+from decker.cli import iconpack as iconpack_cli
 from decker.cli import plugin as plugin_cli
 from decker.cli.connection import CliConnection
 from decker.cli.formatter import format_result
@@ -42,6 +43,9 @@ def main() -> None:
 
     if args.command[0] == "plugin":
         sys.exit(_dispatch_plugin(args.command[1:]))
+
+    if args.command[0] == "iconpack":
+        sys.exit(_dispatch_iconpack(args.command[1:]))
 
     try:
         with CliConnection(host, port) as conn:
@@ -169,4 +173,56 @@ def _cmd_plugin_remove(args: list[str]) -> int:
         print(f"Error: {e}")
         return 1
     print(f"Removed plugin {args[0]}. Restart the server for the change to take effect.")
+    return 0
+
+
+def _dispatch_iconpack(rest: list[str]) -> int:
+    """Route an 'iconpack' subcommand — install/list/remove operate on the local filesystem only."""
+    if not rest:
+        print("Usage: decker-cli iconpack <install|list|remove> ...")
+        return 1
+    sub, *sub_args = rest
+    handlers = {"install": _cmd_iconpack_install, "list": _cmd_iconpack_list, "remove": _cmd_iconpack_remove}
+    handler = handlers.get(sub)
+    if handler is None:
+        print(f"Error: unknown iconpack subcommand '{sub}'. Use install, list, or remove.")
+        return 1
+    return handler(sub_args)
+
+
+def _cmd_iconpack_install(args: list[str]) -> int:
+    if not args:
+        print("Usage: decker-cli iconpack install <path>")
+        return 1
+    try:
+        dest = iconpack_cli.install(args[0])
+    except iconpack_cli.IconPackError as e:
+        print(f"Error: {e}")
+        return 1
+    print(f"Installed icon pack to {dest}. Restart the server to activate it.")
+    return 0
+
+
+def _cmd_iconpack_list(_args: list[str]) -> int:
+    packs = iconpack_cli.list_installed()
+    if not packs:
+        print("No icon packs installed.")
+        return 0
+    width = max(len(p["name"]) for p in packs)
+    for p in packs:
+        name, version, pack_uuid = p["name"], p["version"], p["uuid"]
+        print(f"  {name:<{width}}  {version:<10}  {pack_uuid}")
+    return 0
+
+
+def _cmd_iconpack_remove(args: list[str]) -> int:
+    if not args:
+        print("Usage: decker-cli iconpack remove <uuid>")
+        return 1
+    try:
+        iconpack_cli.remove(args[0])
+    except iconpack_cli.IconPackError as e:
+        print(f"Error: {e}")
+        return 1
+    print(f"Removed icon pack {args[0]}. Restart the server for the change to take effect.")
     return 0
