@@ -7,6 +7,7 @@ from typing import Any
 
 from rpyc.utils.server import ThreadPoolServer
 
+from decker.server.plugins import PluginManager
 from decker.server.service import DeckerService
 
 
@@ -19,6 +20,7 @@ class ServerProcess:
         self._startup_wait = startup_wait
         self._process: multiprocessing.Process | None = None
         self._server: ThreadPoolServer | None = None
+        self._plugin_manager: PluginManager | None = None
 
     def start(self) -> bool:
         """Spawn the RPyC server subprocess.
@@ -116,12 +118,19 @@ class ServerProcess:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
+        self._plugin_manager = PluginManager()
+        self._plugin_manager.start()
+
         self._server = ThreadPoolServer(
             DeckerService,
             port=self.port,
             protocol_config={"allow_public_attrs": True},
         )
         DeckerService.configure_server(self._server)
+        DeckerService.configure_plugin_manager(self._plugin_manager)
         logging.info("RPyC server listening on port %d", self.port)
-        self._server.start()  # blocks until close() is called
+        try:
+            self._server.start()  # blocks until close() is called
+        finally:
+            self._plugin_manager.stop()
         # Normal return → subprocess exits with code 0 (intentional stop)

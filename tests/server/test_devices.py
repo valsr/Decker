@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
 
-from decker.server.devices import _device_id, list_devices
+from decker.server.devices import device_id_for_serial, list_devices
 
 
 def _make_deck(deck_type="Stream Deck", vendor=4057, product=96, keys=15, serial="ABC123"):
@@ -18,25 +18,25 @@ def _make_deck(deck_type="Stream Deck", vendor=4057, product=96, keys=15, serial
 
 class TestDeviceId:
     def test_returns_eight_hex_chars(self):
-        assert_that(_device_id("ABC123")).is_length(8)
+        assert_that(device_id_for_serial("ABC123")).is_length(8)
 
     def test_no_0x_prefix(self):
-        assert_that(_device_id("ABC123")).does_not_contain("0x")
+        assert_that(device_id_for_serial("ABC123")).does_not_contain("0x")
 
     def test_only_hex_characters(self):
-        result = _device_id("ABC123")
+        result = device_id_for_serial("ABC123")
         assert_that(all(c in "0123456789abcdef" for c in result)).is_true()
 
     def test_same_serial_gives_same_id(self):
-        assert_that(_device_id("XYZ999")).is_equal_to(_device_id("XYZ999"))
+        assert_that(device_id_for_serial("XYZ999")).is_equal_to(device_id_for_serial("XYZ999"))
 
     def test_different_serials_give_different_ids(self):
-        assert_that(_device_id("AAA")).is_not_equal_to(_device_id("BBB"))
+        assert_that(device_id_for_serial("AAA")).is_not_equal_to(device_id_for_serial("BBB"))
 
     def test_matches_expected_crc32(self):
         serial = "A00NA437306BLR"
         expected = format(zlib.crc32(serial.encode()) & 0xFFFFFFFF, "08x")
-        assert_that(_device_id(serial)).is_equal_to(expected)
+        assert_that(device_id_for_serial(serial)).is_equal_to(expected)
 
 
 class TestListDevices:
@@ -61,7 +61,7 @@ class TestListDevices:
         with patch("decker.server.devices.DeviceManager") as mock_dm:
             mock_dm.return_value.enumerate.return_value = [_make_deck(serial="ABC123")]
             result = list_devices()
-        assert_that(result[0]["id"]).is_equal_to(_device_id("ABC123"))
+        assert_that(result[0]["id"]).is_equal_to(device_id_for_serial("ABC123"))
 
     def test_id_is_none_when_open_fails(self):
         deck = _make_deck()

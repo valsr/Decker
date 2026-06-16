@@ -28,3 +28,7 @@ class TestSettingsView:
         mock_set.assert_any_call("client.server_port", 9999)
         assert_that(view._saved_label.text()).is_equal_to("Saved.")  # pylint: disable=protected-access
         assert_that(view._saved_label.isHidden()).is_false()  # pylint: disable=protected-access
+
+    def test_failed_plugins_placeholder_defaults_to_none(self, qapp):  # pylint: disable=unused-argument
+        view = SettingsView()
+        assert_that(view._failed_plugins_label.text()).is_equal_to("(none)")  # pylint: disable=protected-access

@@ -10,6 +10,7 @@ from decker.client.context import AppContext
 from decker.client.event_hub import EventHub
 from decker.client.events import (
     DeviceListUpdatedEvent,
+    PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
@@ -114,6 +115,19 @@ class TestDispatch:
         window.dispatch(ServerConnectedEvent(host="localhost", port=18861))
 
         assert_that(window._active).is_equal_to(ViewName.DASHBOARD)  # pylint: disable=protected-access
+
+    def test_plugin_load_failed_shows_toast_and_does_not_forward_to_view(
+        self, window
+    ):  # pylint: disable=redefined-outer-name
+        window.switch_to(ViewName.DASHBOARD)
+
+        window.dispatch(PluginLoadFailedEvent(plugin_uuid="com.decker.broken", error="boom"))
+
+        assert_that(window._toast.isHidden()).is_false()  # pylint: disable=protected-access
+        assert_that(window._toast.text()).contains("com.decker.broken").contains(
+            "boom"
+        )  # pylint: disable=protected-access
+        window._views[ViewName.DASHBOARD].handle_event.assert_not_called()  # pylint: disable=protected-access
 
     def test_unknown_event_forwarded_to_active_view(self, window):  # pylint: disable=redefined-outer-name
         window.switch_to(ViewName.DASHBOARD)

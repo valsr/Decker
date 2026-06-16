@@ -35,4 +35,12 @@ class KeyEvent:
     pressed: bool
 
 
-AppEvent = ServerConnectedEvent | ServerDisconnectedEvent | DeviceListUpdatedEvent | KeyEvent
+@dataclass(frozen=True)
+class PluginLoadFailedEvent:
+    """A plugin failed to load on the server and was skipped."""
+
+    plugin_uuid: str
+    error: str
+
+
+AppEvent = ServerConnectedEvent | ServerDisconnectedEvent | DeviceListUpdatedEvent | KeyEvent | PluginLoadFailedEvent

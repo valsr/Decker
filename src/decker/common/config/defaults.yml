@@ -8,3 +8,6 @@ server:
 client:
   server_host: localhost
   server_port: 18861
+
+plugin:
+  nodejs_path: node

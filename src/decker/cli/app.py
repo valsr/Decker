@@ -4,6 +4,7 @@ import sys
 from argparse import ArgumentParser
 from typing import Any
 
+from decker.cli import plugin as plugin_cli
 from decker.cli.connection import CliConnection
 from decker.cli.formatter import format_result
 from decker.common import config
@@ -38,6 +39,9 @@ def main() -> None:
     if args.command == ["help"]:
         parser.print_help()
         sys.exit(0)
+
+    if args.command[0] == "plugin":
+        sys.exit(_dispatch_plugin(args.command[1:]))
 
     try:
         with CliConnection(host, port) as conn:
@@ -113,4 +117,56 @@ def _cmd_help(conn: CliConnection | None, cmd_name: str | None, parser: Argument
     print(f"  Description: {desc}")
     print(f"  Parameters:  {params}")
     print(f"  Returns:     {ret}")
+    return 0
+
+
+def _dispatch_plugin(rest: list[str]) -> int:
+    """Route a 'plugin' subcommand — install/list/remove operate on the local filesystem only."""
+    if not rest:
+        print("Usage: decker-cli plugin <install|list|remove> ...")
+        return 1
+    sub, *sub_args = rest
+    handlers = {"install": _cmd_plugin_install, "list": _cmd_plugin_list, "remove": _cmd_plugin_remove}
+    handler = handlers.get(sub)
+    if handler is None:
+        print(f"Error: unknown plugin subcommand '{sub}'. Use install, list, or remove.")
+        return 1
+    return handler(sub_args)
+
+
+def _cmd_plugin_install(args: list[str]) -> int:
+    if not args:
+        print("Usage: decker-cli plugin install <path>")
+        return 1
+    try:
+        dest = plugin_cli.install(args[0])
+    except plugin_cli.PluginCliError as e:
+        print(f"Error: {e}")
+        return 1
+    print(f"Installed plugin to {dest}. Restart the server to activate it.")
+    return 0
+
+
+def _cmd_plugin_list(_args: list[str]) -> int:
+    plugins = plugin_cli.list_installed()
+    if not plugins:
+        print("No plugins installed.")
+        return 0
+    width = max(len(p["uuid"]) for p in plugins)
+    for p in plugins:
+        uuid, plugin_type, status = p["uuid"], p["type"], p["status"]
+        print(f"  {uuid:<{width}}  {plugin_type:<7}  {status}")
+    return 0
+
+
+def _cmd_plugin_remove(args: list[str]) -> int:
+    if not args:
+        print("Usage: decker-cli plugin remove <uuid>")
+        return 1
+    try:
+        plugin_cli.remove(args[0])
+    except plugin_cli.PluginCliError as e:
+        print(f"Error: {e}")
+        return 1
+    print(f"Removed plugin {args[0]}. Restart the server for the change to take effect.")
     return 0

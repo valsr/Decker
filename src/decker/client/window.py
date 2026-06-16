@@ -4,13 +4,18 @@ from typing import Any
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QMainWindow, QStackedWidget
+from PyQt6.QtWidgets import QLabel, QMainWindow, QStackedWidget
 
 from decker.client.assets import ICON_PATH
 from decker.client.connection_manager import ConnectionManager
 from decker.client.context import AppContext
 from decker.client.event_hub import EventHub
-from decker.client.events import AppEvent, ServerConnectedEvent, ServerDisconnectedEvent
+from decker.client.events import (
+    AppEvent,
+    PluginLoadFailedEvent,
+    ServerConnectedEvent,
+    ServerDisconnectedEvent,
+)
 from decker.client.view_name import ViewName
 from decker.client.views import (
     BaseView,
@@ -23,6 +28,7 @@ from decker.client.views import (
 
 _DRAIN_INTERVAL_MS = 16
 _INITIAL_VIEW_RECHECK_MS = 50
+_TOAST_DURATION_MS = 4000
 
 
 class MainWindow(QMainWindow):
@@ -38,6 +44,7 @@ class MainWindow(QMainWindow):
         AppContext.get().window = self
 
         self._stack: QStackedWidget = QStackedWidget()
+        self._toast: QLabel = QLabel(self)
         self._register_all_views()
         self._build_ui()
 
@@ -75,6 +82,9 @@ class MainWindow(QMainWindow):
         if isinstance(event, ServerConnectedEvent):
             self.switch_to(self._last_view or ViewName.DASHBOARD)
             self._last_view = None
+            return
+        if isinstance(event, PluginLoadFailedEvent):
+            self._show_toast(f"Plugin '{event.plugin_uuid}' failed to load: {event.error}")
             return
         if self._active is not None:
             self._views[self._active].handle_event(event)
@@ -115,6 +125,13 @@ class MainWindow(QMainWindow):
         for event in EventHub.get().drain():
             self.dispatch(event)
 
+    def _show_toast(self, message: str) -> None:
+        self._toast.setText(message)
+        self._toast.adjustSize()
+        self._toast.move(12, self.height() - self._toast.height() - 12)
+        self._toast.show()
+        QTimer.singleShot(_TOAST_DURATION_MS, self._toast.hide)
+
     def _register_all_views(self) -> None:
         self.register_view(ViewName.CONNECTING, ConnectingView())
         self.register_view(ViewName.DASHBOARD, DashboardView())
@@ -129,3 +146,5 @@ class MainWindow(QMainWindow):
         if ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(ICON_PATH)))
         self.setCentralWidget(self._stack)
+        self._toast.setStyleSheet("background-color: #45475a; color: #f38ba8; padding: 6px 10px; border-radius: 4px;")
+        self._toast.hide()

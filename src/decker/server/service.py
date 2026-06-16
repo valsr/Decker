@@ -11,17 +11,24 @@ from rpyc.core.service import Service
 from rpyc.utils.server import ThreadPoolServer
 
 from decker.server.devices import list_devices
+from decker.server.plugins import PluginManager
 
 
 class DeckerService(Service):
     """RPyC service exposed to clients for controlling the Decker application."""
 
     _rpyc_server: ThreadPoolServer | None = None
+    _plugin_manager: PluginManager | None = None
 
     @classmethod
     def configure_server(cls, server: ThreadPoolServer) -> None:
         """Bind the shared ThreadPoolServer instance before clients connect."""
         cls._rpyc_server = server
+
+    @classmethod
+    def configure_plugin_manager(cls, plugin_manager: PluginManager) -> None:
+        """Bind the shared PluginManager instance before clients connect."""
+        cls._plugin_manager = plugin_manager
 
     def __init__(self) -> None:
         """Initialize the Decker service."""
@@ -87,6 +94,18 @@ class DeckerService(Service):
             list[dict[str, Any]]: One entry per device with id, type, keys, serial, vendor_id, product_id.
         """
         return list_devices()
+
+    @rpyc.utils.exposed
+    def plugins_load_failures(self) -> list[dict[str, str]]:
+        """
+        List plugins that failed to load at startup.
+
+        Returns:
+            list[dict[str, str]]: One entry per failed plugin with plugin_uuid and error.
+        """
+        if self._plugin_manager is None:
+            return []
+        return [{"plugin_uuid": f.plugin_uuid, "error": f.error} for f in self._plugin_manager.load_failures()]
 
     @rpyc.utils.exposed
     def commands(self) -> dict[str, dict[str, str]]:
