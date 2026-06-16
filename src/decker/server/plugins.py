@@ -21,6 +21,7 @@ from decker.plugin.elgato.process import (
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.executor import PluginExecutor
 from decker.plugin.loader import DiscoveredElgatoPlugin, PluginLoader
+from decker.plugin.manifest import PluginManifest
 from decker.plugin.native_loader import LoadedNativePlugin
 from decker.plugin.registry import ActionRegistry
 from decker.plugin.settings_store import PluginSettingsStore
@@ -136,6 +137,27 @@ class PluginManager:  # pylint: disable=too-many-instance-attributes
     def load_failures(self) -> list[PluginLoadFailedEvent]:
         """Return the plugins that failed to load at startup."""
         return list(self._failures)
+
+    def list_actions(self) -> list[dict[str, str]]:
+        """Return every action declared across all loaded plugin manifests (native and Elgato)."""
+        actions: list[dict[str, str]] = []
+        for loaded in self._native_plugins.values():
+            actions.extend(self._manifest_actions(loaded.manifest))
+        for discovered in self._elgato_plugins.values():
+            actions.extend(self._manifest_actions(discovered.manifest))
+        return actions
+
+    @staticmethod
+    def _manifest_actions(manifest: PluginManifest) -> list[dict[str, str]]:
+        return [
+            {
+                "plugin_uuid": manifest.uuid,
+                "plugin_name": manifest.name,
+                "action_uuid": plugin_action.uuid,
+                "action_name": plugin_action.name,
+            }
+            for plugin_action in manifest.actions
+        ]
 
     def activate_action(self, target: ActionTarget) -> None:
         """Instantiate a native action for this target and dispatch on_will_appear."""

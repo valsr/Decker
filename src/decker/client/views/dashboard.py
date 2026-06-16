@@ -1,28 +1,80 @@
-"""Dashboard view — device list and profile management."""
+"""Dashboard view — the main working surface: sidebar, page pills, key grid, config panel."""
 
 from typing import Any
 
-from PyQt6.QtWidgets import QLabel, QPushButton, QVBoxLayout
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QHBoxLayout, QSplitter, QVBoxLayout, QWidget
 
 from decker.client.context import AppContext
-from decker.client.events import AppEvent, DeviceListUpdatedEvent
+from decker.client.events import (
+    ActionListUpdatedEvent,
+    AppEvent,
+    DeviceListUpdatedEvent,
+)
+from decker.client.mock_page_model import MockPageModel
+from decker.client.ui_state_store import UiStateStore
+from decker.client.view_name import ViewName
 from decker.client.views.base import BaseView
+from decker.client.widgets.action_config_panel import ActionConfigPanel
+from decker.client.widgets.button_grid import ButtonGridWidget
+from decker.client.widgets.device_switcher_popup import DeviceSwitcherPopup
+from decker.client.widgets.page_pill_bar import PagePillBar
+from decker.client.widgets.sidebar import SidebarWidget
+
+_DEFAULT_SIDEBAR_WIDTH = 240
+_DEFAULT_KEY_COUNT = 15
+
+_SPLITTER_MAIN_KEY = "splitter_main"
+_SPLITTER_CONTENT_KEY = "splitter_content"
+_SIDEBAR_COLLAPSED_KEY = "sidebar_collapsed"
 
 
-class DashboardView(BaseView):
-    """Lists known devices and lets the user pick one to manage. Profile management is a placeholder."""
+class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
+    """Sidebar | (page pills + key grid / config panel), with persisted splitter layout."""
 
-    def __init__(self) -> None:
+    def __init__(self, ui_state_store: UiStateStore | None = None) -> None:
         super().__init__()
-        self._title = QLabel("Devices")
-        self._title.setStyleSheet("color: #cdd6f4; font-size: 16px; font-weight: bold;")
-        self._list_layout = QVBoxLayout()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(10)
-        layout.addWidget(self._title)
-        layout.addLayout(self._list_layout)
-        layout.addStretch()
+        self.resize(900, 700)
+        self._ui_state_store = ui_state_store or UiStateStore()
+        self._devices: list[dict[str, Any]] = []
+        self._active_device_serial: str | None = None
+        self._last_expanded_sidebar_width = _DEFAULT_SIDEBAR_WIDTH
+        self._page_model = MockPageModel(key_count=_DEFAULT_KEY_COUNT)
+        self._device_popup: DeviceSwitcherPopup | None = None
+
+        self._sidebar = SidebarWidget()
+        self._pill_bar = PagePillBar()
+        self._grid = ButtonGridWidget()
+        self._config_panel = ActionConfigPanel()
+
+        self._content_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._content_splitter.addWidget(self._grid)
+        self._content_splitter.addWidget(self._config_panel)
+        self._content_splitter.setChildrenCollapsible(False)
+
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addWidget(self._pill_bar)
+        content_layout.addWidget(self._content_splitter)
+
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.addWidget(self._sidebar)
+        self._main_splitter.addWidget(content_widget)
+        self._main_splitter.setCollapsible(0, True)
+        self._main_splitter.setCollapsible(1, False)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._main_splitter)
+
+        self._main_splitter.resize(self.size())
+        self._content_splitter.resize(self._main_splitter.size())
+
+        self._wire_signals()
+        self._grid.set_key_count(_DEFAULT_KEY_COUNT)
+        self._pill_bar.set_pages(self._page_model.pages)
+        self._restore_state()
 
     def on_activate(self) -> None:
         pass
@@ -32,26 +84,112 @@ class DashboardView(BaseView):
 
     def handle_event(self, event: AppEvent) -> None:
         if isinstance(event, DeviceListUpdatedEvent):
-            self._render_devices(event.devices)
+            self._on_devices_updated(event.devices)
+        elif isinstance(event, ActionListUpdatedEvent):
+            self._sidebar.set_actions(event.actions)
 
-    def _render_devices(self, devices: list[dict[str, Any]]) -> None:
-        while (item := self._list_layout.takeAt(0)) is not None:
-            if widget := item.widget():
-                widget.deleteLater()
+    def save_state(self) -> None:
+        """Persist splitter sizes and sidebar-collapsed state to config.db."""
+        self._ui_state_store.set(_SPLITTER_MAIN_KEY, self._main_splitter.sizes())
+        self._ui_state_store.set(_SPLITTER_CONTENT_KEY, self._content_splitter.sizes())
+        self._ui_state_store.set(_SIDEBAR_COLLAPSED_KEY, 1 if self._is_sidebar_collapsed() else 0)
 
-        if not devices:
-            self._list_layout.addWidget(QLabel("No Stream Deck devices found."))
+    # ------------------------------------------------------------------
+    # Wiring
+    # ------------------------------------------------------------------
+
+    def _wire_signals(self) -> None:
+        self._pill_bar.sidebar_toggle_requested.connect(self._toggle_sidebar)
+        self._grid.key_selected.connect(self._on_key_selected)
+        self._sidebar.device_switcher_clicked.connect(self._show_device_switcher)
+        self._sidebar.settings_clicked.connect(self._open_settings)
+
+    # ------------------------------------------------------------------
+    # Persisted layout state
+    # ------------------------------------------------------------------
+
+    def _restore_state(self) -> None:
+        splitter_main = self._ui_state_store.get(_SPLITTER_MAIN_KEY)
+        if splitter_main:
+            self._main_splitter.setSizes(splitter_main)
+            if splitter_main[0] > 0:
+                self._last_expanded_sidebar_width = splitter_main[0]
+        splitter_content = self._ui_state_store.get(_SPLITTER_CONTENT_KEY)
+        if splitter_content:
+            self._content_splitter.setSizes(splitter_content)
+        if self._ui_state_store.get(_SIDEBAR_COLLAPSED_KEY):
+            self._collapse_sidebar()
+
+    def _is_sidebar_collapsed(self) -> bool:
+        return self._main_splitter.sizes()[0] == 0
+
+    def _toggle_sidebar(self) -> None:
+        if self._is_sidebar_collapsed():
+            self._expand_sidebar()
+        else:
+            self._collapse_sidebar()
+
+    def _collapse_sidebar(self) -> None:
+        sizes = self._main_splitter.sizes()
+        if sizes[0] > 0:
+            self._last_expanded_sidebar_width = sizes[0]
+        self._main_splitter.setSizes([0, sum(sizes)])
+
+    def _expand_sidebar(self) -> None:
+        sizes = self._main_splitter.sizes()
+        total = sum(sizes)
+        width = min(self._last_expanded_sidebar_width, total)
+        self._main_splitter.setSizes([width, total - width])
+
+    # ------------------------------------------------------------------
+    # Devices and key grid
+    # ------------------------------------------------------------------
+
+    def _on_devices_updated(self, devices: list[dict[str, Any]]) -> None:
+        self._devices = devices
+        active_device = AppContext.get().active_device
+        if active_device is None and devices:
+            active_device = str(devices[0].get("serial") or "")
+            window = AppContext.get().window
+            if window is not None:
+                window.set_active_device(active_device)
+        self._refresh_grid_for_device(active_device)
+
+    def _refresh_grid_for_device(self, serial: str | None) -> None:
+        if serial == self._active_device_serial:
             return
+        self._active_device_serial = serial
+        key_count = self._key_count_for_serial(serial)
+        self._page_model = MockPageModel(key_count=key_count)
+        self._grid.set_key_count(key_count)
+        self._pill_bar.set_pages(self._page_model.pages)
 
-        for device in devices:
-            serial = str(device.get("serial") or "")
-            device_type = str(device.get("type", "Stream Deck"))
-            label = f"{device_type}  ·  {serial}"
-            btn = QPushButton(label)
-            btn.clicked.connect(lambda _checked=False, s=serial: self._select_device(s))
-            self._list_layout.addWidget(btn)
+    def _key_count_for_serial(self, serial: str | None) -> int:
+        for device in self._devices:
+            if str(device.get("serial")) == serial:
+                return int(device.get("keys", _DEFAULT_KEY_COUNT))
+        return _DEFAULT_KEY_COUNT
 
-    def _select_device(self, serial: str) -> None:
+    def _show_device_switcher(self) -> None:
+        popup = DeviceSwitcherPopup(self._devices, parent=self)
+        popup.device_selected.connect(self._on_device_selected)
+        popup.show_above(self._sidebar.device_switcher_button)
+        self._device_popup = popup
+
+    def _on_device_selected(self, serial: str) -> None:
         window = AppContext.get().window
         if window is not None:
-            window.switch_device(serial)
+            window.set_active_device(serial)
+        self._refresh_grid_for_device(serial)
+
+    # ------------------------------------------------------------------
+    # Other widget callbacks
+    # ------------------------------------------------------------------
+
+    def _on_key_selected(self, _index: int) -> None:
+        self._config_panel.setCurrentIndex(0)
+
+    def _open_settings(self) -> None:
+        window = AppContext.get().window
+        if window is not None:
+            window.switch_to(ViewName.SETTINGS)
