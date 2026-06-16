@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QApplication
 
 import decker.common.logging
 from decker.client.connection_manager import ConnectionManager
+from decker.client.tray import TrayIcon
 from decker.client.window import MainWindow
 from decker.common import config
 
@@ -24,6 +25,9 @@ def main() -> None:
 
     window = MainWindow(connection_manager)
     window.check_initial_view()
+
+    tray_icon = TrayIcon(window)
+    tray_icon.show()
 
     sys.exit(app.exec())
 
