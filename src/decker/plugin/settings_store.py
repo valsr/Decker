@@ -1,10 +1,10 @@
-"""SQLite-backed persistence for per-context action settings, at ~/.decker/plugins.db."""
+"""SQLite-backed persistence for per-context action settings, at ~/.decker/decker.db."""
 
 import json
 import sqlite3
 from pathlib import Path
 
-_DEFAULT_DB_PATH = Path.home() / ".decker" / "plugins.db"
+from decker.common.db import DB_PATH as _DEFAULT_DB_PATH
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (

@@ -24,3 +24,10 @@ class TestDeviceView:
         view.on_activate()
 
         assert_that(view._title.text()).is_equal_to("No device selected")  # pylint: disable=protected-access
+
+    def test_icon_selected_updates_status_label(self, qapp):  # pylint: disable=unused-argument
+        view = DeviceView()
+
+        view._icon_picker.icon_selected.emit("/path/to/icon.svg")  # pylint: disable=protected-access
+
+        assert_that(view._icon_status.text()).contains("/path/to/icon.svg")  # pylint: disable=protected-access

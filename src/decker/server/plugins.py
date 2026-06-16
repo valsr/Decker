@@ -3,9 +3,12 @@
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from StreamDeck.DeviceManager import DeviceManager
+from StreamDeck.ImageHelpers import PILHelper
 
+from decker.asset.renderer import AssetRenderer
 from decker.common import config
 from decker.plugin.context import ActionContext, ActionTarget
 from decker.plugin.elgato.bridge import DEFAULT_PORT as ELGATO_BRIDGE_PORT
@@ -28,12 +31,25 @@ class _StreamDeckHardwareSink:
     """Applies hardware effects to a Stream Deck device, opened on demand by its stable id.
 
     Only image rendering is implemented today — title overlays, multi-state icons, and
-    alert/ok indicators require a text/icon rendering pipeline that does not exist yet.
+    alert/ok indicators require a rendering pipeline beyond plain images, which doesn't
+    exist yet.
     """
 
+    def __init__(self) -> None:
+        self._renderer = AssetRenderer()
+
     def set_image(self, device_id: str, key_index: int, image: bytes) -> None:
-        """Render image on the given device's key."""
-        self._with_device(device_id, lambda deck: deck.set_key_image(key_index, image))
+        """Render image (SVG/PNG/JPEG bytes, or already-native bytes) on the given device's key."""
+        self._with_device(device_id, lambda deck: self._render_and_push(deck, key_index, image))
+
+    def _render_and_push(self, deck: Any, key_index: int, image: bytes) -> None:
+        pil_image = self._renderer.render_bytes(image, deck.KEY_PIXEL_WIDTH, deck.KEY_PIXEL_HEIGHT)
+        if pil_image is None:
+            deck.set_key_image(key_index, image)
+            return
+        scaled = PILHelper.create_scaled_key_image(deck, pil_image)
+        native_image = PILHelper.to_native_key_format(deck, scaled)
+        deck.set_key_image(key_index, native_image)
 
     def set_title(self, device_id: str, key_index: int, title: str) -> None:
         """No-op: text rendering is not implemented yet."""
