@@ -15,7 +15,7 @@ class ConnectingView(BaseView):
         super().__init__()
         self._attempts = 0
         self._status_label = QLabel()
-        self._status_label.setStyleSheet("color: #cdd6f4; font-size: 14px;")
+        self._status_label.setStyleSheet("color: #1c1c1e; font-size: 14px;")
         self._tick_timer = QTimer(self)
         self._tick_timer.timeout.connect(self._on_tick)
         layout = QVBoxLayout(self)

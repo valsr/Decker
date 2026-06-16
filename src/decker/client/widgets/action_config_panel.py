@@ -13,5 +13,5 @@ class ActionConfigPanel(QStackedWidget):
     def __init__(self) -> None:
         super().__init__()
         placeholder = QLabel("Select a key to configure")
-        placeholder.setStyleSheet("color: #585b70; font-size: 12px;")
+        placeholder.setStyleSheet("color: #8e8e93; font-size: 12px;")
         self.addWidget(placeholder)

@@ -18,13 +18,13 @@ class DeviceView(BaseView):
     def __init__(self) -> None:
         super().__init__()
         self._title = QLabel()
-        self._title.setStyleSheet("color: #a6adc8; font-size: 13px;")
+        self._title.setStyleSheet("color: #48484a; font-size: 13px;")
         self._grid_placeholder = QLabel("Button grid placeholder")
-        self._grid_placeholder.setStyleSheet("color: #585b70; font-size: 12px;")
+        self._grid_placeholder.setStyleSheet("color: #8e8e93; font-size: 12px;")
         self._icon_picker = IconPickerWidget()
         self._icon_picker.icon_selected.connect(self._on_icon_selected)
         self._icon_status = QLabel()
-        self._icon_status.setStyleSheet("color: #a6e3a1; font-size: 11px;")
+        self._icon_status.setStyleSheet("color: #2d8a4e; font-size: 11px;")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)

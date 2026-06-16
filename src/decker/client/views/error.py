@@ -12,7 +12,7 @@ class ErrorView(BaseView):
     def __init__(self) -> None:
         super().__init__()
         self._message_label = QLabel()
-        self._message_label.setStyleSheet("color: #f38ba8; font-size: 13px;")
+        self._message_label.setStyleSheet("color: #c0392b; font-size: 13px;")
         self._message_label.setWordWrap(True)
         restart_btn = QPushButton("Restart")
         restart_btn.clicked.connect(self._on_restart)
