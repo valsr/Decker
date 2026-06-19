@@ -1,4 +1,4 @@
-"""Main application window — view registry, navigation, and event dispatch."""
+"""Main application window — view registry, navigation, and event handler registration."""
 
 from typing import Any
 
@@ -9,13 +9,19 @@ from PyQt6.QtWidgets import QLabel, QMainWindow, QStackedWidget
 from decker.client.assets import ICON_PATH
 from decker.client.connection_manager import ConnectionManager
 from decker.client.context import AppContext
-from decker.client.event_hub import EventHub
 from decker.client.events import (
+    ActionListUpdatedEvent,
     AppEvent,
+    DeviceListUpdatedEvent,
+    KeyDisplayStatesUpdatedEvent,
+    KeyEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
+    ViewActivatedEvent,
+    ViewDeactivatedEvent,
 )
+from decker.client.events.event_manager import EventManager
 from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
 from decker.client.views import (
@@ -35,7 +41,7 @@ _TOAST_DURATION_MS = 4000
 
 
 class MainWindow(QMainWindow):
-    """Owns the QStackedWidget of registered views and routes AppEvents to them."""
+    """Owns the QStackedWidget of registered views and routes AppEvents from the EventManager."""
 
     def __init__(self, connection_manager: ConnectionManager, ui_state_store: UiStateStore | None = None) -> None:
         super().__init__()
@@ -53,9 +59,10 @@ class MainWindow(QMainWindow):
         self._toast: QLabel = QLabel(self)
         self._register_all_views()
         self._build_ui()
+        self._register_event_handlers()
 
         self._drain_timer: QTimer = QTimer(self)
-        self._drain_timer.timeout.connect(self._drain_events)
+        self._drain_timer.timeout.connect(EventManager.get().drain_and_dispatch)
         self._drain_timer.start(_DRAIN_INTERVAL_MS)
 
     def register_view(self, name: ViewName, view: BaseView) -> None:
@@ -68,10 +75,13 @@ class MainWindow(QMainWindow):
         if self._active == name:
             return
         if self._active is not None:
-            self._views[self._active].on_deactivate()
+            outgoing = self._active
+            self._views[outgoing].on_deactivate()
+            EventManager.get().emit(ViewDeactivatedEvent(outgoing))
         self._active = name
         self._stack.setCurrentWidget(self._views[name])
         self._views[name].on_activate()
+        EventManager.get().emit(ViewActivatedEvent(name))
 
     def switch_device(self, serial: str) -> None:
         """Set the active device and navigate to the device view."""
@@ -83,21 +93,8 @@ class MainWindow(QMainWindow):
         AppContext.get().active_device = serial
 
     def dispatch(self, event: AppEvent) -> None:
-        """Route a drained AppEvent to connection-state handling or the active view."""
-        if isinstance(event, ServerDisconnectedEvent):
-            if self._active != ViewName.CONNECTING:
-                self._last_view = self._active
-            self.switch_to(ViewName.CONNECTING)
-            return
-        if isinstance(event, ServerConnectedEvent):
-            self.switch_to(self._last_view or ViewName.DASHBOARD)
-            self._last_view = None
-            return
-        if isinstance(event, PluginLoadFailedEvent):
-            self._show_toast(f"Plugin '{event.plugin_uuid}' failed to load: {event.error}")
-            return
-        if self._active is not None:
-            self._views[self._active].handle_event(event)
+        """Route an event through the EventManager. Kept for backward compatibility."""
+        EventManager.get().emit(event)
 
     def restart(self) -> None:
         """Stop the connection manager, reset shared state, and re-run the startup sequence."""
@@ -124,19 +121,6 @@ class MainWindow(QMainWindow):
             self._geometry_restored = True
             self._restore_geometry()
 
-    def _save_geometry(self) -> None:
-        geometry = self.geometry()
-        self._ui_state_store.set(
-            _WINDOW_GEOMETRY_KEY,
-            {"x": geometry.x(), "y": geometry.y(), "w": geometry.width(), "h": geometry.height()},
-        )
-
-    def _restore_geometry(self) -> None:
-        saved = self._ui_state_store.get(_WINDOW_GEOMETRY_KEY)
-        if saved is None:
-            return
-        self.setGeometry(saved["x"], saved["y"], saved["w"], saved["h"])
-
     def check_initial_view(self) -> None:
         """Land on DashboardView if already connected, otherwise wait briefly and recheck.
 
@@ -155,9 +139,46 @@ class MainWindow(QMainWindow):
             self.switch_to(ViewName.CONNECTING)
         self.show()
 
-    def _drain_events(self) -> None:
-        for event in EventHub.get().drain():
-            self.dispatch(event)
+    def _save_geometry(self) -> None:
+        geometry = self.geometry()
+        self._ui_state_store.set(
+            _WINDOW_GEOMETRY_KEY,
+            {"x": geometry.x(), "y": geometry.y(), "w": geometry.width(), "h": geometry.height()},
+        )
+
+    def _restore_geometry(self) -> None:
+        saved = self._ui_state_store.get(_WINDOW_GEOMETRY_KEY)
+        if saved is None:
+            return
+        self.setGeometry(saved["x"], saved["y"], saved["w"], saved["h"])
+
+    def _register_event_handlers(self) -> None:
+        em = EventManager.get()
+        em.subscribe(ServerDisconnectedEvent, self._on_server_disconnected)
+        em.subscribe(ServerConnectedEvent, self._on_server_connected)
+        em.subscribe(PluginLoadFailedEvent, self._on_plugin_load_failed)
+        for event_type in (DeviceListUpdatedEvent, ActionListUpdatedEvent, KeyDisplayStatesUpdatedEvent, KeyEvent):
+            em.subscribe(event_type, self._forward_to_active_view)
+
+    def _on_server_disconnected(self, _event: ServerDisconnectedEvent) -> bool:
+        if self._active != ViewName.CONNECTING:
+            self._last_view = self._active
+        self.switch_to(ViewName.CONNECTING)
+        return True
+
+    def _on_server_connected(self, _event: ServerConnectedEvent) -> bool:
+        self.switch_to(self._last_view or ViewName.DASHBOARD)
+        self._last_view = None
+        return True
+
+    def _on_plugin_load_failed(self, event: PluginLoadFailedEvent) -> bool:
+        self._show_toast(f"Plugin '{event.plugin_uuid}' failed to load: {event.error}")
+        return True
+
+    def _forward_to_active_view(self, event: Any) -> bool | None:
+        if self._active is not None:
+            return self._views[self._active].handle_event(event)
+        return None
 
     def _show_toast(self, message: str) -> None:
         self._toast.setText(message)

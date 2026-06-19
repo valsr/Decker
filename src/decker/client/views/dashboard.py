@@ -89,13 +89,14 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     def on_deactivate(self) -> None:
         pass
 
-    def handle_event(self, event: AppEvent) -> None:
+    def handle_event(self, event: AppEvent) -> bool | None:
         if isinstance(event, DeviceListUpdatedEvent):
             self._on_devices_updated(event.devices)
         elif isinstance(event, ActionListUpdatedEvent):
             self._sidebar.set_actions(event.actions)
         elif isinstance(event, KeyDisplayStatesUpdatedEvent):
             self._on_display_states_updated(event.device_id, event.states)
+        return None
 
     def save_state(self) -> None:
         """Persist splitter sizes and sidebar-collapsed state to config.db."""

@@ -1,7 +1,9 @@
-"""Application events pushed onto the EventHub by background workers."""
+"""Application events flowing through the EventManager."""
 
 from dataclasses import dataclass
 from typing import Any
+
+from decker.client.view_name import ViewName
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,20 @@ class KeyDisplayStatesUpdatedEvent:
     states: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class ViewActivatedEvent:
+    """A view became the active view in the main window."""
+
+    view_name: ViewName
+
+
+@dataclass(frozen=True)
+class ViewDeactivatedEvent:
+    """A view was replaced as the active view in the main window."""
+
+    view_name: ViewName
+
+
 AppEvent = (
     ServerConnectedEvent
     | ServerDisconnectedEvent
@@ -66,4 +82,6 @@ AppEvent = (
     | PluginLoadFailedEvent
     | ActionListUpdatedEvent
     | KeyDisplayStatesUpdatedEvent
+    | ViewActivatedEvent
+    | ViewDeactivatedEvent
 )

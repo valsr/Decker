@@ -7,13 +7,13 @@ from assertpy import assert_that
 from PyQt6.QtGui import QCloseEvent
 
 from decker.client.context import AppContext
-from decker.client.event_hub import EventHub
 from decker.client.events import (
     DeviceListUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
+from decker.client.events.event_manager import EventManager
 from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
 from decker.client.window import MainWindow
@@ -29,7 +29,7 @@ def connection_manager() -> MagicMock:
 @pytest.fixture
 def window(qapp, connection_manager, tmp_path):  # pylint: disable=unused-argument,redefined-outer-name
     AppContext._instance = None  # pylint: disable=protected-access
-    EventHub._instance = None  # pylint: disable=protected-access
+    EventManager.reset()
     win = MainWindow(connection_manager, ui_state_store=UiStateStore(tmp_path / "config.db"))
     for view in win._views.values():  # pylint: disable=protected-access
         view.on_activate = MagicMock()  # type: ignore[method-assign]

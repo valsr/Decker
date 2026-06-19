@@ -26,8 +26,8 @@ class BaseView(QWidget, metaclass=_ViewMeta):  # pylint: disable=invalid-metacla
     def on_deactivate(self) -> None:
         """Called when this view is no longer the active view."""
 
-    def handle_event(self, event: AppEvent) -> None:
-        """Handle an AppEvent not already intercepted by MainWindow.dispatch(). No-op by default."""
+    def handle_event(self, event: AppEvent) -> bool | None:
+        """Handle an AppEvent forwarded by the EventManager. Return True to stop propagation. No-op by default."""
 
     def save_state(self) -> None:
         """Persist any view-owned UI state before the window closes. No-op by default."""

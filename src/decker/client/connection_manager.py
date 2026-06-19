@@ -7,7 +7,6 @@ from typing import Any
 import rpyc.utils.factory
 from rpyc.core.protocol import Connection
 
-from decker.client.event_hub import EventHub
 from decker.client.events import (
     ActionListUpdatedEvent,
     DeviceListUpdatedEvent,
@@ -16,6 +15,7 @@ from decker.client.events import (
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
+from decker.client.events.event_manager import EventManager
 
 _RETRY_INTERVAL_S = 5.0
 _HEARTBEAT_INTERVAL_S = 5.0
@@ -24,8 +24,7 @@ _HEARTBEAT_INTERVAL_S = 5.0
 class ConnectionManager:
     """Maintains a connection to the Decker server on a background thread.
 
-    Pushes ServerConnectedEvent / ServerDisconnectedEvent / DeviceListUpdatedEvent to
-    EventHub as connection state changes. Owns the worker thread's full lifecycle.
+    Pushes events to EventManager as connection state changes. Owns the worker thread's full lifecycle.
     """
 
     def __init__(self, host: str, port: int) -> None:
@@ -75,7 +74,7 @@ class ConnectionManager:
             return
         logging.info("Connected to server at %s:%d", self._host, self._port)
         self.connected = True
-        EventHub.get().push(ServerConnectedEvent(host=self._host, port=self._port))
+        EventManager.get().push(ServerConnectedEvent(host=self._host, port=self._port))
         self._refresh_devices()
         self._refresh_actions()
         self._check_plugin_failures()
@@ -90,7 +89,7 @@ class ConnectionManager:
             logging.warning("Server heartbeat failed: %s", e)
             self._close_connection()
             self.connected = False
-            EventHub.get().push(ServerDisconnectedEvent(reason=str(e)))
+            EventManager.get().push(ServerDisconnectedEvent(reason=str(e)))
             return
         self._refresh_devices()
         self._refresh_actions()
@@ -109,7 +108,7 @@ class ConnectionManager:
             if plugin_uuid in self._reported_plugin_failures:
                 continue
             self._reported_plugin_failures.add(plugin_uuid)
-            EventHub.get().push(PluginLoadFailedEvent(plugin_uuid=plugin_uuid, error=str(failure.get("error", ""))))
+            EventManager.get().push(PluginLoadFailedEvent(plugin_uuid=plugin_uuid, error=str(failure.get("error", ""))))
 
     def _refresh_devices(self) -> None:
         if self._conn is None:
@@ -119,7 +118,7 @@ class ConnectionManager:
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not list devices: %s", e)
             return
-        EventHub.get().push(DeviceListUpdatedEvent(devices=devices))
+        EventManager.get().push(DeviceListUpdatedEvent(devices=devices))
 
     def _refresh_actions(self) -> None:
         if self._conn is None:
@@ -129,7 +128,7 @@ class ConnectionManager:
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not list plugin actions: %s", e)
             return
-        EventHub.get().push(ActionListUpdatedEvent(actions=actions))
+        EventManager.get().push(ActionListUpdatedEvent(actions=actions))
 
     def call(self, method: str, *args: Any) -> Any:
         """Call an RPC method on the server and return the result. Returns None on error."""
@@ -160,7 +159,7 @@ class ConnectionManager:
         except Exception as exc:  # pylint: disable=broad-except
             logging.warning("Could not fetch key display states: %s", exc)
             return
-        EventHub.get().push(KeyDisplayStatesUpdatedEvent(device_id=device_id, states=states))
+        EventManager.get().push(KeyDisplayStatesUpdatedEvent(device_id=device_id, states=states))
 
     def _close_connection(self) -> None:
         if self._conn is None:
