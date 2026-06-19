@@ -54,6 +54,7 @@ stub-gen = { cmd = "stubgen -o .stubs --include-private" }
 icons = { cmd = "python src/decker/assets/rasterize.py" }
 format = ["isort", "black"]
 stubs = ["stub-gen", "mypy-stubs"]
+update-dictionary = { cmd = "python scripts/update_dictionary.py", help = "Regenerate spell.dic from codebase types and user dictionary" }
 
 [tool.poe.tasks.setup]
 help = "Setup the project"
@@ -699,3 +700,8 @@ redefining-builtins-modules = [
     "builtins",
     "io",
 ]
+
+[tool.pyright]
+stubPath = ".stubs"
+venvPath = "."
+venv = ".venv"
