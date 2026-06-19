@@ -7,7 +7,6 @@ from assertpy import assert_that
 
 from decker.client.connection_manager import ConnectionManager
 from decker.client.context import AppContext
-from decker.client.event_hub import EventHub
 from decker.client.events import (
     ActionListUpdatedEvent,
     DeviceListUpdatedEvent,
@@ -16,11 +15,12 @@ from decker.client.events import (
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
+from decker.client.events.event_manager import EventManager
 
 
 class TestConnectionManager:
     def setup_method(self):
-        EventHub._instance = None  # pylint: disable=protected-access
+        EventManager.reset()
         self.manager = ConnectionManager("localhost", 18861)
 
     def teardown_method(self):
@@ -35,7 +35,7 @@ class TestConnectionManager:
         self.manager._try_connect()  # pylint: disable=protected-access
 
         assert_that(self.manager.connected).is_true()
-        events = EventHub.get().drain()
+        events = EventManager.get().drain()
         assert_that(events).is_length(3)
         assert_that(events[0]).is_instance_of(ServerConnectedEvent)
         assert_that(events[1]).is_instance_of(DeviceListUpdatedEvent)
@@ -49,7 +49,7 @@ class TestConnectionManager:
         self.manager._try_connect()  # pylint: disable=protected-access
 
         assert_that(self.manager.connected).is_false()
-        assert_that(EventHub.get().drain()).is_empty()
+        assert_that(EventManager.get().drain()).is_empty()
 
     def test_check_heartbeat_failure_pushes_disconnected_event(self):
         mock_conn = MagicMock()
@@ -60,7 +60,7 @@ class TestConnectionManager:
         self.manager._check_heartbeat()  # pylint: disable=protected-access
 
         assert_that(self.manager.connected).is_false()
-        events = EventHub.get().drain()
+        events = EventManager.get().drain()
         assert_that(events).is_length(1)
         assert_that(events[0]).is_instance_of(ServerDisconnectedEvent)
 
@@ -73,7 +73,7 @@ class TestConnectionManager:
 
         self.manager._check_heartbeat()  # pylint: disable=protected-access
 
-        events = EventHub.get().drain()
+        events = EventManager.get().drain()
         assert_that(events).is_length(2)
         assert_that(events[0]).is_instance_of(DeviceListUpdatedEvent)
 
@@ -96,7 +96,7 @@ class TestConnectionManager:
 
         self.manager._try_connect()  # pylint: disable=protected-access
 
-        events = EventHub.get().drain()
+        events = EventManager.get().drain()
         failure_events = [e for e in events if isinstance(e, PluginLoadFailedEvent)]
         assert_that(failure_events).is_length(1)
         assert_that(failure_events[0].plugin_uuid).is_equal_to("com.decker.broken")
@@ -110,7 +110,7 @@ class TestConnectionManager:
         self.manager._check_plugin_failures()  # pylint: disable=protected-access
         self.manager._check_plugin_failures()  # pylint: disable=protected-access
 
-        events = [e for e in EventHub.get().drain() if isinstance(e, PluginLoadFailedEvent)]
+        events = [e for e in EventManager.get().drain() if isinstance(e, PluginLoadFailedEvent)]
         assert_that(events).is_length(1)
 
     @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
@@ -124,7 +124,7 @@ class TestConnectionManager:
 
         self.manager._try_connect()  # pylint: disable=protected-access
 
-        events = [e for e in EventHub.get().drain() if isinstance(e, ActionListUpdatedEvent)]
+        events = [e for e in EventManager.get().drain() if isinstance(e, ActionListUpdatedEvent)]
         assert_that(events).is_length(1)
         assert_that(events[0].actions).is_equal_to(
             [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
@@ -142,7 +142,7 @@ class TestConnectionManager:
 
         self.manager._check_heartbeat()  # pylint: disable=protected-access
 
-        events = [e for e in EventHub.get().drain() if isinstance(e, ActionListUpdatedEvent)]
+        events = [e for e in EventManager.get().drain() if isinstance(e, ActionListUpdatedEvent)]
         assert_that(events).is_length(1)
 
     def test_refresh_actions_failure_does_not_raise(self):
@@ -152,7 +152,7 @@ class TestConnectionManager:
 
         self.manager._refresh_actions()  # pylint: disable=protected-access
 
-        assert_that(EventHub.get().drain()).is_empty()
+        assert_that(EventManager.get().drain()).is_empty()
 
     def test_call_delegates_to_rpc_root(self):
         mock_conn = MagicMock()
@@ -180,7 +180,7 @@ class TestConnectionManager:
         AppContext.reset()
         AppContext.get().active_device = "dev1"
         self.manager._refresh_key_display_states()  # pylint: disable=protected-access
-        events = [e for e in EventHub.get().drain() if isinstance(e, KeyDisplayStatesUpdatedEvent)]
+        events = [e for e in EventManager.get().drain() if isinstance(e, KeyDisplayStatesUpdatedEvent)]
         assert_that(events).is_length(1)
         assert_that(events[0].device_id).is_equal_to("dev1")
         AppContext.reset()
