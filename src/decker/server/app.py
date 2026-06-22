@@ -47,12 +47,14 @@ def main() -> None:
     # map to context
     appContext = ServerAppContext()
 
+    if appContext.verbosity > 2:
+        appContext.log_others = True
     if appContext.verbosity >= 2:
         appContext.verbosity = logging.DEBUG
     elif appContext.verbosity == 1:
         appContext.verbosity = logging.INFO
 
-    decker.common.logging.configure(level=appContext.verbosity, log_directory=os.getcwd())
+    decker.common.logging.configure(level=appContext.verbosity, log_directory=os.getcwd(), log_others=appContext.log_others)
     logging.debug("Arguments received: %s", args)
 
     monitor = ServerMonitor(appContext)

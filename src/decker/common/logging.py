@@ -49,16 +49,17 @@ def is_warning() -> bool:
 class NamespaceFilter(logging.Filter):
     """Filter to add the full namespace to the log record."""
 
-    def __init__(self):
+    def __init__(self, log_others: bool = False):
         super().__init__()
         self.base_path = os.path.dirname(os.path.abspath(os.path.join(__file__, "..")))
+        self._log_others = log_others
 
     def filter(self, record: logging.LogRecord):
         if record.pathname.startswith(self.base_path):
             record.namespace = record.pathname[len(self.base_path) + 1 : -3].replace(os.path.sep, ".")
-        else:
-            record.namespace = f"Unknown module ({record.pathname})"
-        return True
+            return True
+
+        return self._log_others
 
 
 class _Formatter(logging.Formatter):
@@ -75,6 +76,7 @@ def configure(
     level: int = logging.INFO,
     log_directory: str = "",
     server_id: str | None = None,
+    log_others: bool = False,
 ):
     """Configure global/default logger.
 
@@ -82,6 +84,7 @@ def configure(
         level(int): Log level. Defaults to logging.WARNING.
         log_directory(str): The directory to store log files. Defaults to "".
         server_id(str): The server ID (or None for the main process) to use in the log file name. Defaults to None.
+        log_others(bool): Whether to log messages from modules outside the base path. Defaults to False.
     """
     global LOG_LEVEL  # pylint: disable=global-statement
     LOG_LEVEL = level  # pyright: ignore[reportConstantRedefinition]
