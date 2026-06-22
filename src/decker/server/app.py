@@ -5,6 +5,7 @@ import importlib.metadata
 import logging
 import os
 
+from decker.common.context import ServerAppContext
 import decker.common.logging
 from decker.server.monitor import ServerMonitor
 
@@ -43,17 +44,18 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
 
-    if args.verbose >= 2:
-        level = logging.DEBUG
-    elif args.verbose == 1:
-        level = logging.INFO
-    else:
-        level = logging.WARNING
+    # map to context
+    appContext = ServerAppContext()
 
-    decker.common.logging.configure(level=level, log_directory=os.getcwd())
+    if appContext.verbosity >= 2:
+        appContext.verbosity = logging.DEBUG
+    elif appContext.verbosity == 1:
+        appContext.verbosity = logging.INFO
+
+    decker.common.logging.configure(level=appContext.verbosity, log_directory=os.getcwd())
     logging.debug("Arguments received: %s", args)
 
-    monitor = ServerMonitor()
+    monitor = ServerMonitor(appContext)
     try:
         monitor.start()
     except Exception as e:

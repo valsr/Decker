@@ -7,7 +7,9 @@ from typing import Any
 
 from rpyc.utils.server import ThreadPoolServer
 
+import decker.common.logging
 from decker.asset.iconpack import IconPackManager
+from decker.common.context import ServerAppContext
 from decker.common.manager import Manager
 from decker.server.device_manager import DeviceManager
 from decker.server.devices import list_devices
@@ -20,12 +22,13 @@ from decker.server.service import DeckerService
 class ServerProcess:
     """Spawns and owns the RPyC server subprocess."""
 
-    def __init__(self, port: int, startup_wait: float) -> None:
+    def __init__(self, port: int, startup_wait: float, app_context: ServerAppContext) -> None:
         """Initialize the server process."""
         self.port = port
         self._startup_wait = startup_wait
         self._process: multiprocessing.Process | None = None
         self._context: ServerContext | None = None
+        self._app_context = app_context
 
     def start(self) -> bool:
         """Spawn the RPyC server subprocess.
@@ -160,6 +163,9 @@ class ServerProcess:
         """Entry point for the server subprocess. Runs RPyC in the main thread."""
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
+
+        # reconfigure logging
+        decker.common.logging.configure(self._app_context.verbosity)
 
         icon_pack_manager = IconPackManager()
         key_store = KeyAssignmentStore()
