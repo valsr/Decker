@@ -5,10 +5,15 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from decker.common.db import DB_PATH as _DEFAULT_DB_PATH
+from decker.common.manager import Manager
 from decker.plugin.context import ActionTarget
+
+if TYPE_CHECKING:
+    from decker.server.server_context import ServerContext
+
+_DEFAULT_DB_PATH = Path.home() / ".decker" / "decker.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS key_assignments (
@@ -31,21 +36,36 @@ class KeyAssignment:
     settings: dict[str, Any]
 
 
-class KeyAssignmentStore:
+class KeyAssignmentStore(Manager):
     """Persists and retrieves key→action mappings from decker.db."""
 
     def __init__(self, db_path: str | Path = _DEFAULT_DB_PATH) -> None:
         self._lock = threading.Lock()
         self._db_path = Path(db_path)
+        self._conn: sqlite3.Connection | None = None
+
+    def create(self, context: "ServerContext") -> None:
+        """Open the SQLite connection and initialise the schema."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        self._conn.execute(_SCHEMA)
-        self._conn.commit()
+        self._db.execute(_SCHEMA)
+        self._db.commit()
+
+    def destroy(self) -> None:
+        """Close the database connection."""
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    @property
+    def _db(self) -> sqlite3.Connection:
+        assert self._conn is not None, "KeyAssignmentStore.create() must be called before use"
+        return self._conn
 
     def assign(self, device_id: str, key_index: int, target: ActionTarget, settings: dict[str, Any]) -> None:
         """Persist an assignment, replacing any previous one for this slot."""
         with self._lock:
-            self._conn.execute(
+            self._db.execute(
                 """
                 INSERT INTO key_assignments
                     (device_id, key_index, plugin_uuid, action_uuid, context_id, settings)
@@ -58,21 +78,21 @@ class KeyAssignmentStore:
                 """,
                 (device_id, key_index, target.plugin_uuid, target.action_uuid, target.context_id, json.dumps(settings)),
             )
-            self._conn.commit()
+            self._db.commit()
 
     def unassign(self, device_id: str, key_index: int) -> None:
         """Remove the assignment for this slot. No-op if unassigned."""
         with self._lock:
-            self._conn.execute(
+            self._db.execute(
                 "DELETE FROM key_assignments WHERE device_id = ? AND key_index = ?",
                 (device_id, key_index),
             )
-            self._conn.commit()
+            self._db.commit()
 
     def get(self, device_id: str, key_index: int) -> KeyAssignment | None:
         """Return the active assignment for this slot, or None if unassigned."""
         with self._lock:
-            row = self._conn.execute(
+            row = self._db.execute(
                 "SELECT plugin_uuid, action_uuid, context_id, settings FROM key_assignments WHERE device_id = ? AND key_index = ?",
                 (device_id, key_index),
             ).fetchone()
@@ -86,17 +106,17 @@ class KeyAssignmentStore:
     def update_settings(self, device_id: str, key_index: int, settings: dict[str, Any]) -> bool:
         """Overwrite settings for an existing assignment. Returns False if slot is unassigned."""
         with self._lock:
-            cursor = self._conn.execute(
+            cursor = self._db.execute(
                 "UPDATE key_assignments SET settings = ? WHERE device_id = ? AND key_index = ?",
                 (json.dumps(settings), device_id, key_index),
             )
-            self._conn.commit()
+            self._db.commit()
         return cursor.rowcount > 0
 
     def all_for_device(self, device_id: str) -> list[tuple[int, KeyAssignment]]:
         """Return all assignments for a device as (key_index, assignment) pairs."""
         with self._lock:
-            rows = self._conn.execute(
+            rows = self._db.execute(
                 "SELECT key_index, plugin_uuid, action_uuid, context_id, settings FROM key_assignments WHERE device_id = ?",
                 (device_id,),
             ).fetchall()
@@ -112,7 +132,3 @@ class KeyAssignmentStore:
             )
             result.append((key_index, KeyAssignment(target=target, settings=json.loads(settings_json))))
         return result
-
-    def close(self) -> None:
-        """Close the underlying database connection."""
-        self._conn.close()

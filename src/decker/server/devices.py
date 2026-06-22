@@ -2,9 +2,21 @@
 
 import logging
 import zlib
-from typing import Any
+from dataclasses import dataclass
 
 from StreamDeck.DeviceManager import DeviceManager
+
+
+@dataclass
+class DeviceHardwareInfo:
+    """Hardware info for a Stream Deck device."""
+
+    id: str | None
+    type: str
+    vendor_id: int
+    product_id: int
+    keys: int
+    serial: str | None
 
 
 def device_id_for_serial(serial: str) -> str:
@@ -12,7 +24,7 @@ def device_id_for_serial(serial: str) -> str:
     return format(zlib.crc32(serial.encode()) & 0xFFFFFFFF, "08x")
 
 
-def list_devices() -> list[dict[str, Any]]:
+def list_devices() -> list[DeviceHardwareInfo]:
     """Return info for every connected Stream Deck device.
 
     Each device is opened briefly to read its serial number, then closed.
@@ -27,19 +39,19 @@ def list_devices() -> list[dict[str, Any]]:
 
     result = []
     for deck in decks:
-        info: dict[str, Any] = {
-            "id": None,
-            "type": deck.deck_type(),
-            "vendor_id": deck.vendor_id(),
-            "product_id": deck.product_id(),
-            "keys": deck.key_count(),
-            "serial": None,
-        }
+        info: DeviceHardwareInfo = DeviceHardwareInfo(
+            id=None,
+            type=deck.deck_type(),
+            vendor_id=deck.vendor_id(),
+            product_id=deck.product_id(),
+            keys=deck.key_count(),
+            serial=None,
+        )
         try:
             deck.open()
             serial = deck.get_serial_number()
-            info["serial"] = serial
-            info["id"] = device_id_for_serial(serial)
+            info.serial = serial
+            info.id = device_id_for_serial(serial)
         except Exception as e:
             logging.warning("Could not open device to read serial: %s", e)
         finally:

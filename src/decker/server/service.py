@@ -1,45 +1,66 @@
 """RPyC service definition for the Decker server."""
 
+import dataclasses
 import inspect
 import json
 import logging
 import threading
 import time
-from typing import Any
+from dataclasses import dataclass
+from enum import Enum, StrEnum
+from typing import TYPE_CHECKING, Any
 
-import rpyc
 from rpyc.core.service import Service
-from rpyc.utils.server import ThreadPoolServer
+from rpyc.utils import exposed
 
 from decker.plugin.context import ActionTarget
 from decker.server.devices import list_devices
-from decker.server.key_assignments import KeyAssignmentStore
-from decker.server.plugins import PluginManager
+
+if TYPE_CHECKING:
+    from decker.server.server_context import ServerContext
 
 _LONG_PRESS_HOLD_S = 0.6
+
+
+def _to_wire(obj: Any) -> Any:
+    """Recursively convert a dataclass to brine-safe plain Python types for RPyC.
+
+    Brine uses exact type matching, so StrEnum members (and other Enum subclasses)
+    cannot be serialized directly — they must be reduced to their .value first.
+    """
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return {f.name: _to_wire(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
+    if isinstance(obj, Enum):
+        return obj.value
+    if isinstance(obj, list):
+        return [_to_wire(i) for i in obj]
+    return obj
+
+
+class DeckerStatusEnum(StrEnum):
+    """Status values for the Decker service."""
+
+    HEALTHY = "healthy"
+    UNHEALTHY = "unhealthy"
+
+
+@dataclass
+class DeckerServiceStatus:
+    """Structured status information for the DeckerService."""
+
+    service_status: DeckerStatusEnum
+    last_heartbeat: float
 
 
 class DeckerService(Service):
     """RPyC service exposed to clients for controlling the Decker application."""
 
-    _rpyc_server: ThreadPoolServer | None = None
-    _plugin_manager: PluginManager | None = None
-    _key_assignment_store: KeyAssignmentStore | None = None
+    _context: "ServerContext | None" = None
 
     @classmethod
-    def configure_server(cls, server: ThreadPoolServer) -> None:
-        """Bind the shared ThreadPoolServer instance before clients connect."""
-        cls._rpyc_server = server
-
-    @classmethod
-    def configure_plugin_manager(cls, plugin_manager: PluginManager) -> None:
-        """Bind the shared PluginManager instance before clients connect."""
-        cls._plugin_manager = plugin_manager
-
-    @classmethod
-    def configure_key_assignment_store(cls, store: KeyAssignmentStore) -> None:
-        """Bind the shared KeyAssignmentStore before clients connect."""
-        cls._key_assignment_store = store
+    def configure_context(cls, context: "ServerContext") -> None:
+        """Bind the ServerContext singleton before clients connect."""
+        cls._context = context
 
     def __init__(self) -> None:
         """Initialize the Decker service."""
@@ -54,53 +75,43 @@ class DeckerService(Service):
         """Handle client disconnection."""
         logging.info("Client disconnected from Decker service")
 
-    @rpyc.utils.exposed
+    @exposed
     def stop(self) -> bool:
         """Gracefully shut down the server. The monitor exits on detecting a clean shutdown."""
-        if self._rpyc_server is None:
+        if self._context is None:
+            logging.warning("No context configured, cannot stop")
+            return False
+
+        if self._context.server is None:
             logging.error("Server reference not configured")
             return False
 
         def _shutdown() -> None:
             time.sleep(0.1)
-            self._rpyc_server.close()  # type: ignore[union-attr]
+            self._context.server.close()  # type: ignore[union-attr]
 
         threading.Thread(target=_shutdown, daemon=True).start()
         logging.info("Server shutdown scheduled")
         return True
 
-    @rpyc.utils.exposed
+    @exposed
     def heartbeat(self) -> dict[str, Any]:
-        """
-        Respond to a health-check ping from the monitor.
-
-        Returns:
-            dict[str, Any]: Health status information.
-        """
+        """Respond to a health-check ping from the monitor."""
         self._last_heartbeat = time.time()
-        return {"status": "healthy", "timestamp": self._last_heartbeat}
+        return self.status()
 
-    @rpyc.utils.exposed
+    @exposed
     def status(self) -> dict[str, Any]:
-        """
-        Get detailed service status.
+        """Return service status serialized from DeckerServiceStatus."""
+        status = DeckerServiceStatus(service_status=DeckerStatusEnum.HEALTHY, last_heartbeat=self._last_heartbeat)
+        return _to_wire(status)
 
-        Returns:
-            dict[str, Any]: Detailed status information.
-        """
-        return {"service_status": "running", "last_heartbeat": self._last_heartbeat}
-
-    @rpyc.utils.exposed
+    @exposed
     def devices_list(self) -> list[dict[str, Any]]:
-        """
-        List all connected Stream Deck devices.
+        """List all connected Stream Deck devices."""
+        return [_to_wire(info) for info in list_devices()]
 
-        Returns:
-            list[dict[str, Any]]: One entry per device with id, type, keys, serial, vendor_id, product_id.
-        """
-        return list_devices()
-
-    @rpyc.utils.exposed
+    @exposed
     def plugins_load_failures(self) -> list[dict[str, str]]:
         """
         List plugins that failed to load at startup.
@@ -108,11 +119,11 @@ class DeckerService(Service):
         Returns:
             list[dict[str, str]]: One entry per failed plugin with plugin_uuid and error.
         """
-        if self._plugin_manager is None:
+        if self._context is None:
             return []
-        return [{"plugin_uuid": f.plugin_uuid, "error": f.error} for f in self._plugin_manager.load_failures()]
+        return [{"plugin_uuid": f.plugin_uuid, "error": f.error} for f in self._context.plugin_manager.load_failures()]
 
-    @rpyc.utils.exposed
+    @exposed
     def plugins_actions_list(self) -> list[dict[str, str]]:
         """
         List every action declared across all loaded plugin manifests.
@@ -120,11 +131,11 @@ class DeckerService(Service):
         Returns:
             list[dict[str, str]]: One entry per action with plugin_uuid, plugin_name, action_uuid, action_name.
         """
-        if self._plugin_manager is None:
+        if self._context is None:
             return []
-        return self._plugin_manager.list_actions()
+        return self._context.plugin_manager.list_actions()
 
-    @rpyc.utils.exposed
+    @exposed
     def key_assign(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         device_id: str,
@@ -140,7 +151,7 @@ class DeckerService(Service):
         Returns:
             bool: True if the action was activated successfully.
         """
-        if self._plugin_manager is None or self._key_assignment_store is None:
+        if self._context is None:
             return False
         settings: dict[str, Any] = json.loads(settings_json)
         target = ActionTarget(
@@ -150,16 +161,18 @@ class DeckerService(Service):
             device_id=device_id,
             key_index=key_index,
         )
-        existing = self._key_assignment_store.get(device_id, key_index)
+        key_store = self._context.key_assignment_store
+        pm = self._context.plugin_manager
+        dm = self._context.device_manager
+        existing = key_store.get(device_id, key_index)
         if existing is not None:
-            self._plugin_manager.deactivate_action(existing.target)
-        self._key_assignment_store.assign(device_id, key_index, target, settings)
-        if self._plugin_manager._device_runner is not None:  # pylint: disable=protected-access
-            self._plugin_manager._device_runner.open_device(device_id)  # pylint: disable=protected-access
-        self._plugin_manager.activate_action(target)
+            pm.deactivate_action(existing.target)
+        key_store.assign(device_id, key_index, target, settings)
+        dm.get_device(device_id)
+        pm.activate_action(target)
         return True
 
-    @rpyc.utils.exposed
+    @exposed
     def key_unassign(self, device_id: str, key_index: int) -> bool:
         """
         Remove a plugin action from a key slot and deactivate it.
@@ -167,16 +180,17 @@ class DeckerService(Service):
         Returns:
             bool: True if an assignment existed and was removed.
         """
-        if self._plugin_manager is None or self._key_assignment_store is None:
+        if self._context is None:
             return False
-        assignment = self._key_assignment_store.get(device_id, key_index)
+        key_store = self._context.key_assignment_store
+        assignment = key_store.get(device_id, key_index)
         if assignment is None:
             return False
-        self._plugin_manager.deactivate_action(assignment.target)
-        self._key_assignment_store.unassign(device_id, key_index)
+        self._context.plugin_manager.deactivate_action(assignment.target)
+        key_store.unassign(device_id, key_index)
         return True
 
-    @rpyc.utils.exposed
+    @exposed
     def key_update_settings(self, device_id: str, key_index: int, settings_json: str) -> bool:
         """
         Update per-key action settings and notify the plugin via on_settings_changed.
@@ -184,22 +198,23 @@ class DeckerService(Service):
         Returns:
             bool: True if the slot was assigned and settings were persisted.
         """
-        if self._plugin_manager is None or self._key_assignment_store is None:
+        if self._context is None:
             return False
         settings: dict[str, Any] = json.loads(settings_json)
-        updated = self._key_assignment_store.update_settings(device_id, key_index, settings)
+        key_store = self._context.key_assignment_store
+        updated = key_store.update_settings(device_id, key_index, settings)
         if not updated:
             return False
-        assignment = self._key_assignment_store.get(device_id, key_index)
+        assignment = key_store.get(device_id, key_index)
         if assignment is None:
             return False
-        self._plugin_manager._settings_store.set_settings(  # pylint: disable=protected-access
+        self._context.plugin_manager._settings_store.set_settings(  # pylint: disable=protected-access
             assignment.target.plugin_uuid, assignment.target.action_uuid, assignment.target.context_id, settings
         )
-        self._plugin_manager.dispatch_settings_changed(assignment.target)
+        self._context.plugin_manager.dispatch_settings_changed(assignment.target)
         return True
 
-    @rpyc.utils.exposed
+    @exposed
     def key_get_display_states(self, device_id: str) -> list[dict[str, Any]]:
         """
         Return display labels for all assigned keys on this device, including assignment metadata.
@@ -208,13 +223,13 @@ class DeckerService(Service):
             list[dict[str, Any]]: One entry per assigned key with key_index, label, plugin_uuid,
             action_uuid, context_id, and settings.
         """
-        if self._plugin_manager is None or self._key_assignment_store is None:
+        if self._context is None:
             return []
-        label_map: dict[int, str] = {
-            s["key_index"]: s["label"] for s in self._plugin_manager.get_key_display_states(device_id)
-        }
+        pm = self._context.plugin_manager
+        key_store = self._context.key_assignment_store
+        label_map: dict[int, str] = {s["key_index"]: s["label"] for s in pm.get_key_display_states(device_id)}
         result = []
-        for key_index, assignment in self._key_assignment_store.all_for_device(device_id):
+        for key_index, assignment in key_store.all_for_device(device_id):
             result.append(
                 {
                     "key_index": key_index,
@@ -227,7 +242,7 @@ class DeckerService(Service):
             )
         return result
 
-    @rpyc.utils.exposed
+    @exposed
     def key_simulate_press(self, device_id: str, key_index: int) -> bool:
         """
         Simulate a short key press (key_down immediately followed by key_up).
@@ -237,7 +252,7 @@ class DeckerService(Service):
         """
         return self._simulate_press(device_id, key_index, long_press=False)
 
-    @rpyc.utils.exposed
+    @exposed
     def key_simulate_long_press(self, device_id: str, key_index: int) -> bool:
         """
         Simulate a long key press (key_down, hold for 600 ms, then key_up).
@@ -247,7 +262,7 @@ class DeckerService(Service):
         """
         return self._simulate_press(device_id, key_index, long_press=True)
 
-    @rpyc.utils.exposed
+    @exposed
     def commands(self) -> dict[str, dict[str, str]]:
         """Return metadata for all user-defined exposed commands."""
         result: dict[str, dict[str, str]] = {}
@@ -265,19 +280,42 @@ class DeckerService(Service):
             }
         return result
 
+    @exposed
+    def set_image(self, device_id: str, key_index: int, image_bytes: bytes) -> bool:
+        """
+        Set the image on a key from raw bytes of a PNG file.
+
+        Returns:
+            bool: True if the image was sent to an open device, False if the device is not open.
+        """
+        logging.info(
+            "Received set_image command for device %s key %d with %d bytes", device_id, key_index, len(image_bytes)
+        )
+        if self._context is None or self._context.device_manager is None:
+            logging.warning("Context not initialized")
+            return False
+        device = self._context.device_manager.get_device(device_id)
+        if device is None:
+            logging.warning("DeckerService.set_image: device %s not open", device_id)
+            return False
+
+        device.set_image_bytes(key_index, image_bytes)
+        return True
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
     def _simulate_press(self, device_id: str, key_index: int, long_press: bool) -> bool:
-        if self._plugin_manager is None or self._key_assignment_store is None:
+        if self._context is None:
             return False
-        assignment = self._key_assignment_store.get(device_id, key_index)
+        key_store = self._context.key_assignment_store
+        assignment = key_store.get(device_id, key_index)
         if assignment is None:
             return False
         target = assignment.target
-        self._plugin_manager.dispatch_key_down(target)
+        self._context.plugin_manager.dispatch_key_down(target)
         if long_press:
             time.sleep(_LONG_PRESS_HOLD_S)
-        self._plugin_manager.dispatch_key_up(target)
+        self._context.plugin_manager.dispatch_key_up(target)
         return True

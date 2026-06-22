@@ -4,10 +4,11 @@ import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from decker.asset.renderer import AssetRenderer
 from decker.common import config
+from decker.common.manager import Manager
 from decker.plugin.context import ActionContext, ActionTarget
 from decker.plugin.elgato.bridge import DEFAULT_PORT as ELGATO_BRIDGE_PORT
 from decker.plugin.elgato.bridge import ElgatoBridge
@@ -24,11 +25,14 @@ from decker.plugin.native_loader import LoadedNativePlugin
 from decker.plugin.registry import ActionRegistry
 from decker.plugin.settings_store import PluginSettingsStore
 
+if TYPE_CHECKING:
+    from decker.server.server_context import ServerContext
+
 _BUNDLED_PLUGINS_DIR = Path(__file__).parent.parent / "bundled_plugins"
 
 
 class _StreamDeckHardwareSink:
-    """Applies hardware effects via DeviceRunner; falls back gracefully if no device is open.
+    """Applies hardware effects via DeviceManager; falls back gracefully if no device is open.
 
     set_title is deliberately lightweight — it stores the label in the shared label dict
     for client polling instead of rendering text to hardware (the plugin handles its own
@@ -37,19 +41,19 @@ class _StreamDeckHardwareSink:
 
     def __init__(
         self,
-        device_runner: Any,  # DeviceRunner | None — avoid circular import at module level
+        device_manager: Any,  # DeviceManager | None — avoid circular import at module level
         label_setter: Callable[[str, int, str], None],
     ) -> None:
-        self._device_runner = device_runner
+        self._device_manager = device_manager
         self._label_setter = label_setter
         self._renderer = AssetRenderer()
 
     def set_image(self, device_id: str, key_index: int, image: bytes) -> None:
         """Render image (SVG/PNG/JPEG bytes) on the given device's key."""
-        if self._device_runner is not None:
-            self._device_runner.set_image_bytes(device_id, key_index, image)
+        if self._device_manager is not None:
+            self._device_manager.set_image_bytes(device_id, key_index, image)
         else:
-            logging.debug("set_image: no DeviceRunner available")
+            logging.debug("set_image: no DeviceManager available")
 
     def set_title(self, device_id: str, key_index: int, title: str) -> None:
         """Store the display label for client polling (hardware text not rendered)."""
@@ -68,7 +72,7 @@ class _StreamDeckHardwareSink:
         logging.debug("show_ok(%s, %d): not implemented", device_id, key_index)
 
 
-class PluginManager:  # pylint: disable=too-many-instance-attributes
+class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
     """Owned by the server: discovers plugins at startup and dispatches their callbacks."""
 
     def __init__(self, plugins_dir: Path | None = None) -> None:
@@ -85,17 +89,14 @@ class PluginManager:  # pylint: disable=too-many-instance-attributes
         self._elgato_live_contexts: dict[str, set[str]] = {}
         self._key_labels: dict[str, dict[int, str]] = {}  # device_id → {key_index → label}
         self._labels_lock = threading.Lock()
-        self._device_runner: Any = None  # set via set_device_runner before start()
+        self._device_manager: Any = None
         self._sink: _StreamDeckHardwareSink = _StreamDeckHardwareSink(None, self._set_key_label)
 
-    def set_device_runner(self, device_runner: Any) -> None:
-        """Inject the DeviceRunner. Call before start()."""
-        self._device_runner = device_runner
-        self._sink = _StreamDeckHardwareSink(device_runner, self._set_key_label)
+    def create(self, context: "ServerContext") -> None:
+        """Wire up the device manager, scan and load plugins, then start the Elgato bridge."""
+        self._device_manager = context.device_manager
+        self._sink = _StreamDeckHardwareSink(self._device_manager, self._set_key_label)
         self._bridge = ElgatoBridge(self._sink, self._settings_store)
-
-    def start(self) -> None:
-        """Scan and load plugins (bundled first, then user), then start the Elgato bridge."""
         bundled = self._bundled_loader.scan()
         user = self._user_loader.scan()
         self._failures = bundled.failures + user.failures
@@ -103,8 +104,6 @@ class PluginManager:  # pylint: disable=too-many-instance-attributes
             self._native_plugins[loaded.manifest.uuid] = loaded
         for discovered in bundled.elgato + user.elgato:
             self._elgato_plugins[discovered.manifest.uuid] = discovered
-        if self._bridge is None:
-            self._bridge = ElgatoBridge(self._sink, self._settings_store)
         self._bridge.start()
         logging.info(
             "PluginManager started: %d native, %d Elgato, %d failed to load",
@@ -113,7 +112,7 @@ class PluginManager:  # pylint: disable=too-many-instance-attributes
             len(self._failures),
         )
 
-    def stop(self) -> None:
+    def destroy(self) -> None:
         """Stop the Elgato bridge, plugin subprocesses, and release resources."""
         for process in self._elgato_processes.values():
             process.stop()
@@ -122,8 +121,6 @@ class PluginManager:  # pylint: disable=too-many-instance-attributes
             self._bridge.stop()
         self._executor.shutdown()
         self._settings_store.close()
-        if self._device_runner is not None:
-            self._device_runner.close_all()
 
     def load_failures(self) -> list[PluginLoadFailedEvent]:
         """Return the plugins that failed to load at startup."""

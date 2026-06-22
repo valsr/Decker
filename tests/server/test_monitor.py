@@ -8,6 +8,7 @@ import pytest
 from assertpy import assert_that
 
 from decker.server.monitor import ServerMonitor, _read_rss_bytes
+from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
 
 
 class TestReadRssBytes:
@@ -59,12 +60,13 @@ def _make_monitor() -> ServerMonitor:
 
 
 class TestServerMonitorStatus:
-    def test_status_includes_expected_keys(self):
+    def test_status_includes_expected_fields(self):
         m = _make_monitor()
         m._server.pid = 1234  # type: ignore[misc]  # pylint: disable=protected-access
         s = m.status()
-        assert_that(s).contains_key("pid", "failed_heartbeats", "max_failed_heartbeats")
-        assert_that(s["pid"]).is_equal_to(1234)
+        assert_that(s.pid).is_equal_to(1234)
+        assert_that(s.failed_heartbeats).is_equal_to(0)
+        assert_that(s.max_failed_heartbeats).is_greater_than(0)
 
 
 class TestServerMonitorHeartbeat:
@@ -72,7 +74,8 @@ class TestServerMonitorHeartbeat:
         m = _make_monitor()
         m._failed_heartbeats = 2  # pylint: disable=protected-access
         with patch("decker.server.monitor.API") as mock_api:
-            mock_api.request.return_value = {"status": "healthy"}
+            healthy = DeckerServiceStatus(service_status=DeckerStatusEnum.HEALTHY, last_heartbeat=0.0)
+            mock_api.request_as.side_effect = lambda t, fn, *a, **kw: healthy if fn == "heartbeat" else None
             result = m._heartbeat_ok()  # pylint: disable=protected-access
         assert_that(result).is_true()
         assert_that(m._failed_heartbeats).is_equal_to(0)  # pylint: disable=protected-access
@@ -80,7 +83,7 @@ class TestServerMonitorHeartbeat:
     def test_heartbeat_failure_increments_count(self):
         m = _make_monitor()
         with patch("decker.server.monitor.API") as mock_api:
-            mock_api.request.side_effect = ConnectionRefusedError("refused")
+            mock_api.request_as.side_effect = ConnectionRefusedError("refused")
             result = m._heartbeat_ok()  # pylint: disable=protected-access
         assert_that(m._failed_heartbeats).is_equal_to(1)  # pylint: disable=protected-access
         assert_that(result).is_true()  # still under threshold (3)
@@ -89,14 +92,14 @@ class TestServerMonitorHeartbeat:
         m = _make_monitor()
         m._failed_heartbeats = 2  # pylint: disable=protected-access
         with patch("decker.server.monitor.API") as mock_api:
-            mock_api.request.side_effect = ConnectionRefusedError("refused")
+            mock_api.request_as.side_effect = ConnectionRefusedError("refused")
             result = m._heartbeat_ok()  # pylint: disable=protected-access
         assert_that(result).is_false()
 
     def test_unexpected_heartbeat_response_counts_as_failure(self):
         m = _make_monitor()
         with patch("decker.server.monitor.API") as mock_api:
-            mock_api.request.return_value = {"status": "unknown"}
+            mock_api.request_as.return_value = None
             result = m._heartbeat_ok()  # pylint: disable=protected-access
         assert_that(m._failed_heartbeats).is_equal_to(1)  # pylint: disable=protected-access
 
@@ -151,7 +154,7 @@ class TestServerMonitorCheckOnce:
         m._server.is_running = True  # type: ignore[misc]  # pylint: disable=protected-access
         m._failed_heartbeats = 3  # already at/past max  # pylint: disable=protected-access
         with patch("decker.server.monitor.API") as mock_api:
-            mock_api.request.side_effect = ConnectionRefusedError("refused")
+            mock_api.request_as.side_effect = ConnectionRefusedError("refused")
             m._check_once()  # pylint: disable=protected-access
         m._server.stop.assert_called()  # type: ignore[attr-defined]
 
@@ -164,7 +167,9 @@ class TestServerMonitorCheckOnce:
             patch("decker.server.monitor.API") as mock_api,
             patch("decker.server.monitor._read_rss_bytes", return_value=999999999),
         ):
-            mock_api.request.return_value = {"status": "healthy"}
+            mock_api.request_as.return_value = DeckerServiceStatus(
+                service_status=DeckerStatusEnum.HEALTHY, last_heartbeat=0.0
+            )
             m._check_once()  # pylint: disable=protected-access
         m._server.stop.assert_called()  # type: ignore[attr-defined]
 

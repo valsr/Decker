@@ -51,13 +51,13 @@ class NamespaceFilter(logging.Filter):
 
     def __init__(self):
         super().__init__()
-        self.base_path = os.path.dirname(os.path.abspath(__file__))
+        self.base_path = os.path.dirname(os.path.abspath(os.path.join(__file__, "..")))
 
     def filter(self, record: logging.LogRecord):
         if record.pathname.startswith(self.base_path):
             record.namespace = record.pathname[len(self.base_path) + 1 : -3].replace(os.path.sep, ".")
         else:
-            record.namespace = "Unknown module ({record.pathname})"
+            record.namespace = f"Unknown module ({record.pathname})"
         return True
 
 

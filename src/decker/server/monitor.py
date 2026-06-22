@@ -2,11 +2,13 @@
 
 import logging
 import time
-from typing import Any
+from dataclasses import dataclass
 
 from decker.common import config
 from decker.common.api import API
+from decker.server.devices import DeviceHardwareInfo
 from decker.server.server import ServerProcess
+from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
 
 
 def _read_rss_bytes(pid: int) -> int | None:
@@ -21,9 +23,20 @@ def _read_rss_bytes(pid: int) -> int | None:
                 if line.startswith("VmRSS:"):
                     # "VmRSS:   123456 kB"
                     return int(line.split()[1]) * 1024
-    except (FileNotFoundError, PermissionError, ValueError, OSError):
-        pass
+    except (FileNotFoundError, PermissionError, ValueError, OSError) as e:
+        logging.warning("Could not read RSS for pid %d - %s", pid, type(e).__name__)
     return None
+
+
+@dataclass
+class ServerStatus:
+    """Structured status information about the server process."""
+
+    pid: int | None
+    failed_heartbeats: int
+    max_failed_heartbeats: int
+    monitor_interval: float
+    memory_limit_bytes: int
 
 
 class ServerMonitor:
@@ -67,15 +80,15 @@ class ServerMonitor:
         logging.info("Stopping Decker server monitor")
         return self._server.stop()
 
-    def status(self) -> dict[str, Any]:
+    def status(self) -> ServerStatus:
         """Return current monitor status."""
-        return {
-            "pid": self._server.pid,
-            "failed_heartbeats": self._failed_heartbeats,
-            "max_failed_heartbeats": self._max_failed_heartbeats,
-            "monitor_interval": self._interval,
-            "memory_limit_bytes": self._memory_limit,
-        }
+        return ServerStatus(
+            pid=self._server.pid if self._server else None,
+            failed_heartbeats=self._failed_heartbeats,
+            max_failed_heartbeats=self._max_failed_heartbeats,
+            monitor_interval=self._interval,
+            memory_limit_bytes=self._memory_limit,
+        )
 
     # ------------------------------------------------------------------
     # Internal monitoring loop
@@ -119,18 +132,50 @@ class ServerMonitor:
     def _heartbeat_ok(self) -> bool:
         """Send a heartbeat and return True while the server is still within its failure budget."""
         try:
-            response = API.request("heartbeat")
-            if response is not None and response.get("status") == "healthy":
+            response = API.request_as(DeckerServiceStatus, "heartbeat")
+            logging.debug("Heartbeat response: %s", response)
+            logging.debug(
+                "response.service_status == DeckerStatusEnum.HEALTHY: %s",
+                response.service_status == DeckerStatusEnum.HEALTHY,
+            )
+            if response is not None and response.service_status == DeckerStatusEnum.HEALTHY:
                 self._failed_heartbeats = 0
                 logging.debug("Heartbeat OK")
+                # TODO: DEMO-ONLY: Remove this log and return False if the service status is unhealthy, to test auto-restart.
+                self._do_demo()
                 return True
-            logging.warning("Unexpected heartbeat response: %s", response)
         except Exception as e:
             logging.warning("Heartbeat failed: %s", e)
 
         self._failed_heartbeats += 1
         logging.warning("Failed heartbeats: %d/%d", self._failed_heartbeats, self._max_failed_heartbeats)
         return self._failed_heartbeats < self._max_failed_heartbeats
+
+    def _do_demo(self) -> None:
+        """DEMO-ONLY:"""
+        try:
+            logging.info("DEMO: Send a draw command to a random button")
+            # first find the device IDs so we can target a real button (instead of "random"), but ignore any errors since this is just a demo
+            devices = API.request_as(
+                list[DeviceHardwareInfo], "devices_list"
+            )  # ignore errors and response since this is just a demo
+            if not devices:
+                logging.warning("DEMO: No devices found, skipping draw command")
+                return
+
+            device_id = devices[0].id
+            if not device_id:
+                logging.warning("DEMO: No device_id found in first device, skipping draw command")
+                return
+
+            # Generate a simple image (red square) and send it to the first key of the first device, ignoring any errors since this is just a demo
+            from PIL import Image
+
+            img = Image.new("RGB", (72, 72), color="red")
+            img_bytes = img.tobytes()
+            API.request("set_image", device_id, 0, img_bytes)
+        except Exception as e:
+            logging.warning("DEMO command failed: %s", e)
 
     def _memory_ok(self) -> bool:
         """Return False if the server's RSS exceeds the configured limit."""

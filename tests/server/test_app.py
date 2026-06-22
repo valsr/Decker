@@ -21,10 +21,6 @@ class TestCreateParser:
         assert_that(actions).contains_key("verbose")
         assert_that(actions["verbose"].default).is_equal_to(0)
 
-    def test_has_dev_argument(self):
-        actions = {a.dest: a for a in create_parser()._actions}  # pylint: disable=protected-access
-        assert_that(actions).contains_key("dev")
-
 
 class TestMain:
     @patch("decker.server.app.ServerMonitor")

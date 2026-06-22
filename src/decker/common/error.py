@@ -1,3 +1,17 @@
+import logging
+from typing import Never
+
+
+def raise_logged(exc: Exception, log: bool = True, logger: logging.Logger | None = None) -> Never:
+    """Raise exc, optionally logging it at ERROR level first.
+
+    The log record points to the caller's line, not this function.
+    """
+    if log:
+        (logger or logging.getLogger()).error(str(exc), stacklevel=2)
+    raise exc
+
+
 class DeckerError(Exception):
     """
     Custom exception class for Decker-related errors.

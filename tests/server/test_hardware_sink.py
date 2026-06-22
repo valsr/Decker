@@ -5,25 +5,25 @@ from assertpy import assert_that
 from decker.server.plugins import _StreamDeckHardwareSink
 
 
-def _make_sink(device_runner=None):
+def _make_sink(device_manager=None):
     labels: dict[tuple[str, int], str] = {}
 
     def _label_setter(device_id: str, key_index: int, label: str) -> None:
         labels[(device_id, key_index)] = label
 
-    sink = _StreamDeckHardwareSink(device_runner=device_runner, label_setter=_label_setter)
+    sink = _StreamDeckHardwareSink(device_manager=device_manager, label_setter=_label_setter)
     return sink, labels
 
 
 class TestStreamDeckHardwareSink:
-    def test_set_image_delegates_to_device_runner(self):
-        runner = MagicMock()
-        sink, _ = _make_sink(device_runner=runner)
+    def test_set_image_delegates_to_device_manager(self):
+        dm = MagicMock()
+        sink, _ = _make_sink(device_manager=dm)
         sink.set_image("dev1", 3, b"imgbytes")
-        runner.set_image_bytes.assert_called_once_with("dev1", 3, b"imgbytes")
+        dm.set_image_bytes.assert_called_once_with("dev1", 3, b"imgbytes")
 
-    def test_set_image_no_runner_does_not_raise(self):
-        sink, _ = _make_sink(device_runner=None)
+    def test_set_image_no_manager_does_not_raise(self):
+        sink, _ = _make_sink(device_manager=None)
         sink.set_image("dev1", 0, b"imgbytes")  # should not raise
 
     def test_set_title_stores_label(self):

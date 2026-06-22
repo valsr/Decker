@@ -32,16 +32,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="count",
         default=0,
-        help=(
-            "Increase logging verbosity. Specify once for INFO, twice for DEBUG. "
-            "Defaults to WARNING if not provided."
-        ),
-    )
-    parser.add_argument(
-        "-d",
-        "--dev",
-        action="store_true",
-        help="Run the application in development mode.",
+        help=("Increase logging verbosity. Specify once for INFO, twice for DEBUG. Defaults to WARNING."),
     )
 
     return parser
@@ -60,7 +51,7 @@ def main() -> None:
         level = logging.WARNING
 
     decker.common.logging.configure(level=level, log_directory=os.getcwd())
-    logging.debug(args)
+    logging.debug("Arguments received: %s", args)
 
     monitor = ServerMonitor()
     try:
