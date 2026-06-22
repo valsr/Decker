@@ -5,27 +5,40 @@ import shutil
 import uuid as uuid_lib
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from decker.asset.manifest import (
     IconPackManifest,
     IconPackValidationError,
     validate_icons_json,
 )
-from decker.asset.paths import ICONPACKS_DIR
+from decker.asset.paths import ICONPACKS_DIR, ensure_asset_dirs
 from decker.asset.store import IconPackStore
+from decker.common.manager import Manager
+
+if TYPE_CHECKING:
+    from decker.server.server_context import ServerContext
 
 
 class IconPackError(Exception):
     """An icon pack operation failed."""
 
 
-class IconPackManager:
+class IconPackManager(Manager):
     """Handles icon pack install/list/remove and manual drop-in detection."""
 
     def __init__(self, store: IconPackStore | None = None, packs_dir: Path | None = None) -> None:
         self._store = store or IconPackStore()
         self._packs_dir = packs_dir or ICONPACKS_DIR
+
+    def create(self, context: "ServerContext") -> None:
+        """Ensure asset directories exist and register any on-disk drop-ins."""
         self._packs_dir.mkdir(parents=True, exist_ok=True)
+        ensure_asset_dirs()
+        self.discover_manual_dropins()
+
+    def destroy(self) -> None:
+        """No-op: IconPackManager holds no open resources."""
 
     def install(self, source: str | Path) -> Path:
         """Install a .sdIconPack folder or .streamDeckIconPack ZIP. Raises IconPackError on failure."""

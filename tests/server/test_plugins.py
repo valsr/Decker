@@ -62,14 +62,20 @@ def plugins_dir(tmp_path):
     return tmp_path
 
 
+def _mock_context() -> MagicMock:
+    ctx = MagicMock()
+    ctx.device_manager = MagicMock()
+    return ctx
+
+
 @pytest.fixture
 def manager(tmp_path, plugins_dir):
     mgr = PluginManager(plugins_dir)
     mgr._settings_store = mgr._settings_store.__class__(tmp_path / "plugins.db")  # pylint: disable=protected-access
+    mgr.create(_mock_context())
     mgr._sink = MagicMock()  # pylint: disable=protected-access
-    mgr.start()
     yield mgr
-    mgr.stop()
+    mgr.destroy()
 
 
 _ELGATO_MANIFEST = {
@@ -107,10 +113,10 @@ def elgato_manager(tmp_path, plugins_dir, monkeypatch):
 
     mgr = PluginManager(plugins_dir)
     mgr._settings_store = mgr._settings_store.__class__(tmp_path / "plugins.db")  # pylint: disable=protected-access
-    mgr.start()
+    mgr.create(_mock_context())
     mgr.process_instances = process_instances  # type: ignore[attr-defined]
     yield mgr
-    mgr.stop()
+    mgr.destroy()
 
 
 def _wait_for(predicate, timeout=2.0):

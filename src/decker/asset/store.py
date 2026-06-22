@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-from decker.common.db import DB_PATH as _DEFAULT_DB_PATH
+_DEFAULT_DB_PATH = Path.home() / ".decker" / "decker.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS iconpacks (

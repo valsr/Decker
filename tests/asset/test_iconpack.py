@@ -1,5 +1,6 @@
 import json
 import zipfile
+from unittest.mock import MagicMock
 
 import pytest
 from assertpy import assert_that
@@ -14,7 +15,9 @@ _ICONS = {"icon1": "icon1.svg"}
 def _make_manager(tmp_path):
     store = IconPackStore(tmp_path / "decker.db")
     packs_dir = tmp_path / "iconpacks"
-    return IconPackManager(store=store, packs_dir=packs_dir), store, packs_dir
+    manager = IconPackManager(store=store, packs_dir=packs_dir)
+    manager.create(MagicMock())
+    return manager, store, packs_dir
 
 
 def _write_source_pack(tmp_path, name="MyPack.sdIconPack"):

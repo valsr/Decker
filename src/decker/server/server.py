@@ -8,24 +8,24 @@ from typing import Any
 from rpyc.utils.server import ThreadPoolServer
 
 from decker.asset.iconpack import IconPackManager
-from decker.asset.paths import ensure_asset_dirs
-from decker.common.db import migrate_legacy_db
-from decker.server.device_runner import DeviceRunner
+from decker.common.manager import Manager
+from decker.server.device_manager import DeviceManager
+from decker.server.devices import list_devices
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
+from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
 
 
 class ServerProcess:
     """Spawns and owns the RPyC server subprocess."""
 
-    def __init__(self, port: int = 18861, startup_wait: float = 5.0) -> None:
+    def __init__(self, port: int, startup_wait: float) -> None:
         """Initialize the server process."""
         self.port = port
         self._startup_wait = startup_wait
         self._process: multiprocessing.Process | None = None
-        self._server: ThreadPoolServer | None = None
-        self._plugin_manager: PluginManager | None = None
+        self._context: ServerContext | None = None
 
     def start(self) -> bool:
         """Spawn the RPyC server subprocess.
@@ -57,11 +57,11 @@ class ServerProcess:
         """Terminate the RPyC server subprocess.
 
         Returns:
-            bool: True if stopped successfully, False if there was nothing to stop.
+            bool: True if stopped successfully, False an issue occurred and the process couldn't be stopped.
         """
         if self._process is None:
             logging.warning("No server process to stop")
-            return False
+            return True
 
         if not self._process.is_alive():
             self._process = None
@@ -83,6 +83,13 @@ class ServerProcess:
         except Exception as e:
             logging.error("Failed to stop server process: %s", e)
             return False
+
+    def _try_destroy_manager(self, manager: Manager) -> None:
+        """Call destroy() on a manager, catching and logging any exception."""
+        try:
+            manager.destroy()
+        except Exception as e:  # pylint: disable=broad-except
+            logging.error("Error destroying %s: %s", type(manager).__name__, e)
 
     @property
     def is_running(self) -> bool:
@@ -114,78 +121,78 @@ class ServerProcess:
 
     def _on_hardware_key_event(self, device_id: str, key_index: int, pressed: bool) -> None:
         """Route a hardware key event to the plugin whose action is assigned to this key."""
-        if self._plugin_manager is None:
+        if self._context is None:
             return
-        from decker.server.key_assignments import (
-            KeyAssignmentStore,  # pylint: disable=import-outside-toplevel
-        )
-
-        store = DeckerService._key_assignment_store  # pylint: disable=protected-access
-        if store is None:
-            return
-        assignment = store.get(device_id, key_index)
+        assignment = self._context.key_assignment_store.get(device_id, key_index)
         if assignment is None:
             return
         if pressed:
-            self._plugin_manager.dispatch_key_down(assignment.target)
+            self._context.plugin_manager.dispatch_key_down(assignment.target)
         else:
-            self._plugin_manager.dispatch_key_up(assignment.target)
+            self._context.plugin_manager.dispatch_key_up(assignment.target)
 
-    def _replay_assignments(self, key_store: Any) -> None:
+    def _replay_assignments(self) -> None:
         """Re-activate all persisted key assignments and reopen their devices."""
-        if self._plugin_manager is None:
+        if self._context is None:
             return
-        from decker.server.devices import (
-            list_devices,  # pylint: disable=import-outside-toplevel
-        )
-
-        device_ids = {d["id"] for d in list_devices() if d.get("id")}
+        device_ids = {info.id for info in list_devices() if info.id is not None}
+        pm = self._context.plugin_manager
+        dm = self._context.device_manager
+        ks = self._context.key_assignment_store
         for device_id in device_ids:
-            for _key_index, assignment in key_store.all_for_device(device_id):
-                if self._plugin_manager._device_runner is not None:  # pylint: disable=protected-access
-                    self._plugin_manager._device_runner.open_device(device_id)  # pylint: disable=protected-access
-                self._plugin_manager._settings_store.set_settings(  # pylint: disable=protected-access
+            for _key_index, assignment in ks.all_for_device(device_id):
+                dm.get_device(device_id)
+                pm._settings_store.set_settings(  # pylint: disable=protected-access
                     assignment.target.plugin_uuid,
                     assignment.target.action_uuid,
                     assignment.target.context_id,
                     assignment.settings,
                 )
-                self._plugin_manager.activate_action(assignment.target)
+                pm.activate_action(assignment.target)
 
     def _signal_handler(self, signum: int, _: Any) -> None:
         """Graceful shutdown: close the RPyC server."""
         logging.info("Received signal %d, shutting down", signum)
-        if self._server:
-            self._server.close()
+        if self._context and self._context.server:
+            self._context.server.close()
 
     def _run_server(self) -> None:
         """Entry point for the server subprocess. Runs RPyC in the main thread."""
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        migrate_legacy_db()
-        ensure_asset_dirs()
-        IconPackManager().discover_manual_dropins()
-
+        icon_pack_manager = IconPackManager()
         key_store = KeyAssignmentStore()
-        self._plugin_manager = PluginManager()
-        device_runner = DeviceRunner(on_key_event=self._on_hardware_key_event)
-        self._plugin_manager.set_device_runner(device_runner)
-        self._plugin_manager.start()
-        self._replay_assignments(key_store)
+        device_manager = DeviceManager(on_key_event=self._on_hardware_key_event)
+        plugin_manager = PluginManager()
 
-        self._server = ThreadPoolServer(
+        self._context = ServerContext(
+            device_manager=device_manager,
+            plugin_manager=plugin_manager,
+            icon_pack_manager=icon_pack_manager,
+            key_assignment_store=key_store,
+            server=None,  # set after server creation
+        )
+
+        # Create managers in order of dependencies (managers can depend on previously created ones via the context)
+        ctx = self._context
+        assert ctx is not None
+        for manager in [icon_pack_manager, key_store, device_manager, plugin_manager]:
+            manager.create(ctx)
+
+        self._replay_assignments()
+
+        server = ThreadPoolServer(
             DeckerService,
             port=self.port,
             protocol_config={"allow_public_attrs": True},
         )
-        DeckerService.configure_server(self._server)
-        DeckerService.configure_plugin_manager(self._plugin_manager)
-        DeckerService.configure_key_assignment_store(key_store)
+        self._context.server = server  # circular reference, but should be fine since they have the same lifecycle
+        DeckerService.configure_context(self._context)
         logging.info("RPyC server listening on port %d", self.port)
         try:
-            self._server.start()  # blocks until close() is called
+            server.start()  # blocks until close() is called
         finally:
-            self._plugin_manager.stop()
-            key_store.close()
-        # Normal return → subprocess exits with code 0 (intentional stop)
+            for manager in [plugin_manager, device_manager, key_store, icon_pack_manager]:
+                self._try_destroy_manager(manager)
+        # Normal return -> subprocess exits with code 0 (intentional stop)

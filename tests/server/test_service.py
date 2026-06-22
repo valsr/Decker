@@ -9,6 +9,7 @@ from assertpy import assert_that
 from decker.plugin.context import ActionTarget
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.server.key_assignments import KeyAssignmentStore
+from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
 
 
@@ -18,22 +19,30 @@ def _make_target(device_id="dev1", key_index=0, plugin="com.p", action="com.p.a"
     )
 
 
+def _make_context(plugin_manager: MagicMock, store: KeyAssignmentStore) -> ServerContext:
+    return ServerContext(
+        device_manager=MagicMock(),
+        plugin_manager=plugin_manager,
+        icon_pack_manager=MagicMock(),
+        key_assignment_store=store,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _reset_service():
     """Ensure class-level state is clean for each test."""
-    DeckerService._plugin_manager = None  # pylint: disable=protected-access
-    DeckerService._key_assignment_store = None  # pylint: disable=protected-access
+    DeckerService._context = None  # pylint: disable=protected-access
     yield
-    DeckerService._plugin_manager = None  # pylint: disable=protected-access
-    DeckerService._key_assignment_store = None  # pylint: disable=protected-access
+    DeckerService._context = None  # pylint: disable=protected-access
 
 
 @pytest.fixture()
 def store():
     with tempfile.TemporaryDirectory() as tmpdir:
         s = KeyAssignmentStore(db_path=Path(tmpdir) / "test.db")
+        s.create(MagicMock())
         yield s
-        s.close()
+        s.destroy()
 
 
 @pytest.fixture()
@@ -43,8 +52,7 @@ def manager():
 
 @pytest.fixture()
 def service(store, manager):
-    DeckerService.configure_plugin_manager(manager)
-    DeckerService.configure_key_assignment_store(store)
+    DeckerService.configure_context(_make_context(manager, store))
     return DeckerService()
 
 
@@ -52,12 +60,14 @@ class TestHeartbeatStatusDevices:
     def test_heartbeat_returns_healthy(self):
         s = DeckerService()
         result = s.heartbeat()
-        assert_that(result["status"]).is_equal_to("healthy")
+        assert_that(result).is_instance_of(dict)
+        assert_that(result["service_status"]).is_equal_to("healthy")
 
-    def test_status_returns_running(self):
+    def test_status_returns_healthy(self):
         s = DeckerService()
         result = s.status()
-        assert_that(result["service_status"]).is_equal_to("running")
+        assert_that(result).is_instance_of(dict)
+        assert_that(result["service_status"]).is_equal_to("healthy")
 
     def test_devices_list_returns_list(self):
         s = DeckerService()
@@ -83,8 +93,7 @@ class TestHeartbeatStatusDevices:
 
 class TestKeySimulateLongPress:
     def test_simulate_long_press_dispatches_key_down_and_up(self, store, manager):
-        DeckerService.configure_plugin_manager(manager)
-        DeckerService.configure_key_assignment_store(store)
+        DeckerService.configure_context(_make_context(manager, store))
         target = _make_target()
         store.assign("dev1", 0, target, {})
         s = DeckerService()
@@ -97,25 +106,25 @@ class TestKeySimulateLongPress:
 
 
 class TestPluginsLoadFailures:
-    def test_returns_empty_list_when_no_plugin_manager_configured(self):
+    def test_returns_empty_list_when_no_context_configured(self):
         assert_that(DeckerService().plugins_load_failures()).is_equal_to([])
 
-    def test_returns_failures_from_plugin_manager(self, manager):
+    def test_returns_failures_from_plugin_manager(self, store, manager):
         manager.load_failures.return_value = [PluginLoadFailedEvent(plugin_uuid="com.decker.broken", error="boom")]
-        DeckerService.configure_plugin_manager(manager)
+        DeckerService.configure_context(_make_context(manager, store))
         result = DeckerService().plugins_load_failures()
         assert_that(result).is_equal_to([{"plugin_uuid": "com.decker.broken", "error": "boom"}])
 
 
 class TestPluginsActionsList:
-    def test_returns_empty_list_when_no_plugin_manager_configured(self):
+    def test_returns_empty_list_when_no_context_configured(self):
         assert_that(DeckerService().plugins_actions_list()).is_equal_to([])
 
-    def test_returns_actions_from_plugin_manager(self, manager):
+    def test_returns_actions_from_plugin_manager(self, store, manager):
         manager.list_actions.return_value = [
             {"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}
         ]
-        DeckerService.configure_plugin_manager(manager)
+        DeckerService.configure_context(_make_context(manager, store))
         result = DeckerService().plugins_actions_list()
         assert_that(result).is_equal_to(
             [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
@@ -135,16 +144,19 @@ class TestKeyAssign:
         service.key_assign("dev1", 0, "com.q", "com.q.b", "ctx2")
         manager.deactivate_action.assert_called_once_with(target)
 
-    def test_assign_returns_false_without_store(self, manager):
-        DeckerService.configure_plugin_manager(manager)
+    def test_assign_returns_false_without_context(self):
         s = DeckerService()
         assert_that(s.key_assign("dev1", 0, "p", "a", "c")).is_false()
 
-    def test_assign_opens_device_via_device_runner(self, service, manager):
-        runner = MagicMock()
-        manager._device_runner = runner  # pylint: disable=protected-access
-        service.key_assign("dev1", 0, "com.p", "com.p.a", "ctx1")
-        runner.open_device.assert_called_once_with("dev1")
+    def test_assign_opens_device_via_device_manager(self, store, manager):
+        dm = MagicMock()
+        DeckerService.configure_context(
+            ServerContext(
+                device_manager=dm, plugin_manager=manager, icon_pack_manager=MagicMock(), key_assignment_store=store
+            )
+        )
+        DeckerService().key_assign("dev1", 0, "com.p", "com.p.a", "ctx1")
+        dm.get_device.assert_called_with("dev1")
 
 
 class TestKeyUnassign:
@@ -161,8 +173,7 @@ class TestKeyUnassign:
         assert_that(result).is_false()
         manager.deactivate_action.assert_not_called()
 
-    def test_unassign_returns_false_without_store(self, manager):
-        DeckerService.configure_plugin_manager(manager)
+    def test_unassign_returns_false_without_context(self):
         s = DeckerService()
         assert_that(s.key_unassign("dev1", 0)).is_false()
 
@@ -182,10 +193,8 @@ class TestKeyUpdateSettings:
 
 
 class TestKeyGetDisplayStates:
-    def test_returns_empty_without_store(self, manager):
-        DeckerService.configure_plugin_manager(manager)
-        s = DeckerService()
-        assert_that(s.key_get_display_states("dev1")).is_empty()
+    def test_returns_empty_without_context(self):
+        assert_that(DeckerService().key_get_display_states("dev1")).is_empty()
 
     def test_returns_states_with_labels(self, service, manager, store):
         target = _make_target()

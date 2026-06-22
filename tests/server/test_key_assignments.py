@@ -1,5 +1,6 @@
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from assertpy import assert_that
@@ -18,8 +19,9 @@ def _target(device_id="dev1", key_index=0, plugin="com.p", action="com.p.a", ctx
 def store():
     with tempfile.TemporaryDirectory() as tmpdir:
         s = KeyAssignmentStore(db_path=Path(tmpdir) / "test.db")
+        s.create(MagicMock())
         yield s
-        s.close()
+        s.destroy()
 
 
 class TestKeyAssignmentStore:
