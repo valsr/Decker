@@ -164,8 +164,11 @@ class ServerProcess:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
+        # generate server id for this process
+        self.server_id = f"{self.pid or 'unknown'}"
+
         # reconfigure logging
-        decker.common.logging.configure(self._app_context.verbosity)
+        decker.common.logging.configure(self._app_context.verbosity, server_id=self.server_id, log_others=self._app_context.log_others)
 
         icon_pack_manager = IconPackManager()
         key_store = KeyAssignmentStore()
