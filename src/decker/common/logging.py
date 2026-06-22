@@ -61,16 +61,14 @@ class NamespaceFilter(logging.Filter):
         return True
 
 
-class SeverFilter(logging.Filter):
-    """Filter to add the server id to the log record."""
+class _Formatter(logging.Formatter):
+    """Logging formatter that uses '.' instead of ',' as the millisecond separator."""
 
-    def __init__(self, server_id: str | None):
-        super().__init__()
-        self.server_id = server_id
+    default_msec_format = "%s.%03d"
 
-    def filter(self, record: logging.LogRecord):
-        record.server_id = self.server_id
-        return True
+
+_CLI_FORMAT = "%(asctime)s %(levelname)s [%(namespace)s:%(lineno)d]: %(message)s"
+_FILE_FORMAT = "%(asctime)s %(levelname)-8s [%(namespace)s:%(lineno)d] %(message)s"
 
 
 def configure(
@@ -94,26 +92,15 @@ def configure(
     for handler in logger.handlers:
         logger.removeHandler(handler)
 
-    handler = logging.StreamHandler()
-    handler.addFilter(NamespaceFilter())
-    handler.addFilter(SeverFilter(server_id))
-    cli_format = "%(asctime)s %(levelname)s"
-    if server_id:
-        cli_format += " (%(server_id)s)"
-    cli_format += "[%(namespace)s:%(lineno)d]: %(message)s"
+    stream_handler = logging.StreamHandler()
+    stream_handler.addFilter(NamespaceFilter())
+    stream_handler.setFormatter(_Formatter(_CLI_FORMAT))
+    logger.addHandler(stream_handler)
 
-    cli_formatter = logging.Formatter(cli_format)
-    handler.setFormatter(cli_formatter)
-    logger.addHandler(handler)
-
-    file_format = "%(asctime)s %(levelname)-8s "
-    if server_id:
-        file_format += "(%(server_id)s)"
-    file_format += "[%(namespace)s:%(lineno)d] %(message)s"
-    file_formatter = logging.Formatter(file_format)
     log_name = "decker-server" if server_id is None else f"decker-server-{server_id}"
     file_handler = logging.FileHandler(os.path.join(log_directory, f"{log_name}.log"))
-    file_handler.setFormatter(file_formatter)
+    file_handler.addFilter(NamespaceFilter())
+    file_handler.setFormatter(_Formatter(_FILE_FORMAT))
     logger.addHandler(file_handler)
 
 

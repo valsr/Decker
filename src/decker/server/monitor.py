@@ -174,6 +174,7 @@ class ServerMonitor:
             img = Image.new("RGB", (72, 72), color="red")
             img_bytes = img.tobytes()
             API.request("set_image", device_id, 0, img_bytes)
+            logging.info("DEMO: Draw command sent to device %s key 0", device_id)
         except Exception as e:
             logging.warning("DEMO command failed: %s", e)
 
