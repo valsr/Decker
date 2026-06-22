@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from decker.common import config
 from decker.common.api import API
+from decker.common.context import ServerAppContext
 from decker.server.devices import DeviceHardwareInfo
 from decker.server.server import ServerProcess
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
@@ -42,16 +43,17 @@ class ServerStatus:
 class ServerMonitor:
     """Monitors the server subprocess and restarts it when it becomes unhealthy."""
 
-    def __init__(self) -> None:
+    def __init__(self, context: ServerAppContext) -> None:
         """Initialize the server monitor from configuration."""
         port = config.get_as("server.port", int)
         startup_wait = config.get_as("server.startup_wait", float)
-        self._server = ServerProcess(port, startup_wait)
+        self._server = ServerProcess(port, startup_wait, context)
         self._interval: float = config.get_as("server.health_check_interval", float)
         self._max_failed_heartbeats: int = config.get_as("server.max_failed_heartbeats", int)
         self._memory_limit: int = config.get_as("server.memory_limit", int)
         self._failed_heartbeats: int = 0
         self._stop_requested: bool = False
+        self._context = context
 
     def start(self) -> bool:
         """
