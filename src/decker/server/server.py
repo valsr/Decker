@@ -11,6 +11,7 @@ import decker.common.logging
 from decker.asset.iconpack import IconPackManager
 from decker.common.context import ServerAppContext
 from decker.common.manager import Manager
+from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices.manager import DeviceManager
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
@@ -152,6 +153,28 @@ class ServerProcess:
                 )
                 pm.activate_action(assignment.target)
 
+    def _restore_device_state(self) -> None:
+        """Push cached key images back to every currently connected device.
+
+        Labels are already in DeviceState memory after open_device() calls restore_from_store().
+        Images need to be explicitly re-pushed to the hardware after a server restart.
+        """
+        if self._context is None:
+            return
+        dm = self._context.device_manager
+        for info in dm.list_devices():
+            if info.id is None:
+                continue
+            device_id = info.id
+            device = dm.open_device(device_id)
+            if device is None:
+                continue
+            device_state = dm.get_device_state(device_id)
+            if device_state is None:
+                continue
+            for key_index, image in device_state.get_all_images():
+                device.set_image_bytes(key_index, image)
+
     def _signal_handler(self, signum: int, _: Any) -> None:
         """Graceful shutdown: close the RPyC server."""
         logging.info("Received signal %d, shutting down", signum)
@@ -172,6 +195,7 @@ class ServerProcess:
         )
 
         icon_pack_manager = IconPackManager()
+        state_store = DeviceStateStore()
         key_store = KeyAssignmentStore()
         device_manager = DeviceManager(on_key_event=self._on_hardware_key_event)
         plugin_manager = PluginManager()
@@ -181,16 +205,18 @@ class ServerProcess:
             plugin_manager=plugin_manager,
             icon_pack_manager=icon_pack_manager,
             key_assignment_store=key_store,
+            device_state_store=state_store,
             server=None,  # set after server creation
         )
 
         # Create managers in order of dependencies (managers can depend on previously created ones via the context)
         ctx = self._context
         assert ctx is not None
-        for manager in [icon_pack_manager, key_store, device_manager, plugin_manager]:
+        for manager in [icon_pack_manager, state_store, key_store, device_manager, plugin_manager]:
             manager.create(ctx)
 
         self._replay_assignments()
+        self._restore_device_state()
 
         server = ThreadPoolServer(
             DeckerService,
@@ -203,6 +229,6 @@ class ServerProcess:
         try:
             server.start()  # blocks until close() is called
         finally:
-            for manager in [plugin_manager, device_manager, key_store, icon_pack_manager]:
+            for manager in [plugin_manager, device_manager, key_store, state_store, icon_pack_manager]:
                 self._try_destroy_manager(manager)
         # Normal return -> subprocess exits with code 0 (intentional stop)

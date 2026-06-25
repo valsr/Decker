@@ -1,7 +1,6 @@
 """Owns plugin discovery, the action registry, callback execution, and the Elgato bridge."""
 
 import logging
-import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -87,8 +86,6 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
         self._elgato_plugins: dict[str, DiscoveredElgatoPlugin] = {}
         self._elgato_processes: dict[str, ElgatoPluginProcess] = {}
         self._elgato_live_contexts: dict[str, set[str]] = {}
-        self._key_labels: dict[str, dict[int, str]] = {}  # device_id → {key_index → label}
-        self._labels_lock = threading.Lock()
         self._device_manager: Any = None
         self._sink: _StreamDeckHardwareSink = _StreamDeckHardwareSink(None, self._set_key_label)
 
@@ -137,9 +134,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
 
     def get_key_display_states(self, device_id: str) -> list[dict[str, Any]]:
         """Return current display labels for all keys on this device."""
-        with self._labels_lock:
-            labels = dict(self._key_labels.get(device_id, {}))
-        return [{"key_index": k, "label": v} for k, v in labels.items()]
+        state = self._device_manager.get_device_state(device_id) if self._device_manager is not None else None
+        if state is None:
+            return []
+        return [{"key_index": k, "label": v} for k, v in state.get_all_labels()]
 
     def activate_action(self, target: ActionTarget) -> None:
         """Instantiate a native action for this target and dispatch on_will_appear."""
@@ -160,8 +158,6 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
         ctx = ActionContext(target, self._sink, self._settings_store)
         self._executor.dispatch(target.plugin_uuid, instance.on_will_disappear, ctx)
         self._registry.unregister(target.plugin_uuid, target.action_uuid, target.context_id)
-        with self._labels_lock:
-            self._key_labels.get(target.device_id, {}).pop(target.key_index, None)
 
     def activate_elgato_action(self, plugin_uuid: str, context_id: str) -> None:
         """Spawn the plugin's Node.js subprocess if this is its first live action instance."""
@@ -215,8 +211,11 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
     # ------------------------------------------------------------------
 
     def _set_key_label(self, device_id: str, key_index: int, label: str) -> None:
-        with self._labels_lock:
-            self._key_labels.setdefault(device_id, {})[key_index] = label
+        if self._device_manager is None:
+            return
+        state = self._device_manager.get_device_state(device_id)
+        if state is not None:
+            state.update_key_label(key_index, label)
 
     def _dispatch(self, target: ActionTarget, handler_name: str) -> None:
         instance = self._registry.get(target.plugin_uuid, target.action_uuid, target.context_id)

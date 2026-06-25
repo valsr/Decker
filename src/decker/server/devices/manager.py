@@ -13,8 +13,10 @@ from decker.common.manager import Manager
 from decker.common.model import DeviceHardwareInfo
 from decker.server import devices
 from decker.server.devices import Device
+from decker.server.devices.state import DeviceState
 
 if TYPE_CHECKING:
+    from decker.server.device_state_store import DeviceStateStore
     from decker.server.server_context import ServerContext
 
 _KeyEventCallback = Callable[[str, int, bool], None]  # (device_id, key_index, pressed)
@@ -45,19 +47,35 @@ class DeviceManager(Manager):
     def __init__(self, on_key_event: _KeyEventCallback) -> None:
         self._on_key_event_cb = on_key_event
         self._devices: dict[str, Device] = {}
+        self._states: dict[str, DeviceState] = {}
         self._lock = threading.Lock()
+        self._state_store: "DeviceStateStore | None" = None
 
     def create(self, context: "ServerContext") -> None:
-        """No-op: devices are opened lazily on first open_device() call."""
+        """Wire the device state store; devices are opened lazily on first open_device() call."""
+        self._state_store = context.device_state_store
 
     def destroy(self) -> None:
         """Reset and close all open devices."""
         with self._lock:
-            devices = list(self._devices.values())
+            devices_to_close = list(self._devices.values())
             self._devices.clear()
-        for device in devices:
+            self._states.clear()
+        for device in devices_to_close:
             device.close()
         logging.info("DeviceManager: closed all devices")
+
+    def get_device_state(self, device_id: str) -> DeviceState | None:
+        """Return the in-memory state tracker for an open device, or None if not open."""
+        return self._states.get(device_id)
+
+    def clear_key_state(self, device_id: str, key_index: int) -> None:
+        """Remove in-memory and persisted key state for a slot."""
+        state = self._states.get(device_id)
+        if state is not None:
+            state.clear_key(key_index)
+        elif self._state_store is not None:
+            self._state_store.delete_key_state(device_id, key_index)
 
     def _on_hw_key_event(self, device: Device, key_index: int, pressed: bool) -> None:
         device.on_key_event(key_index, pressed)
@@ -143,7 +161,15 @@ class DeviceManager(Manager):
                 lambda _, key_index, pressed, dev=device: self._on_hw_key_event(dev, key_index, pressed)
             )
             self._devices[device.device_id] = device
-            return device
+
+        state = DeviceState(device.device_id, self._state_store, device.get_key_state)
+        state.restore_from_store()
+        self._states[device.device_id] = state
+
+        if self._state_store is not None:
+            self._state_store.save_device(device.get_hw_info())
+
+        return device
 
     def open_device(self, device_id: str) -> Device | None:
         """Return the Device for this id, opening and caching it lazily on first request."""
@@ -167,9 +193,16 @@ class DeviceManager(Manager):
         return None
 
     def set_image_bytes(self, device_id: str, key_index: int, image: bytes) -> None:
-        """Push image bytes to the given device's key (no-op if the device is not open)."""
+        """Push image bytes to the given device's key and persist the rendered result."""
         device = self.open_device(device_id)
         if device is None:
             logging.debug("DeviceManager.set_image_bytes: device %s not open", device_id)
             return
         device.set_image_bytes(key_index, image)
+        rendered = device.get_key_image(key_index)
+        if rendered is not None:
+            state = self._states.get(device_id)
+            if state is not None:
+                state.update_key_image(key_index, rendered)
+            elif self._state_store is not None:
+                self._state_store.save_key_image(device_id, key_index, rendered)
