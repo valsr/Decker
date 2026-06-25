@@ -2,9 +2,9 @@
 
 import logging
 import threading
+import zlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING
-import zlib
 
 from StreamDeck.DeviceManager import DeviceManager as _HardwareDeviceManager
 from StreamDeck.Devices.StreamDeck import StreamDeck
@@ -24,16 +24,20 @@ def device_id_for_serial(serial: str) -> str:
     """Return the stable 8-char CRC-32 hex device ID for a given serial number."""
     return format(zlib.crc32(serial.encode()) & 0xFFFFFFFF, "08x")
 
+
 class NoSuchDeviceError(Exception):
     """Raised when a requested device ID does not correspond to any connected Stream Deck."""
+
     def __init__(self, path: str):
         super().__init__(f"Device at path {path} does not exist")
+
 
 class DeviceNotOpened(Exception):
     """Raises when device can't be opened"""
 
     def __init__(self, path: str):
         super().__init__(f"Unable to open device at {path}")
+
 
 class DeviceManager(Manager):
     """Opens Stream Deck devices on first request and caches one Device instance per device ID."""
@@ -71,7 +75,7 @@ class DeviceManager(Manager):
             opened_by_path = {d.path: d for d in self._devices.values()}
 
         hardware_info: list[DeviceHardwareInfo] = []
-        deck:StreamDeck
+        deck: StreamDeck
         for deck in _HardwareDeviceManager().enumerate():
             try:
                 path = deck.id()
@@ -90,6 +94,7 @@ class DeviceManager(Manager):
                 tmp = Device(id, serial, deck)
                 hardware_info.append(tmp.get_hw_info())
                 deck.reset()
+                logging.debug("Closing deck %s" % deck.id())
                 deck.close()
             except Exception as exc:  # pylint: disable=broad-except
                 logging.error("DeviceManager.list_devices failed for deck %s: %s", deck.id(), exc)

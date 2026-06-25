@@ -42,10 +42,12 @@ class TestCliConnection:
             conn.request("status")
 
     def test_commands_converts_to_local_dict(self):
+        import json
+
         mock_conn = MagicMock()
-        mock_conn.root.commands.return_value = {
-            "start": {"description": "Start", "return_type": "bool", "params": ""},
-        }
+        mock_conn.root.commands.return_value = json.dumps(
+            {"start": {"description": "Start", "return_type": "bool", "params": ""}},
+        )
         with patch("rpyc.utils.factory.connect", return_value=mock_conn):
             with CliConnection("localhost", 18861) as conn:
                 result = conn.commands()

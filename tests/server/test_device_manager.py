@@ -1,8 +1,8 @@
 """Tests for DeviceManager."""
 
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from assertpy import assert_that
 
 from decker.server.devices import Device

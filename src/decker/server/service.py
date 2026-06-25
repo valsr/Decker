@@ -1,39 +1,25 @@
 """RPyC service definition for the Decker server."""
 
-import dataclasses
 import inspect
 import json
 import logging
 import threading
 import time
 from dataclasses import dataclass
-from enum import Enum, StrEnum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from rpyc.core.service import Service
 from rpyc.utils import exposed
 
+from decker.common.model import DeviceHardwareInfo
+from decker.common.utils import api_response
 from decker.plugin.context import ActionTarget
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
 
 _LONG_PRESS_HOLD_S = 0.6
-
-
-def _to_wire(obj: Any) -> Any:
-    """Recursively convert a dataclass to brine-safe plain Python types for RPyC.
-
-    Brine uses exact type matching, so StrEnum members (and other Enum subclasses)
-    cannot be serialized directly — they must be reduced to their .value first.
-    """
-    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return {f.name: _to_wire(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
-    if isinstance(obj, Enum):
-        return obj.value
-    if isinstance(obj, list):
-        return [_to_wire(i) for i in obj]
-    return obj
 
 
 class DeckerStatusEnum(StrEnum):
@@ -94,46 +80,39 @@ class DeckerService(Service):
         return True
 
     @exposed
-    def heartbeat(self) -> dict[str, Any]:
+    def heartbeat(self) -> str:
         """Respond to a health-check ping from the monitor."""
         self._last_heartbeat = time.time()
-        return self.status()
+        return self.status() # pyright: ignore[reportReturnType] - @api_response converts the str
 
     @exposed
-    def status(self) -> dict[str, Any]:
-        """Return service status serialized from DeckerServiceStatus."""
-        status = DeckerServiceStatus(service_status=DeckerStatusEnum.HEALTHY, last_heartbeat=self._last_heartbeat)
-        return _to_wire(status)
+    @api_response
+    def status(self) -> DeckerServiceStatus:
+        """Return service status as a JSON string."""
+        return DeckerServiceStatus(service_status=DeckerStatusEnum.HEALTHY, last_heartbeat=self._last_heartbeat)
 
     @exposed
-    def devices_list(self) -> list[dict[str, Any]]:
-        """List all connected Stream Deck devices."""
+    @api_response
+    def devices_list(self) -> list[DeviceHardwareInfo]:
+        """List all connected Stream Deck devices as a JSON string."""
         if self._context is None or self._context.device_manager is None:
             logging.warning("Context or DeviceManager not initialized")
             return []
 
-        return [_to_wire(info) for info in self._context.device_manager.list_devices()]
+        return self._context.device_manager.list_devices()
 
     @exposed
-    def plugins_load_failures(self) -> list[dict[str, str]]:
-        """
-        List plugins that failed to load at startup.
-
-        Returns:
-            list[dict[str, str]]: One entry per failed plugin with plugin_uuid and error.
-        """
+    @api_response
+    def plugins_load_failures(self) -> list:
+        """List plugins that failed to load at startup as a JSON string."""
         if self._context is None:
             return []
         return [{"plugin_uuid": f.plugin_uuid, "error": f.error} for f in self._context.plugin_manager.load_failures()]
 
     @exposed
-    def plugins_actions_list(self) -> list[dict[str, str]]:
-        """
-        List every action declared across all loaded plugin manifests.
-
-        Returns:
-            list[dict[str, str]]: One entry per action with plugin_uuid, plugin_name, action_uuid, action_name.
-        """
+    @api_response
+    def plugins_actions_list(self) -> list:
+        """List every action declared across all loaded plugin manifests as a JSON string."""
         if self._context is None:
             return []
         return self._context.plugin_manager.list_actions()
@@ -218,7 +197,8 @@ class DeckerService(Service):
         return True
 
     @exposed
-    def key_get_display_states(self, device_id: str) -> list[dict[str, Any]]:
+    @api_response
+    def key_get_display_states(self, device_id: str) -> list:
         """
         Return display labels for all assigned keys on this device, including assignment metadata.
 
@@ -266,8 +246,9 @@ class DeckerService(Service):
         return self._simulate_press(device_id, key_index, long_press=True)
 
     @exposed
-    def commands(self) -> dict[str, dict[str, str]]:
-        """Return metadata for all user-defined exposed commands."""
+    @api_response
+    def commands(self) -> dict:
+        """Return metadata for all user-defined exposed commands as a JSON string."""
         result: dict[str, dict[str, str]] = {}
         for attr, method in self.__class__.__dict__.items():
             if not callable(method) or not getattr(method, "__exposed__", False) or attr == "commands":
