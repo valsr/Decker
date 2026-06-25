@@ -83,7 +83,7 @@ class DeckerService(Service):
     def heartbeat(self) -> str:
         """Respond to a health-check ping from the monitor."""
         self._last_heartbeat = time.time()
-        return self.status() # pyright: ignore[reportReturnType] - @api_response converts the str
+        return self.status()  # pyright: ignore[reportReturnType] - @api_response converts the str
 
     @exposed
     @api_response
