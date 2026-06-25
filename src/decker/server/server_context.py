@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from rpyc.utils.server import ThreadPoolServer
 
 from decker.asset.iconpack import IconPackManager
+from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices.manager import DeviceManager
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
@@ -18,4 +19,5 @@ class ServerContext:
     plugin_manager: PluginManager
     icon_pack_manager: IconPackManager
     key_assignment_store: KeyAssignmentStore
+    device_state_store: DeviceStateStore
     server: ThreadPoolServer | None = None

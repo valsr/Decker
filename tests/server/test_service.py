@@ -25,6 +25,7 @@ def _make_context(plugin_manager: MagicMock, store: KeyAssignmentStore) -> Serve
         plugin_manager=plugin_manager,
         icon_pack_manager=MagicMock(),
         key_assignment_store=store,
+        device_state_store=MagicMock(),
     )
 
 
@@ -151,7 +152,11 @@ class TestKeyAssign:
         dm = MagicMock()
         DeckerService.configure_context(
             ServerContext(
-                device_manager=dm, plugin_manager=manager, icon_pack_manager=MagicMock(), key_assignment_store=store
+                device_manager=dm,
+                plugin_manager=manager,
+                icon_pack_manager=MagicMock(),
+                key_assignment_store=store,
+                device_state_store=MagicMock(),
             )
         )
         DeckerService().key_assign("dev1", 0, "com.p", "com.p.a", "ctx1")
@@ -208,9 +213,31 @@ class TestKeyGetStates:
             num_keys=num_keys,
             keys=[KeyInfo(row=0, col=c, pixel_width=72, pixel_height=72, type="key") for c in range(num_keys)],
         )
-        mock_device.get_key_image.return_value = None
         mock_device.get_key_state.return_value = KeyPressState.UP
         return mock_device
+
+    def _make_mock_device_state(self, labels: dict[int, str] | None = None, images: dict[int, bytes] | None = None):
+        from decker.common.model import (
+            KeyPressState,  # pylint: disable=import-outside-toplevel
+        )
+        from decker.server.devices.state import (
+            PerKeyState,  # pylint: disable=import-outside-toplevel
+        )
+
+        labels = labels or {}
+        images = images or {}
+
+        def _get_key_state(key_index: int) -> PerKeyState:
+            return PerKeyState(
+                key_index=key_index,
+                image=images.get(key_index),
+                label=labels.get(key_index, ""),
+                press_state=KeyPressState.UP,
+            )
+
+        mock_ds = MagicMock()
+        mock_ds.get_key_state.side_effect = _get_key_state
+        return mock_ds
 
     def test_returns_empty_without_context(self):
         assert_that(json.loads(DeckerService().key_get_states("dev1"))).is_empty()
@@ -222,8 +249,9 @@ class TestKeyGetStates:
 
     def test_returns_all_keys_including_unassigned(self, service, manager, store):
         mock_device = self._make_mock_device(num_keys=2)
+        mock_ds = self._make_mock_device_state(labels={0: "vol"})
         service._context.device_manager.open_device.return_value = mock_device  # pylint: disable=protected-access
-        manager.get_key_display_states.return_value = [{"key_index": 0, "label": "vol"}]
+        service._context.device_manager.get_device_state.return_value = mock_ds  # pylint: disable=protected-access
         target = _make_target()
         store.assign("dev1", 0, target, {"step": 2})
 
@@ -238,6 +266,18 @@ class TestKeyGetStates:
         assert_that(states[1]["key_index"]).is_equal_to(1)
         assert_that(states[1]["plugin_uuid"]).is_none()
         assert_that(states[1]["label"]).is_equal_to("")
+
+    def test_returns_key_image_as_base64(self, service, store):
+        import base64  # pylint: disable=import-outside-toplevel
+
+        mock_device = self._make_mock_device(num_keys=1)
+        mock_ds = self._make_mock_device_state(images={0: b"\x89PNG"})
+        service._context.device_manager.open_device.return_value = mock_device  # pylint: disable=protected-access
+        service._context.device_manager.get_device_state.return_value = mock_ds  # pylint: disable=protected-access
+
+        states = json.loads(service.key_get_states("dev1"))
+
+        assert_that(states[0]["image_b64"]).is_equal_to(base64.b64encode(b"\x89PNG").decode())
 
 
 class TestKeySimulatePress:

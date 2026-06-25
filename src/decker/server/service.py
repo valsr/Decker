@@ -171,6 +171,7 @@ class DeckerService(Service):
             return False
         self._context.plugin_manager.deactivate_action(assignment.target)
         key_store.unassign(device_id, key_index)
+        self._context.device_manager.clear_key_state(device_id, key_index)
         return True
 
     @exposed
@@ -207,26 +208,27 @@ class DeckerService(Service):
         """
         if self._context is None:
             return []
-        device = self._context.device_manager.open_device(device_id)
+        dm = self._context.device_manager
+        device = dm.open_device(device_id)
         if device is None:
             return []
         hw_info = device.get_hw_info()
         key_store = self._context.key_assignment_store
-        pm = self._context.plugin_manager
-        label_map: dict[int, str] = {s["key_index"]: s["label"] for s in pm.get_key_display_states(device_id)}
+        device_state = dm.get_device_state(device_id)
         result: list[KeyState] = []
         for key_index, key_info in enumerate(hw_info.keys):
             assignment = key_store.get(device_id, key_index)
-            raw_image = device.get_key_image(key_index)
+            per_key = device_state.get_key_state(key_index) if device_state is not None else None
+            raw_image = per_key.image if per_key is not None else None
             image_b64 = base64.b64encode(raw_image).decode("ascii") if raw_image else None
             result.append(
                 KeyState(
                     key_index=key_index,
                     row=key_info.row,
                     col=key_info.col,
-                    state=device.get_key_state(key_index),
+                    state=per_key.press_state if per_key is not None else device.get_key_state(key_index),
                     image_b64=image_b64,
-                    label=label_map.get(key_index, ""),
+                    label=per_key.label if per_key is not None else "",
                     plugin_uuid=assignment.target.plugin_uuid if assignment else None,
                     action_uuid=assignment.target.action_uuid if assignment else None,
                     context_id=assignment.target.context_id if assignment else None,
