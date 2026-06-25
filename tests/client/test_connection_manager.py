@@ -187,9 +187,7 @@ class TestConnectionManager:
 
     def test_refresh_key_display_states_pushes_event(self):
         mock_conn = MagicMock()
-        mock_conn.root.key_get_display_states.return_value = json.dumps(
-            [{"key_index": 0, "label": "5", "settings": {}}]
-        )
+        mock_conn.root.key_get_states.return_value = json.dumps([{"key_index": 0, "label": "5", "settings": {}}])
         self.manager._conn = mock_conn  # pylint: disable=protected-access
         AppContext.reset()
         AppContext.get().active_device = "dev1"
@@ -204,7 +202,7 @@ class TestConnectionManager:
         self.manager._conn = mock_conn  # pylint: disable=protected-access
         AppContext.reset()
         self.manager._refresh_key_display_states()  # pylint: disable=protected-access
-        mock_conn.root.key_get_display_states.assert_not_called()
+        mock_conn.root.key_get_states.assert_not_called()
         AppContext.reset()
 
     @patch("decker.client.connection_manager.rpyc.utils.factory.connect")

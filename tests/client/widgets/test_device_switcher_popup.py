@@ -5,8 +5,8 @@ from PyQt6.QtGui import QKeyEvent
 from decker.client.widgets.device_switcher_popup import DeviceSwitcherPopup
 
 _DEVICES = [
-    {"type": "Stream Deck", "serial": "ABC123"},
-    {"type": "Stream Deck XL", "serial": "XYZ999"},
+    {"id": "aabbccdd", "type": "Stream Deck", "serial": "ABC123"},
+    {"id": "11223344", "type": "Stream Deck XL", "serial": "XYZ999"},
 ]
 
 
@@ -21,7 +21,7 @@ class TestDeviceSwitcherPopup:
         assert item is not None
         assert_that(item.text()).contains("Stream Deck").contains("ABC123")
 
-    def test_clicking_item_emits_device_selected_with_serial(self, qapp):  # pylint: disable=unused-argument
+    def test_clicking_item_emits_device_selected_with_id(self, qapp):  # pylint: disable=unused-argument
         popup = DeviceSwitcherPopup(_DEVICES)
         received: list[str] = []
         popup.device_selected.connect(received.append)
@@ -30,7 +30,7 @@ class TestDeviceSwitcherPopup:
         assert item is not None
         popup._on_item_clicked(item)  # pylint: disable=protected-access
 
-        assert_that(received).is_equal_to(["XYZ999"])
+        assert_that(received).is_equal_to(["11223344"])
 
     def test_escape_key_closes_without_emitting(self, qapp):  # pylint: disable=unused-argument
         popup = DeviceSwitcherPopup(_DEVICES)

@@ -3,6 +3,7 @@
 import json
 import logging
 import threading
+import time
 from typing import Any
 
 import rpyc.utils.factory
@@ -20,6 +21,7 @@ from decker.client.events.event_manager import EventManager
 
 _RETRY_INTERVAL_S = 5.0
 _HEARTBEAT_INTERVAL_S = 5.0
+_KEY_REFRESH_INTERVAL_S = 2.0
 
 
 class ConnectionManager:
@@ -55,17 +57,24 @@ class ConnectionManager:
         self.connected = False
 
     def _run(self) -> None:
+        last_heartbeat = 0.0
+        last_key_refresh = 0.0
         while not self._stop_event.is_set():
             if self._conn is None:
                 self._try_connect()
                 if self._conn is None:
                     self._stop_event.wait(_RETRY_INTERVAL_S)
                 continue
-            self._stop_event.wait(_HEARTBEAT_INTERVAL_S)
+            self._stop_event.wait(_KEY_REFRESH_INTERVAL_S)
             if self._stop_event.is_set():
                 break
-            self._check_heartbeat()
-            self._refresh_key_display_states()
+            now = time.monotonic()
+            if now - last_heartbeat >= _HEARTBEAT_INTERVAL_S:
+                self._check_heartbeat()
+                last_heartbeat = now
+            if now - last_key_refresh >= _KEY_REFRESH_INTERVAL_S:
+                self._refresh_key_display_states()
+                last_key_refresh = now
 
     def _try_connect(self) -> None:
         try:
@@ -159,7 +168,7 @@ class ConnectionManager:
         if device_id is None:
             return
         try:
-            states: list[dict[str, Any]] = self._call_json("key_get_display_states", device_id)
+            states: list[dict[str, Any]] = self._call_json("key_get_states", device_id)
         except Exception as exc:  # pylint: disable=broad-except
             logging.warning("Could not fetch key display states: %s", exc)
             return

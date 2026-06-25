@@ -1,5 +1,6 @@
 """RPyC service definition for the Decker server."""
 
+import base64
 import inspect
 import json
 import logging
@@ -12,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from rpyc.core.service import Service
 from rpyc.utils import exposed
 
-from decker.common.model import DeviceHardwareInfo
+from decker.common.model import DeviceHardwareInfo, KeyState
 from decker.common.utils import api_response
 from decker.plugin.context import ActionTarget
 
@@ -198,30 +199,39 @@ class DeckerService(Service):
 
     @exposed
     @api_response
-    def key_get_display_states(self, device_id: str) -> list:
-        """
-        Return display labels for all assigned keys on this device, including assignment metadata.
+    def key_get_states(self, device_id: str) -> list[KeyState]:
+        """Return full runtime state for every key on the device.
 
-        Returns:
-            list[dict[str, Any]]: One entry per assigned key with key_index, label, plugin_uuid,
-            action_uuid, context_id, and settings.
+        Covers all keys (not just assigned ones). Unassigned keys have None for plugin fields
+        and None for image_b64 if no image has been pushed yet.
         """
         if self._context is None:
             return []
-        pm = self._context.plugin_manager
+        device = self._context.device_manager.open_device(device_id)
+        if device is None:
+            return []
+        hw_info = device.get_hw_info()
         key_store = self._context.key_assignment_store
+        pm = self._context.plugin_manager
         label_map: dict[int, str] = {s["key_index"]: s["label"] for s in pm.get_key_display_states(device_id)}
-        result = []
-        for key_index, assignment in key_store.all_for_device(device_id):
+        result: list[KeyState] = []
+        for key_index, key_info in enumerate(hw_info.keys):
+            assignment = key_store.get(device_id, key_index)
+            raw_image = device.get_key_image(key_index)
+            image_b64 = base64.b64encode(raw_image).decode("ascii") if raw_image else None
             result.append(
-                {
-                    "key_index": key_index,
-                    "label": label_map.get(key_index, ""),
-                    "plugin_uuid": assignment.target.plugin_uuid,
-                    "action_uuid": assignment.target.action_uuid,
-                    "context_id": assignment.target.context_id,
-                    "settings": assignment.settings,
-                }
+                KeyState(
+                    key_index=key_index,
+                    row=key_info.row,
+                    col=key_info.col,
+                    state=device.get_key_state(key_index),
+                    image_b64=image_b64,
+                    label=label_map.get(key_index, ""),
+                    plugin_uuid=assignment.target.plugin_uuid if assignment else None,
+                    action_uuid=assignment.target.action_uuid if assignment else None,
+                    context_id=assignment.target.context_id if assignment else None,
+                    settings=assignment.settings if assignment else {},
+                )
             )
         return result
 

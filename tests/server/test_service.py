@@ -191,19 +191,53 @@ class TestKeyUpdateSettings:
         manager.dispatch_settings_changed.assert_not_called()
 
 
-class TestKeyGetDisplayStates:
-    def test_returns_empty_without_context(self):
-        assert_that(json.loads(DeckerService().key_get_display_states("dev1"))).is_empty()
+class TestKeyGetStates:
+    def _make_mock_device(self, num_keys: int = 2):
+        from decker.common.model import (  # pylint: disable=import-outside-toplevel
+            DeviceHardwareInfo,
+            KeyInfo,
+            KeyPressState,
+        )
 
-    def test_returns_states_with_labels(self, service, manager, store):
+        mock_device = MagicMock()
+        mock_device.get_hw_info.return_value = DeviceHardwareInfo(
+            id="dev1",
+            type="StreamDeck",
+            vendor_id=4057,
+            product_id=96,
+            num_keys=num_keys,
+            keys=[KeyInfo(row=0, col=c, pixel_width=72, pixel_height=72, type="key") for c in range(num_keys)],
+        )
+        mock_device.get_key_image.return_value = None
+        mock_device.get_key_state.return_value = KeyPressState.UP
+        return mock_device
+
+    def test_returns_empty_without_context(self):
+        assert_that(json.loads(DeckerService().key_get_states("dev1"))).is_empty()
+
+    def test_returns_empty_when_device_not_found(self, service):
+        service._context.device_manager.open_device.return_value = None  # pylint: disable=protected-access
+        result = json.loads(service.key_get_states("dev1"))
+        assert_that(result).is_empty()
+
+    def test_returns_all_keys_including_unassigned(self, service, manager, store):
+        mock_device = self._make_mock_device(num_keys=2)
+        service._context.device_manager.open_device.return_value = mock_device  # pylint: disable=protected-access
+        manager.get_key_display_states.return_value = [{"key_index": 0, "label": "vol"}]
         target = _make_target()
         store.assign("dev1", 0, target, {"step": 2})
-        manager.get_key_display_states.return_value = [{"key_index": 0, "label": "5"}]
-        states = json.loads(service.key_get_display_states("dev1"))
-        assert_that(states).is_length(1)
-        assert_that(states[0]["label"]).is_equal_to("5")
+
+        states = json.loads(service.key_get_states("dev1"))
+
+        assert_that(states).is_length(2)
         assert_that(states[0]["key_index"]).is_equal_to(0)
+        assert_that(states[0]["label"]).is_equal_to("vol")
         assert_that(states[0]["plugin_uuid"]).is_equal_to("com.p")
+        assert_that(states[0]["state"]).is_equal_to("up")
+        assert_that(states[0]["image_b64"]).is_none()
+        assert_that(states[1]["key_index"]).is_equal_to(1)
+        assert_that(states[1]["plugin_uuid"]).is_none()
+        assert_that(states[1]["label"]).is_equal_to("")
 
 
 class TestKeySimulatePress:
