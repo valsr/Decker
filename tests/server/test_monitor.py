@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from assertpy import assert_that
 
+from decker.common.context import ServerAppContext
 from decker.server.monitor import ServerMonitor, _read_rss_bytes
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
 
@@ -54,7 +55,7 @@ def _make_monitor() -> ServerMonitor:
             "server.memory_limit": 1024 * 1024 * 1024,
         }[key]
         with patch("decker.server.monitor.ServerProcess") as MockServerProcess:
-            m = ServerMonitor()
+            m = ServerMonitor(ServerAppContext())
             m._server = MockServerProcess.return_value  # pylint: disable=protected-access
     return m
 

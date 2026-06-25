@@ -1,6 +1,8 @@
 """Server monitor — starts, supervises, and auto-restarts the Decker server subprocess."""
 
 import logging
+import math
+import random
 import time
 from dataclasses import dataclass
 
@@ -154,25 +156,30 @@ class ServerMonitor:
         try:
             logging.info("DEMO: Send a draw command to a random button")
             # first find the device IDs so we can target a real button (instead of "random"), but ignore any errors since this is just a demo
-            devices = API.request_as(
+            devices: list[DeviceHardwareInfo] = API.request_as(
                 list[DeviceHardwareInfo], "devices_list"
             )  # ignore errors and response since this is just a demo
+
             if not devices:
                 logging.warning("DEMO: No devices found, skipping draw command")
                 return
 
-            device_id = devices[0].id
-            if not device_id:
+            device = devices[0]
+
+            if not device.id:
                 logging.warning("DEMO: No device_id found in first device, skipping draw command")
                 return
 
             # Generate a simple image (red square) and send it to the first key of the first device, ignoring any errors since this is just a demo
             from PIL import Image
 
-            img = Image.new("RGB", (72, 72), color="red")
+            button = random.randint(0, device.num_keys)
+            button_def = device.keys[button]
+            img = Image.new("RGB", (button_def.pixel_width, button_def.pixel_height), (255, 0, 0))
             img_bytes = img.tobytes()
-            API.request("set_image", device_id, 0, img_bytes)
-            logging.info("DEMO: Draw command sent to device %s key 0", device_id)
+            logging.debug("Button dimensions: %d x %d", button_def.pixel_width, button_def.pixel_height)
+            API.request("set_image", device.id, button, img_bytes)
+            logging.info("DEMO: Draw command sent to device %s key %s", device.id, button)
         except Exception as e:
             logging.warning("DEMO command failed: %s", e)
 

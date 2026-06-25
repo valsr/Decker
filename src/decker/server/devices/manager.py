@@ -4,13 +4,15 @@ import logging
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING
+import zlib
 
 from StreamDeck.DeviceManager import DeviceManager as _HardwareDeviceManager
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
 from decker.common.manager import Manager
 from decker.common.model import DeviceHardwareInfo
-from decker.server.Device import Device
+from decker.server import devices
+from decker.server.devices import Device
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
@@ -18,13 +20,20 @@ if TYPE_CHECKING:
 _KeyEventCallback = Callable[[str, int, bool], None]  # (device_id, key_index, pressed)
 
 
+def device_id_for_serial(serial: str) -> str:
+    """Return the stable 8-char CRC-32 hex device ID for a given serial number."""
+    return format(zlib.crc32(serial.encode()) & 0xFFFFFFFF, "08x")
+
 class NoSuchDeviceError(Exception):
     """Raised when a requested device ID does not correspond to any connected Stream Deck."""
+    def __init__(self, path: str):
+        super().__init__(f"Device at path {path} does not exist")
 
-    def __init__(self, device_id: str):
-        super().__init__(f"No such device with ID {device_id}")
-        self.device_id = device_id
+class DeviceNotOpened(Exception):
+    """Raises when device can't be opened"""
 
+    def __init__(self, path: str):
+        super().__init__(f"Unable to open device at {path}")
 
 class DeviceManager(Manager):
     """Opens Stream Deck devices on first request and caches one Device instance per device ID."""
@@ -62,6 +71,7 @@ class DeviceManager(Manager):
             opened_by_path = {d.path: d for d in self._devices.values()}
 
         hardware_info: list[DeviceHardwareInfo] = []
+        deck:StreamDeck
         for deck in _HardwareDeviceManager().enumerate():
             try:
                 path = deck.id()
@@ -69,9 +79,18 @@ class DeviceManager(Manager):
                 if existing and existing.try_validate():
                     hardware_info.append(existing.get_hw_info())
                     continue
-                tmp = Device(deck)
+
+                # open the device temporarily and read the information
+                if not devices.try_open_device(deck):
+                    logging.warning(f"Unable to open device at {deck.id()}")
+                    continue
+
+                serial = deck.get_serial_number()
+                id = device_id_for_serial(serial)
+                tmp = Device(id, serial, deck)
                 hardware_info.append(tmp.get_hw_info())
-                tmp.close()
+                deck.reset()
+                deck.close()
             except Exception as exc:  # pylint: disable=broad-except
                 logging.error("DeviceManager.list_devices failed for deck %s: %s", deck.id(), exc)
 
@@ -103,10 +122,16 @@ class DeviceManager(Manager):
             existing = next((d for d in self._devices.values() if d.path == deck.id()), None)
             if existing:
                 return existing
-            deck.open()
-            device = Device(deck, self._on_device_closed)
+
+            # try open the device
+            if not devices.try_open_device(deck):
+                raise DeviceNotOpened(deck.id())
+
+            serial = deck.get_serial_number()
+            id = device_id_for_serial(serial)
+            device = Device(id, serial, deck, self._on_device_closed)
             deck.set_key_callback(
-                lambda _deck, key_index, pressed: self._on_key_event(device.device_id, key_index, pressed)
+                lambda _, key_index, pressed: self._on_key_event(device.device_id, key_index, pressed)
             )
             self._devices[device.device_id] = device
             return device

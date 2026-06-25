@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from rpyc.utils.server import ThreadPoolServer
 
 from decker.asset.iconpack import IconPackManager
-from decker.server.device_manager import DeviceManager
+from decker.server.devices.manager import DeviceManager
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
 

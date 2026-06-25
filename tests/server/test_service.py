@@ -71,8 +71,7 @@ class TestHeartbeatStatusDevices:
 
     def test_devices_list_returns_list(self):
         s = DeckerService()
-        with patch("decker.server.service.list_devices", return_value=[]):
-            result = s.devices_list()
+        result = s.devices_list()  # no context → returns []
         assert_that(result).is_equal_to([])
 
     def test_on_connect_and_disconnect_do_not_raise(self):
@@ -156,7 +155,7 @@ class TestKeyAssign:
             )
         )
         DeckerService().key_assign("dev1", 0, "com.p", "com.p.a", "ctx1")
-        dm.get_device.assert_called_with("dev1")
+        dm.open_device.assert_called_with("dev1")
 
 
 class TestKeyUnassign:

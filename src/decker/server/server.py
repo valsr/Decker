@@ -11,7 +11,7 @@ import decker.common.logging
 from decker.asset.iconpack import IconPackManager
 from decker.common.context import ServerAppContext
 from decker.common.manager import Manager
-from decker.server.device_manager import DeviceManager
+from decker.server.devices.manager import DeviceManager
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
 from decker.server.server_context import ServerContext
