@@ -41,7 +41,9 @@ class TestMain:
             mock_parse_args.return_value = args
             main()
             mock_configure.assert_called_with(
-                level=expected_level, log_directory=mock_configure.call_args[1]["log_directory"]
+                level=expected_level,
+                log_directory=mock_configure.call_args[1]["log_directory"],
+                log_others=False,
             )
 
     @patch("decker.server.app.ServerMonitor")

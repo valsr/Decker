@@ -14,7 +14,6 @@ from rpyc.core.service import Service
 from rpyc.utils import exposed
 
 from decker.plugin.context import ActionTarget
-from decker.server.devices import list_devices
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
@@ -109,7 +108,11 @@ class DeckerService(Service):
     @exposed
     def devices_list(self) -> list[dict[str, Any]]:
         """List all connected Stream Deck devices."""
-        return [_to_wire(info) for info in list_devices()]
+        if self._context is None or self._context.device_manager is None:
+            logging.warning("Context or DeviceManager not initialized")
+            return []
+
+        return [_to_wire(info) for info in self._context.device_manager.list_devices()]
 
     @exposed
     def plugins_load_failures(self) -> list[dict[str, str]]:
@@ -168,7 +171,7 @@ class DeckerService(Service):
         if existing is not None:
             pm.deactivate_action(existing.target)
         key_store.assign(device_id, key_index, target, settings)
-        dm.get_device(device_id)
+        dm.open_device(device_id)
         pm.activate_action(target)
         return True
 
@@ -294,7 +297,7 @@ class DeckerService(Service):
         if self._context is None or self._context.device_manager is None:
             logging.warning("Context not initialized")
             return False
-        device = self._context.device_manager.get_device(device_id)
+        device = self._context.device_manager.open_device(device_id)
         if device is None:
             logging.warning("DeckerService.set_image: device %s not open", device_id)
             return False
