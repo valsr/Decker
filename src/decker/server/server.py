@@ -12,7 +12,6 @@ from decker.asset.iconpack import IconPackManager
 from decker.common.context import ServerAppContext
 from decker.common.manager import Manager
 from decker.server.device_manager import DeviceManager
-from decker.server.devices import list_devices
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
 from decker.server.server_context import ServerContext
@@ -138,13 +137,13 @@ class ServerProcess:
         """Re-activate all persisted key assignments and reopen their devices."""
         if self._context is None:
             return
-        device_ids = {info.id for info in list_devices() if info.id is not None}
+        device_ids = {info.id for info in self._context.device_manager.list_devices() if info.id is not None}
         pm = self._context.plugin_manager
         dm = self._context.device_manager
         ks = self._context.key_assignment_store
         for device_id in device_ids:
             for _key_index, assignment in ks.all_for_device(device_id):
-                dm.get_device(device_id)
+                dm.open_device(device_id)
                 pm._settings_store.set_settings(  # pylint: disable=protected-access
                     assignment.target.plugin_uuid,
                     assignment.target.action_uuid,
@@ -168,7 +167,9 @@ class ServerProcess:
         self.server_id = f"{self.pid or 'unknown'}"
 
         # reconfigure logging
-        decker.common.logging.configure(self._app_context.verbosity, server_id=self.server_id, log_others=self._app_context.log_others)
+        decker.common.logging.configure(
+            self._app_context.verbosity, server_id=self.server_id, log_others=self._app_context.log_others
+        )
 
         icon_pack_manager = IconPackManager()
         key_store = KeyAssignmentStore()

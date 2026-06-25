@@ -33,3 +33,13 @@ class DeckerError(Exception):
     def __init__(self, message: str):
         self.message = message
         super().__init__(self.message)
+
+
+class DeckNotOpenedError(DeckerError):
+    def __init__(self, path: str):
+        super().__init__(f"Deck at {path} isn't opened")
+
+
+class DeckNotFoundError(DeckerError):
+    def __init__(self, path: str):
+        super().__init__(f"No deck found at {path}")

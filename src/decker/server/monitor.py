@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from decker.common import config
 from decker.common.api import API
 from decker.common.context import ServerAppContext
-from decker.server.devices import DeviceHardwareInfo
+from decker.common.model import DeviceHardwareInfo
 from decker.server.server import ServerProcess
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
 
@@ -136,10 +136,6 @@ class ServerMonitor:
         try:
             response = API.request_as(DeckerServiceStatus, "heartbeat")
             logging.debug("Heartbeat response: %s", response)
-            logging.debug(
-                "response.service_status == DeckerStatusEnum.HEALTHY: %s",
-                response.service_status == DeckerStatusEnum.HEALTHY,
-            )
             if response is not None and response.service_status == DeckerStatusEnum.HEALTHY:
                 self._failed_heartbeats = 0
                 logging.debug("Heartbeat OK")
