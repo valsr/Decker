@@ -14,15 +14,19 @@ DeviceCloseCallback = Callable[[str], None]  # called when the device is detecte
 def try_open_device(device: StreamDeck) -> bool:
     if not device.is_open():
         try:
+            logging.debug("Opening deck %s" % device.id())
             device.open()
         except Exception:
             pass
     return device.is_open()
 
+
 class Device:
     """Maintains an open connection to a single Stream Deck and routes image pushes."""
 
-    def __init__(self, id: str, serial: str, deck: StreamDeck, notify_on_closed: DeviceCloseCallback | None = None) -> None:
+    def __init__(
+        self, id: str, serial: str, deck: StreamDeck, notify_on_closed: DeviceCloseCallback | None = None
+    ) -> None:
         self._device: StreamDeck = deck
         self.serial: str = serial
         self.id: str = id
@@ -56,9 +60,7 @@ class Device:
         fmt = self._device.key_image_format()
         w, h = fmt["size"]
         keys = [
-            KeyInfo(row=r, col=c, pixel_width=w, pixel_height=h, type="key")
-            for r in range(rows)
-            for c in range(cols)
+            KeyInfo(row=r, col=c, pixel_width=w, pixel_height=h, type="key") for r in range(rows) for c in range(cols)
         ]
         return DeviceHardwareInfo(
             id=self.id,

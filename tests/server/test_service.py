@@ -59,19 +59,19 @@ def service(store, manager):
 class TestHeartbeatStatusDevices:
     def test_heartbeat_returns_healthy(self):
         s = DeckerService()
-        result = s.heartbeat()
+        result = json.loads(s.heartbeat())
         assert_that(result).is_instance_of(dict)
         assert_that(result["service_status"]).is_equal_to("healthy")
 
     def test_status_returns_healthy(self):
         s = DeckerService()
-        result = s.status()
+        result = json.loads(s.status())
         assert_that(result).is_instance_of(dict)
         assert_that(result["service_status"]).is_equal_to("healthy")
 
     def test_devices_list_returns_list(self):
         s = DeckerService()
-        result = s.devices_list()  # no context → returns []
+        result = json.loads(s.devices_list())  # no context → returns []
         assert_that(result).is_equal_to([])
 
     def test_on_connect_and_disconnect_do_not_raise(self):
@@ -81,7 +81,7 @@ class TestHeartbeatStatusDevices:
 
     def test_commands_returns_dict(self):
         s = DeckerService()
-        result = s.commands()
+        result = json.loads(s.commands())
         assert_that(result).is_instance_of(dict)
         assert_that(result).contains_key("heartbeat")
 
@@ -106,25 +106,25 @@ class TestKeySimulateLongPress:
 
 class TestPluginsLoadFailures:
     def test_returns_empty_list_when_no_context_configured(self):
-        assert_that(DeckerService().plugins_load_failures()).is_equal_to([])
+        assert_that(json.loads(DeckerService().plugins_load_failures())).is_equal_to([])
 
     def test_returns_failures_from_plugin_manager(self, store, manager):
         manager.load_failures.return_value = [PluginLoadFailedEvent(plugin_uuid="com.decker.broken", error="boom")]
         DeckerService.configure_context(_make_context(manager, store))
-        result = DeckerService().plugins_load_failures()
+        result = json.loads(DeckerService().plugins_load_failures())
         assert_that(result).is_equal_to([{"plugin_uuid": "com.decker.broken", "error": "boom"}])
 
 
 class TestPluginsActionsList:
     def test_returns_empty_list_when_no_context_configured(self):
-        assert_that(DeckerService().plugins_actions_list()).is_equal_to([])
+        assert_that(json.loads(DeckerService().plugins_actions_list())).is_equal_to([])
 
     def test_returns_actions_from_plugin_manager(self, store, manager):
         manager.list_actions.return_value = [
             {"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}
         ]
         DeckerService.configure_context(_make_context(manager, store))
-        result = DeckerService().plugins_actions_list()
+        result = json.loads(DeckerService().plugins_actions_list())
         assert_that(result).is_equal_to(
             [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
         )
@@ -193,13 +193,13 @@ class TestKeyUpdateSettings:
 
 class TestKeyGetDisplayStates:
     def test_returns_empty_without_context(self):
-        assert_that(DeckerService().key_get_display_states("dev1")).is_empty()
+        assert_that(json.loads(DeckerService().key_get_display_states("dev1"))).is_empty()
 
     def test_returns_states_with_labels(self, service, manager, store):
         target = _make_target()
         store.assign("dev1", 0, target, {"step": 2})
         manager.get_key_display_states.return_value = [{"key_index": 0, "label": "5"}]
-        states = service.key_get_display_states("dev1")
+        states = json.loads(service.key_get_display_states("dev1"))
         assert_that(states).is_length(1)
         assert_that(states[0]["label"]).is_equal_to("5")
         assert_that(states[0]["key_index"]).is_equal_to(0)

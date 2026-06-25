@@ -1,5 +1,6 @@
 """Tests for decker.client.connection_manager."""
 
+import json
 import time
 from unittest.mock import MagicMock, patch
 
@@ -29,7 +30,9 @@ class TestConnectionManager:
     @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
     def test_try_connect_success_marks_connected_and_pushes_events(self, mock_connect: MagicMock):
         mock_conn = MagicMock()
-        mock_conn.root.devices_list.return_value = [{"id": "abc123", "serial": "X"}]
+        mock_conn.root.devices_list.return_value = json.dumps([{"id": "abc123", "serial": "X"}])
+        mock_conn.root.plugins_load_failures.return_value = json.dumps([])
+        mock_conn.root.plugins_actions_list.return_value = json.dumps([])
         mock_connect.return_value = mock_conn
 
         self.manager._try_connect()  # pylint: disable=protected-access
@@ -66,8 +69,10 @@ class TestConnectionManager:
 
     def test_check_heartbeat_success_refreshes_devices(self):
         mock_conn = MagicMock()
-        mock_conn.root.heartbeat.return_value = {"status": "healthy"}
-        mock_conn.root.devices_list.return_value = [{"id": "abc123"}]
+        mock_conn.root.heartbeat.return_value = json.dumps({"status": "healthy"})
+        mock_conn.root.devices_list.return_value = json.dumps([{"id": "abc123"}])
+        mock_conn.root.plugins_load_failures.return_value = json.dumps([])
+        mock_conn.root.plugins_actions_list.return_value = json.dumps([])
         self.manager._conn = mock_conn  # pylint: disable=protected-access
         self.manager.connected = True
 
@@ -90,8 +95,11 @@ class TestConnectionManager:
     @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
     def test_try_connect_pushes_plugin_load_failed_event(self, mock_connect: MagicMock):
         mock_conn = MagicMock()
-        mock_conn.root.devices_list.return_value = []
-        mock_conn.root.plugins_load_failures.return_value = [{"plugin_uuid": "com.decker.broken", "error": "boom"}]
+        mock_conn.root.devices_list.return_value = json.dumps([])
+        mock_conn.root.plugins_load_failures.return_value = json.dumps(
+            [{"plugin_uuid": "com.decker.broken", "error": "boom"}]
+        )
+        mock_conn.root.plugins_actions_list.return_value = json.dumps([])
         mock_connect.return_value = mock_conn
 
         self.manager._try_connect()  # pylint: disable=protected-access
@@ -104,7 +112,9 @@ class TestConnectionManager:
 
     def test_plugin_failure_is_only_reported_once(self):
         mock_conn = MagicMock()
-        mock_conn.root.plugins_load_failures.return_value = [{"plugin_uuid": "com.decker.broken", "error": "boom"}]
+        mock_conn.root.plugins_load_failures.return_value = json.dumps(
+            [{"plugin_uuid": "com.decker.broken", "error": "boom"}]
+        )
         self.manager._conn = mock_conn  # pylint: disable=protected-access
 
         self.manager._check_plugin_failures()  # pylint: disable=protected-access
@@ -116,10 +126,11 @@ class TestConnectionManager:
     @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
     def test_try_connect_pushes_action_list_updated_event(self, mock_connect: MagicMock):
         mock_conn = MagicMock()
-        mock_conn.root.devices_list.return_value = []
-        mock_conn.root.plugins_actions_list.return_value = [
-            {"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}
-        ]
+        mock_conn.root.devices_list.return_value = json.dumps([])
+        mock_conn.root.plugins_load_failures.return_value = json.dumps([])
+        mock_conn.root.plugins_actions_list.return_value = json.dumps(
+            [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
+        )
         mock_connect.return_value = mock_conn
 
         self.manager._try_connect()  # pylint: disable=protected-access
@@ -132,11 +143,12 @@ class TestConnectionManager:
 
     def test_check_heartbeat_success_refreshes_actions(self):
         mock_conn = MagicMock()
-        mock_conn.root.heartbeat.return_value = {"status": "healthy"}
-        mock_conn.root.devices_list.return_value = []
-        mock_conn.root.plugins_actions_list.return_value = [
-            {"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}
-        ]
+        mock_conn.root.heartbeat.return_value = json.dumps({"status": "healthy"})
+        mock_conn.root.devices_list.return_value = json.dumps([])
+        mock_conn.root.plugins_load_failures.return_value = json.dumps([])
+        mock_conn.root.plugins_actions_list.return_value = json.dumps(
+            [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
+        )
         self.manager._conn = mock_conn  # pylint: disable=protected-access
         self.manager.connected = True
 
@@ -175,7 +187,9 @@ class TestConnectionManager:
 
     def test_refresh_key_display_states_pushes_event(self):
         mock_conn = MagicMock()
-        mock_conn.root.key_get_display_states.return_value = [{"key_index": 0, "label": "5", "settings": {}}]
+        mock_conn.root.key_get_display_states.return_value = json.dumps(
+            [{"key_index": 0, "label": "5", "settings": {}}]
+        )
         self.manager._conn = mock_conn  # pylint: disable=protected-access
         AppContext.reset()
         AppContext.get().active_device = "dev1"

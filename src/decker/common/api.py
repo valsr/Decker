@@ -1,10 +1,11 @@
+import json
 import logging
 from typing import Any, TypeVar
 
 import rpyc
 import rpyc.utils.factory
 
-from decker.common.coerce import coerce
+from decker.common.coerce import from_dict
 
 T = TypeVar("T")
 
@@ -55,18 +56,18 @@ class ApiHandler:
         return response
 
     def request_as(self, target_type: Any, func_name: str, *args, **kwargs) -> Any:
-        """Call a remote function and deserialize the result into target_type.
+        """Call a remote function and deserialize the JSON result into target_type.
 
-        Supports plain types, dataclasses (from dict), and generic aliases such as
-        list[SomeDataclass] or dict[str, SomeDataclass].
+        The server encodes complex responses as JSON strings (brine-safe). This
+        method decodes them and reconstructs typed Python objects via from_dict.
         Returns None if the response is None or conversion fails.
         """
         response = self.request(func_name, *args, **kwargs)
         if response is None:
             return None
         try:
-            v = coerce(target_type, response)
-            return v
+            data = json.loads(response)
+            return from_dict(target_type, data)
         except Exception as exc:  # pylint: disable=broad-except
             name = getattr(target_type, "__name__", repr(target_type))
             logging.warning("Could not convert response to %s: %s", name, exc)

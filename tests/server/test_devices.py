@@ -1,10 +1,9 @@
 """Tests for device enumeration and device ID utilities."""
 
 import zlib
-
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from assertpy import assert_that
 
 from decker.server.devices.manager import DeviceManager, device_id_for_serial

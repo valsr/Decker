@@ -1,5 +1,6 @@
 """Owns the RPyC connection and its background worker thread. No Qt imports."""
 
+import json
 import logging
 import threading
 from typing import Any
@@ -80,9 +81,16 @@ class ConnectionManager:
         self._check_plugin_failures()
         self._refresh_key_display_states()
 
+    def _call_json(self, method: str, *args: Any) -> Any:
+        """Call an RPC method that returns a JSON string and decode it."""
+        if self._conn is None:
+            return None
+        result = getattr(self._conn.root, method)(*args)
+        return json.loads(result)
+
     def _check_heartbeat(self) -> None:
         try:
-            response = self._conn.root.heartbeat()  # type: ignore[union-attr]
+            response: dict[str, Any] = self._call_json("heartbeat")
             if response.get("status") != "healthy":
                 raise ValueError(f"unexpected response: {response!r}")
         except Exception as e:  # pylint: disable=broad-except
@@ -99,7 +107,7 @@ class ConnectionManager:
         if self._conn is None:
             return
         try:
-            failures: list[dict[str, Any]] = [dict(f) for f in self._conn.root.plugins_load_failures()]
+            failures: list[dict[str, Any]] = self._call_json("plugins_load_failures")
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not fetch plugin load failures: %s", e)
             return
@@ -114,7 +122,7 @@ class ConnectionManager:
         if self._conn is None:
             return
         try:
-            devices: list[dict[str, Any]] = [dict(d) for d in self._conn.root.devices_list()]
+            devices: list[dict[str, Any]] = self._call_json("devices_list")
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not list devices: %s", e)
             return
@@ -124,7 +132,7 @@ class ConnectionManager:
         if self._conn is None:
             return
         try:
-            actions: list[dict[str, Any]] = [dict(a) for a in self._conn.root.plugins_actions_list()]
+            actions: list[dict[str, Any]] = self._call_json("plugins_actions_list")
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not list plugin actions: %s", e)
             return
@@ -151,11 +159,7 @@ class ConnectionManager:
         if device_id is None:
             return
         try:
-            raw = self._conn.root.key_get_display_states(device_id)
-            states: list[dict[str, Any]] = [dict(s) for s in raw]
-            for state in states:
-                if "settings" in state and not isinstance(state["settings"], dict):
-                    state["settings"] = dict(state["settings"])
+            states: list[dict[str, Any]] = self._call_json("key_get_display_states", device_id)
         except Exception as exc:  # pylint: disable=broad-except
             logging.warning("Could not fetch key display states: %s", exc)
             return

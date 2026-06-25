@@ -2,6 +2,7 @@
 
 # pylint: disable=duplicate-code  # intentionally similar cleanup pattern to client/app.py; no shared base warranted
 
+import json
 from typing import Any
 
 import rpyc.utils.factory
@@ -34,14 +35,19 @@ class CliConnection:
             self._conn = None
 
     def request(self, rpc_name: str, *args: Any) -> Any:
-        """Call a remote method by name."""
+        """Call a remote method by name, decoding JSON responses automatically."""
         if self._conn is None:
             raise RuntimeError("Not connected — use as a context manager")
-        return getattr(self._conn.root, rpc_name)(*args)
+        result = getattr(self._conn.root, rpc_name)(*args)
+        if isinstance(result, str):
+            try:
+                return json.loads(result)
+            except (json.JSONDecodeError, ValueError):
+                return result
+        return result
 
     def commands(self) -> dict[str, dict[str, str]]:
         """Fetch command metadata from the server."""
         if self._conn is None:
             raise RuntimeError("Not connected — use as a context manager")
-        remote = self._conn.root.commands()
-        return {str(k): {str(ik): str(iv) for ik, iv in v.items()} for k, v in remote.items()}
+        return json.loads(self._conn.root.commands())
