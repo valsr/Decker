@@ -177,7 +177,11 @@ class ServerMonitor:
 
             button = random.randint(0, device.num_keys - 1)
             button_def = device.keys[button]
-            img = Image.new("RGB", (button_def.pixel_width, button_def.pixel_height), (255, 0, 0))
+            img = Image.new(
+                "RGB",
+                (button_def.pixel_width, button_def.pixel_height),
+                (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)),
+            )
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             logging.debug("Button dimensions: %d x %d", button_def.pixel_width, button_def.pixel_height)
