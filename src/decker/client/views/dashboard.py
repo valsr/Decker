@@ -42,7 +42,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self.resize(900, 700)
         self._ui_state_store = ui_state_store or UiStateStore()
         self._devices: list[dict[str, Any]] = []
-        self._active_device_serial: str | None = None
+        self._active_device_id: str | None = None
         self._last_expanded_sidebar_width = _DEFAULT_SIDEBAR_WIDTH
         self._page_model = MockPageModel(key_count=_DEFAULT_KEY_COUNT)
         self._device_popup: DeviceSwitcherPopup | None = None
@@ -161,28 +161,32 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._devices = devices
         active_device = AppContext.get().active_device
         if active_device is None and devices:
-            active_device = str(devices[0].get("serial") or "")
+            active_device = str(devices[0].get("id") or "")
             window = AppContext.get().window
             if window is not None:
                 window.set_active_device(active_device)
         self._refresh_grid_for_device(active_device)
 
-    def _refresh_grid_for_device(self, serial: str | None) -> None:
-        if serial == self._active_device_serial:
+    def _refresh_grid_for_device(self, device_id: str | None) -> None:
+        if device_id == self._active_device_id:
             return
-        self._active_device_serial = serial
+        self._active_device_id = device_id
         self._key_slots = {}
         self._selected_key = None
         self._config_panel.show_placeholder()
-        key_count = self._key_count_for_serial(serial)
+        key_count = self._key_count_for_device(device_id)
         self._page_model = MockPageModel(key_count=key_count)
         self._grid.set_key_count(key_count)
         self._pill_bar.set_pages(self._page_model.pages)
 
-    def _key_count_for_serial(self, serial: str | None) -> int:
+    def _key_count_for_device(self, device_id: str | None) -> int:
         for device in self._devices:
-            if str(device.get("serial")) == serial:
-                return int(device.get("keys", _DEFAULT_KEY_COUNT))
+            if str(device.get("id")) == device_id:
+                num_keys = device.get("num_keys")
+                if num_keys is not None:
+                    return int(num_keys)
+                keys = device.get("keys", [])
+                return len(keys) if isinstance(keys, list) else _DEFAULT_KEY_COUNT
         return _DEFAULT_KEY_COUNT
 
     def _show_device_switcher(self) -> None:
@@ -265,8 +269,10 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             key_index = int(state.get("key_index", -1))
             if key_index < 0:
                 continue
-            label = str(state.get("label", ""))
-            self._grid.set_key_label(key_index, label)
+            image_b64: str | None = state.get("image_b64")
+            self._grid.set_key_image(key_index, image_b64)
+            if not image_b64:
+                self._grid.set_key_label(key_index, str(state.get("label", "")))
             # Keep slot metadata in sync with server state.
             if key_index not in self._key_slots:
                 self._key_slots[key_index] = {

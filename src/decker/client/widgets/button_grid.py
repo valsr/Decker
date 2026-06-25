@@ -1,11 +1,12 @@
 """Button grid matching the active device's key layout."""
 
+import base64
 import json
 import math
 from typing import Any
 
-from PyQt6.QtCore import QByteArray, QMimeData, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QDrag, QMouseEvent
+from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QDrag, QIcon, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import QGridLayout, QPushButton, QVBoxLayout, QWidget
 
 # (rows, cols) for known Stream Deck key counts; unknown counts fall back to a near-square grid.
@@ -53,7 +54,23 @@ class KeyButtonWidget(QPushButton):
     def set_label(self, label: str) -> None:
         """Update the display label (shows label if set, otherwise key number)."""
         self._label = label
+        if not self.icon().isNull():
+            return  # image takes precedence; label shown as overlay only if no image
         self._refresh_text()
+
+    def set_image(self, image_b64: str | None) -> None:
+        """Set or clear the key image from a base64-encoded PNG."""
+        if not image_b64:
+            self.setIcon(QIcon())
+            self.setIconSize(QSize(0, 0))
+            self._refresh_text()
+            return
+        raw = base64.b64decode(image_b64)
+        pixmap = QPixmap()
+        pixmap.loadFromData(QByteArray(raw))
+        self.setIcon(QIcon(pixmap))
+        self.setIconSize(QSize(68, 68))
+        self.setText("")
 
     # ------------------------------------------------------------------
     # Long-press override
@@ -147,3 +164,8 @@ class ButtonGridWidget(QWidget):
         """Update the display label for a single key button."""
         if button := self._buttons.get(key_index):
             button.set_label(label)
+
+    def set_key_image(self, key_index: int, image_b64: str | None) -> None:
+        """Update the image for a single key button from a base64-encoded PNG."""
+        if button := self._buttons.get(key_index):
+            button.set_image(image_b64)

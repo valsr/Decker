@@ -15,8 +15,8 @@ from decker.client.view_name import ViewName
 from decker.client.views.dashboard import DashboardView
 
 _DEVICES = [
-    {"type": "Stream Deck", "serial": "ABC123", "keys": 15},
-    {"type": "Stream Deck Mini", "serial": "XYZ999", "keys": 6},
+    {"id": "aabbccdd", "type": "Stream Deck", "serial": "ABC123", "num_keys": 15, "keys": []},
+    {"id": "11223344", "type": "Stream Deck Mini", "serial": "XYZ999", "num_keys": 6, "keys": []},
 ]
 
 
@@ -45,11 +45,11 @@ class TestDeviceListHandling:
 
         view.handle_event(DeviceListUpdatedEvent(devices=_DEVICES))
 
-        mock_window.set_active_device.assert_called_once_with("ABC123")
+        mock_window.set_active_device.assert_called_once_with("aabbccdd")
 
     def test_does_not_override_already_active_device(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "XYZ999"
+        AppContext.get().active_device = "11223344"
         mock_window = MagicMock()
         AppContext.get().window = mock_window
 
@@ -59,7 +59,7 @@ class TestDeviceListHandling:
 
     def test_grid_resizes_to_active_devices_key_count(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "XYZ999"
+        AppContext.get().active_device = "11223344"
 
         view.handle_event(DeviceListUpdatedEvent(devices=_DEVICES))
 
@@ -77,7 +77,7 @@ class TestDeviceListHandling:
 
     def test_same_device_does_not_rebuild_grid(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "ABC123"
+        AppContext.get().active_device = "aabbccdd"
         view.handle_event(DeviceListUpdatedEvent(devices=_DEVICES))
 
         with patch.object(view._grid, "set_key_count") as mock_set:  # pylint: disable=protected-access
@@ -180,9 +180,9 @@ class TestDeviceSwitcher:
         AppContext.get().window = mock_window
         view._devices = _DEVICES  # pylint: disable=protected-access
 
-        view._on_device_selected("XYZ999")  # pylint: disable=protected-access
+        view._on_device_selected("11223344")  # pylint: disable=protected-access
 
-        mock_window.set_active_device.assert_called_once_with("XYZ999")
+        mock_window.set_active_device.assert_called_once_with("11223344")
         assert_that(view._grid.key_count).is_equal_to(6)  # pylint: disable=protected-access
 
 

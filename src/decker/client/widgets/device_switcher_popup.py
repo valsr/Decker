@@ -21,10 +21,11 @@ class DeviceSwitcherPopup(QFrame):
 
         self._list = QListWidget()
         for device in devices:
+            device_id = str(device.get("id") or "")
             serial = str(device.get("serial") or "")
             device_type = str(device.get("type", "Stream Deck"))
             item = QListWidgetItem(f"{device_type}  ·  {serial}")
-            item.setData(1, serial)
+            item.setData(1, device_id)
             self._list.addItem(item)
         self._list.itemClicked.connect(self._on_item_clicked)
 

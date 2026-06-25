@@ -43,7 +43,7 @@ class DeviceManager(Manager):
     """Opens Stream Deck devices on first request and caches one Device instance per device ID."""
 
     def __init__(self, on_key_event: _KeyEventCallback) -> None:
-        self._on_key_event = on_key_event
+        self._on_key_event_cb = on_key_event
         self._devices: dict[str, Device] = {}
         self._lock = threading.Lock()
 
@@ -58,6 +58,10 @@ class DeviceManager(Manager):
         for device in devices:
             device.close()
         logging.info("DeviceManager: closed all devices")
+
+    def _on_hw_key_event(self, device: Device, key_index: int, pressed: bool) -> None:
+        device.on_key_event(key_index, pressed)
+        self._on_key_event_cb(device.device_id, key_index, pressed)
 
     def _on_device_closed(self, device_id: str) -> None:
         with self._lock:
@@ -136,7 +140,7 @@ class DeviceManager(Manager):
             id = device_id_for_serial(serial)
             device = Device(id, serial, deck, self._on_device_closed)
             deck.set_key_callback(
-                lambda _, key_index, pressed: self._on_key_event(device.device_id, key_index, pressed)
+                lambda _, key_index, pressed, dev=device: self._on_hw_key_event(dev, key_index, pressed)
             )
             self._devices[device.device_id] = device
             return device

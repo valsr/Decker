@@ -128,7 +128,7 @@ class TestDevice:
             patch("decker.server.devices.AssetRenderer") as mock_renderer_cls,
         ):
             mock_renderer_cls.return_value.render_bytes.return_value = MagicMock()
-            mock_pil.create_scaled_key_image.return_value = b"scaled"
+            mock_pil.create_scaled_key_image.return_value = MagicMock()  # PIL Image mock
             mock_pil.to_native_key_format.return_value = b"native"
             device = Device("abc12345", "ABC123", deck)
             device.set_image_bytes(0, b"img")
