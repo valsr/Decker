@@ -171,14 +171,17 @@ class ServerMonitor:
                 return
 
             # Generate a simple image (red square) and send it to the first key of the first device, ignoring any errors since this is just a demo
+            import io
+
             from PIL import Image
 
-            button = random.randint(0, device.num_keys)
+            button = random.randint(0, device.num_keys - 1)
             button_def = device.keys[button]
             img = Image.new("RGB", (button_def.pixel_width, button_def.pixel_height), (255, 0, 0))
-            img_bytes = img.tobytes()
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
             logging.debug("Button dimensions: %d x %d", button_def.pixel_width, button_def.pixel_height)
-            API.request("set_image", device.id, button, img_bytes)
+            API.request("set_image", device.id, button, buf.getvalue())
             logging.info("DEMO: Draw command sent to device %s key %s", device.id, button)
         except Exception as e:
             logging.warning("DEMO command failed: %s", e)
