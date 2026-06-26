@@ -26,6 +26,7 @@ def _make_context(plugin_manager: MagicMock, store: KeyAssignmentStore) -> Serve
         icon_pack_manager=MagicMock(),
         key_assignment_store=store,
         device_state_store=MagicMock(),
+        event_bus=MagicMock(),
     )
 
 
@@ -157,6 +158,7 @@ class TestKeyAssign:
                 icon_pack_manager=MagicMock(),
                 key_assignment_store=store,
                 device_state_store=MagicMock(),
+                event_bus=MagicMock(),
             )
         )
         DeckerService().key_assign("dev1", 0, "com.p", "com.p.a", "ctx1")
