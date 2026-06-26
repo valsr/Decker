@@ -32,6 +32,7 @@ from decker.client.views import (
     ErrorView,
     SettingsView,
 )
+from decker.common.model import DeviceHardwareInfo
 
 _WINDOW_GEOMETRY_KEY = "window_geometry"
 
@@ -83,14 +84,14 @@ class MainWindow(QMainWindow):
         self._views[name].on_activate()
         EventManager.get().emit(ViewActivatedEvent(name))
 
-    def switch_device(self, serial: str) -> None:
+    def switch_device(self, device: DeviceHardwareInfo) -> None:
         """Set the active device and navigate to the device view."""
-        AppContext.get().active_device = serial
+        AppContext.get().active_device = device
         self.switch_to(ViewName.DEVICE)
 
-    def set_active_device(self, serial: str) -> None:
+    def set_active_device(self, device: DeviceHardwareInfo) -> None:
         """Set the active device without changing the active view."""
-        AppContext.get().active_device = serial
+        AppContext.get().active_device = device
 
     def dispatch(self, event: AppEvent) -> None:
         """Route an event through the EventManager. Kept for backward compatibility."""

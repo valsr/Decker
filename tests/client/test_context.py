@@ -3,6 +3,7 @@
 from assertpy import assert_that
 
 from decker.client.context import AppContext
+from decker.common.model import DeviceHardwareInfo
 
 
 class TestAppContext:
@@ -22,7 +23,7 @@ class TestAppContext:
     def test_reset_replaces_instance_with_fresh_state(self):
         ctx = AppContext.get()
         ctx.connected = True
-        ctx.active_device = "abc123"
+        ctx.active_device = DeviceHardwareInfo(id="abc123", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15)
 
         AppContext.reset()
         new_ctx = AppContext.get()

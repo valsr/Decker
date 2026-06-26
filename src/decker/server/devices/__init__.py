@@ -139,6 +139,10 @@ class Device:
         keys = [
             KeyInfo(row=r, col=c, pixel_width=w, pixel_height=h, type="key") for r in range(rows) for c in range(cols)
         ]
+        try:
+            firmware: str | None = self._device.get_firmware_version()
+        except Exception:  # pylint: disable=broad-except
+            firmware = None
         return DeviceHardwareInfo(
             id=self.id,
             type=self._device.deck_type(),
@@ -148,6 +152,7 @@ class Device:
             keys=keys,
             serial=self.serial,
             path=self.path,
+            firmware=firmware,
         )
 
     def on_key_event(self, key_index: int, pressed: bool) -> None:

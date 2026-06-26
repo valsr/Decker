@@ -3,11 +3,11 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeyEvent
 
 from decker.client.widgets.device_switcher_popup import DeviceSwitcherPopup
+from decker.common.model import DeviceHardwareInfo
 
-_DEVICES = [
-    {"id": "aabbccdd", "type": "Stream Deck", "serial": "ABC123"},
-    {"id": "11223344", "type": "Stream Deck XL", "serial": "XYZ999"},
-]
+_D1 = DeviceHardwareInfo(id="aabbccdd", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15, serial="ABC123")
+_D2 = DeviceHardwareInfo(id="11223344", type="Stream Deck XL", vendor_id=0, product_id=0, num_keys=32, serial="XYZ999")
+_DEVICES = [_D1, _D2]
 
 
 class TestDeviceSwitcherPopup:
@@ -21,20 +21,21 @@ class TestDeviceSwitcherPopup:
         assert item is not None
         assert_that(item.text()).contains("Stream Deck").contains("ABC123")
 
-    def test_clicking_item_emits_device_selected_with_id(self, qapp):  # pylint: disable=unused-argument
+    def test_clicking_item_emits_device_selected_with_device_object(self, qapp):  # pylint: disable=unused-argument
         popup = DeviceSwitcherPopup(_DEVICES)
-        received: list[str] = []
+        received: list[DeviceHardwareInfo] = []
         popup.device_selected.connect(received.append)
 
         item = popup._list.item(1)  # pylint: disable=protected-access
         assert item is not None
         popup._on_item_clicked(item)  # pylint: disable=protected-access
 
-        assert_that(received).is_equal_to(["11223344"])
+        assert_that(received).is_length(1)
+        assert_that(received[0].id).is_equal_to("11223344")
 
     def test_escape_key_closes_without_emitting(self, qapp):  # pylint: disable=unused-argument
         popup = DeviceSwitcherPopup(_DEVICES)
-        received: list[str] = []
+        received: list[DeviceHardwareInfo] = []
         popup.device_selected.connect(received.append)
         popup.show()
 

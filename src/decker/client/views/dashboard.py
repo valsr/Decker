@@ -25,6 +25,7 @@ from decker.client.widgets.button_grid import ButtonGridWidget
 from decker.client.widgets.device_switcher_popup import DeviceSwitcherPopup
 from decker.client.widgets.page_pill_bar import PagePillBar
 from decker.client.widgets.sidebar import SidebarWidget
+from decker.common.model import DeviceHardwareInfo
 
 _DEFAULT_SIDEBAR_WIDTH = 240
 _DEFAULT_KEY_COUNT = 15
@@ -41,7 +42,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         super().__init__()
         self.resize(900, 700)
         self._ui_state_store = ui_state_store or UiStateStore()
-        self._devices: list[dict[str, Any]] = []
+        self._devices: list[DeviceHardwareInfo] = []
         self._active_device_id: str | None = None
         self._last_expanded_sidebar_width = _DEFAULT_SIDEBAR_WIDTH
         self._page_model = MockPageModel(key_count=_DEFAULT_KEY_COUNT)
@@ -51,6 +52,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
 
         self._sidebar = SidebarWidget()
         self._pill_bar = PagePillBar()
+        # Get device configuration
+
         self._grid = ButtonGridWidget()
         self._config_panel = ActionConfigPanel()
 
@@ -79,7 +82,6 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._content_splitter.resize(self._main_splitter.size())
 
         self._wire_signals()
-        self._grid.set_key_count(_DEFAULT_KEY_COUNT)
         self._pill_bar.set_pages(self._page_model.pages)
         self._restore_state()
 
@@ -157,37 +159,29 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     # Devices and key grid
     # ------------------------------------------------------------------
 
-    def _on_devices_updated(self, devices: list[dict[str, Any]]) -> None:
+    def _on_devices_updated(self, devices: list[DeviceHardwareInfo]) -> None:
         self._devices = devices
         active_device = AppContext.get().active_device
         if active_device is None and devices:
-            active_device = str(devices[0].get("id") or "")
+            active_device = devices[0]
             window = AppContext.get().window
             if window is not None:
                 window.set_active_device(active_device)
         self._refresh_grid_for_device(active_device)
 
-    def _refresh_grid_for_device(self, device_id: str | None) -> None:
+    def _refresh_grid_for_device(self, device: DeviceHardwareInfo | None) -> None:
+        device_id = device.id if device is not None else None
         if device_id == self._active_device_id:
             return
         self._active_device_id = device_id
         self._key_slots = {}
         self._selected_key = None
         self._config_panel.show_placeholder()
-        key_count = self._key_count_for_device(device_id)
+        keys = device.keys if device is not None else []
+        key_count = device.num_keys if device is not None else _DEFAULT_KEY_COUNT
         self._page_model = MockPageModel(key_count=key_count)
-        self._grid.set_key_count(key_count)
+        self._grid.build(keys)
         self._pill_bar.set_pages(self._page_model.pages)
-
-    def _key_count_for_device(self, device_id: str | None) -> int:
-        for device in self._devices:
-            if str(device.get("id")) == device_id:
-                num_keys = device.get("num_keys")
-                if num_keys is not None:
-                    return int(num_keys)
-                keys = device.get("keys", [])
-                return len(keys) if isinstance(keys, list) else _DEFAULT_KEY_COUNT
-        return _DEFAULT_KEY_COUNT
 
     def _show_device_switcher(self) -> None:
         popup = DeviceSwitcherPopup(self._devices, parent=self)
@@ -195,11 +189,11 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         popup.show_above(self._sidebar.device_switcher_button)
         self._device_popup = popup
 
-    def _on_device_selected(self, serial: str) -> None:
+    def _on_device_selected(self, device: DeviceHardwareInfo) -> None:
         window = AppContext.get().window
         if window is not None:
-            window.set_active_device(serial)
-        self._refresh_grid_for_device(serial)
+            window.set_active_device(device)
+        self._refresh_grid_for_device(device)
 
     # ------------------------------------------------------------------
     # Key grid interactions
@@ -216,14 +210,14 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         else:
             self._config_panel.show_placeholder()
         # Simulate a short press so the counter increments.
-        device_id = AppContext.get().active_device
+        device_id = AppContext.get().active_device_id
         if device_id and index in self._key_slots:
             cm = AppContext.get().connection_manager
             if cm is not None:
                 cm.call("key_simulate_press", device_id, index)
 
     def _on_key_long_pressed(self, index: int) -> None:
-        device_id = AppContext.get().active_device
+        device_id = AppContext.get().active_device_id
         if not device_id or index not in self._key_slots:
             return
         cm = AppContext.get().connection_manager
@@ -231,7 +225,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             cm.call("key_simulate_long_press", device_id, index)
 
     def _on_action_dropped(self, key_index: int, action_data: Any) -> None:
-        device_id = AppContext.get().active_device
+        device_id = AppContext.get().active_device_id
         if not device_id:
             return
         plugin_uuid = str(action_data.get("plugin_uuid", ""))
@@ -263,7 +257,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             logging.debug("Assigned %s/%s to key %d", plugin_uuid, action_uuid, key_index)
 
     def _on_display_states_updated(self, device_id: str, states: list[dict[str, Any]]) -> None:
-        if device_id != AppContext.get().active_device:
+        if device_id != AppContext.get().active_device_id:
             return
         for state in states:
             key_index = int(state.get("key_index", -1))
@@ -298,7 +292,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         return _cb
 
     def _save_key_settings(self, key_index: int, settings: dict[str, Any]) -> None:
-        device_id = AppContext.get().active_device
+        device_id = AppContext.get().active_device_id
         if not device_id:
             return
         cm = AppContext.get().connection_manager

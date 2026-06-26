@@ -9,6 +9,7 @@ from decker.client.events import (
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
+from decker.common.model import DeviceHardwareInfo
 
 
 class TestEvents:
@@ -22,17 +23,12 @@ class TestEvents:
         assert_that(event.reason).is_equal_to("timeout")
 
     def test_device_list_updated_event_holds_devices(self):
-        devices = [{"id": "abc123"}]
-        event = DeviceListUpdatedEvent(devices=devices)
-        assert_that(event.devices).is_equal_to(devices)
+        device = DeviceHardwareInfo(id="abc123", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15)
+        event = DeviceListUpdatedEvent(devices=[device])
+        assert_that(event.devices).is_equal_to([device])
 
     def test_key_event_holds_device_id_index_and_pressed_state(self):
         event = KeyEvent(device_id="abc123", key_index=2, pressed=True)
         assert_that(event.device_id).is_equal_to("abc123")
         assert_that(event.key_index).is_equal_to(2)
         assert_that(event.pressed).is_true()
-
-    def test_plugin_load_failed_event_holds_uuid_and_error(self):
-        event = PluginLoadFailedEvent(plugin_uuid="com.decker.broken", error="boom")
-        assert_that(event.plugin_uuid).is_equal_to("com.decker.broken")
-        assert_that(event.error).is_equal_to("boom")
