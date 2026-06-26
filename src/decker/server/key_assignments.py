@@ -7,13 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from decker.common import paths as decker_paths
 from decker.common.manager import Manager
 from decker.plugin.context import ActionTarget
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
-
-_DEFAULT_DB_PATH = Path.home() / ".decker" / "decker.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS key_assignments (
@@ -39,9 +38,9 @@ class KeyAssignment:
 class KeyAssignmentStore(Manager):
     """Persists and retrieves key→action mappings from decker.db."""
 
-    def __init__(self, db_path: str | Path = _DEFAULT_DB_PATH) -> None:
+    def __init__(self, db_path: str | Path | None = None) -> None:
         self._lock = threading.Lock()
-        self._db_path = Path(db_path)
+        self._db_path = Path(db_path) if db_path is not None else decker_paths.db()
         self._conn: sqlite3.Connection | None = None
 
     def create(self, context: "ServerContext") -> None:

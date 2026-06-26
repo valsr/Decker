@@ -3,12 +3,14 @@
 import logging
 import multiprocessing
 import signal
+import sys
 from typing import Any
 
 from rpyc.utils.server import ThreadPoolServer
 
 import decker.common.logging
 from decker.asset.iconpack import IconPackManager
+from decker.common import paths as decker_paths
 from decker.common.context import ServerAppContext
 from decker.common.manager import Manager
 from decker.server.device_state_store import DeviceStateStore
@@ -134,11 +136,15 @@ class ServerProcess:
         else:
             self._context.plugin_manager.dispatch_key_up(assignment.target)
 
-    def _replay_assignments(self) -> None:
-        """Re-activate all persisted key assignments and reopen their devices."""
+    def _replay_assignments(self, device_id_filter: str | None = None) -> None:
+        """Re-activate all persisted key assignments and reopen their devices.
+
+        If device_id_filter is given, only replay assignments for that device.
+        """
         if self._context is None:
             return
-        device_ids = {info.id for info in self._context.device_manager.list_devices() if info.id is not None}
+        all_ids = {info.id for info in self._context.device_manager.list_devices() if info.id is not None}
+        device_ids = {device_id_filter} & all_ids if device_id_filter else all_ids
         pm = self._context.plugin_manager
         dm = self._context.device_manager
         ks = self._context.key_assignment_store
@@ -153,9 +159,10 @@ class ServerProcess:
                 )
                 pm.activate_action(assignment.target)
 
-    def _restore_device_state(self) -> None:
-        """Push cached key images back to every currently connected device.
+    def _restore_device_state(self, device_id_filter: str | None = None) -> None:
+        """Push cached key images back to connected devices.
 
+        If device_id_filter is given, only restore state for that device.
         Labels are already in DeviceState memory after open_device() calls restore_from_store().
         Images need to be explicitly re-pushed to the hardware after a server restart.
         """
@@ -166,6 +173,8 @@ class ServerProcess:
             if info.id is None:
                 continue
             device_id = info.id
+            if device_id_filter and device_id != device_id_filter:
+                continue
             device = dm.open_device(device_id)
             if device is None:
                 continue
@@ -174,6 +183,18 @@ class ServerProcess:
                 continue
             for key_index, image in device_state.get_all_images():
                 device.set_image_bytes(key_index, image)
+
+    def _resolve_target_device(self, target: str) -> str | None:
+        """Find a connected device matching the given ID or USB path.
+
+        Returns the device ID if found, or None if no match.
+        """
+        if self._context is None:
+            return None
+        for info in self._context.device_manager.list_devices():
+            if info.id == target or info.path == target:
+                return info.id
+        return None
 
     def _signal_handler(self, signum: int, _: Any) -> None:
         """Graceful shutdown: close the RPyC server."""
@@ -186,10 +207,10 @@ class ServerProcess:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        # generate server id for this process
-        self.server_id = f"{self.pid or 'unknown'}"
+        # Re-apply prefix configuration in the subprocess (safe with fork; required with spawn).
+        decker_paths.configure(self._app_context.prefix)
 
-        # reconfigure logging
+        self.server_id = f"{self.pid or 'unknown'}"
         decker.common.logging.configure(
             self._app_context.verbosity, server_id=self.server_id, log_others=self._app_context.log_others
         )
@@ -206,28 +227,44 @@ class ServerProcess:
             icon_pack_manager=icon_pack_manager,
             key_assignment_store=key_store,
             device_state_store=state_store,
-            server=None,  # set after server creation
+            server=None,
         )
 
-        # Create managers in order of dependencies (managers can depend on previously created ones via the context)
         ctx = self._context
         assert ctx is not None
         for manager in [icon_pack_manager, state_store, key_store, device_manager, plugin_manager]:
             manager.create(ctx)
 
-        self._replay_assignments()
-        self._restore_device_state()
+        # Resolve the target device (if --device was passed).
+        matched_device_id: str | None = None
+        if self._app_context.target_device is not None:
+            matched_device_id = self._resolve_target_device(self._app_context.target_device)
+            if matched_device_id is None:
+                logging.error("Device not found: %s", self._app_context.target_device)
+                for manager in [plugin_manager, device_manager, key_store, state_store, icon_pack_manager]:
+                    self._try_destroy_manager(manager)
+                sys.exit(1)
+
+        # Reset device state if requested.
+        if self._app_context.reset_device_data:
+            if matched_device_id is not None:
+                state_store.delete_all_key_state_for_device(matched_device_id)
+            else:
+                state_store.delete_all_key_state()
+
+        self._replay_assignments(device_id_filter=matched_device_id)
+        self._restore_device_state(device_id_filter=matched_device_id)
 
         server = ThreadPoolServer(
             DeckerService,
             port=self.port,
             protocol_config={"allow_public_attrs": True},
         )
-        self._context.server = server  # circular reference, but should be fine since they have the same lifecycle
+        self._context.server = server
         DeckerService.configure_context(self._context)
         logging.info("RPyC server listening on port %d", self.port)
         try:
-            server.start()  # blocks until close() is called
+            server.start()
         finally:
             for manager in [plugin_manager, device_manager, key_store, state_store, icon_pack_manager]:
                 self._try_destroy_manager(manager)

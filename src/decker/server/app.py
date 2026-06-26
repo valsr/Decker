@@ -4,19 +4,16 @@ import argparse
 import importlib.metadata
 import logging
 import os
+from pathlib import Path
 
 import decker.common.logging
+from decker.common import paths as decker_paths
 from decker.common.context import ServerAppContext
 from decker.server.monitor import ServerMonitor
 
 
 def create_parser() -> argparse.ArgumentParser:
-    """
-    Create and configure the command-line argument parser for the Decker server application.
-
-    Returns:
-        argparse.ArgumentParser: A fully configured argument parser ready to parse command-line arguments.
-    """
+    """Build and return the argument parser for the Decker server application."""
     metadata = importlib.metadata.metadata("decker")
     parser = argparse.ArgumentParser(
         prog=metadata["Name"],
@@ -33,7 +30,25 @@ def create_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="count",
         default=0,
-        help=("Increase logging verbosity. Specify once for INFO, twice for DEBUG. Defaults to WARNING."),
+        help="Increase logging verbosity. Specify once for INFO, twice for DEBUG. Defaults to WARNING.",
+    )
+    parser.add_argument(
+        "--prefix",
+        default=None,
+        metavar="DIR",
+        help="Override the home directory used to locate the .decker folder (default: user home).",
+    )
+    parser.add_argument(
+        "--device",
+        default=None,
+        metavar="ID_OR_PATH",
+        help="Device ID or USB path to use. Server fails to start if the device is not found.",
+    )
+    parser.add_argument(
+        "--reset-device-data",
+        action="store_true",
+        default=False,
+        help="Clear persisted key images and labels before starting (for the target device if --device is set).",
     )
 
     return parser
@@ -44,22 +59,28 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
 
-    # map to context
-    appContext = ServerAppContext()
+    app_context = ServerAppContext()
+
+    if args.prefix is not None:
+        app_context.prefix = Path(args.prefix)
+        decker_paths.configure(app_context.prefix)
 
     if args.verbose > 2:
-        appContext.log_others = True
+        app_context.log_others = True
     if args.verbose >= 2:
-        appContext.verbosity = logging.DEBUG
+        app_context.verbosity = logging.DEBUG
     elif args.verbose == 1:
-        appContext.verbosity = logging.INFO
+        app_context.verbosity = logging.INFO
+
+    app_context.target_device = args.device
+    app_context.reset_device_data = args.reset_device_data
 
     decker.common.logging.configure(
-        level=appContext.verbosity, log_directory=os.getcwd(), log_others=appContext.log_others
+        level=app_context.verbosity, log_directory=os.getcwd(), log_others=app_context.log_others
     )
     logging.debug("Arguments received: %s", args)
 
-    monitor = ServerMonitor(appContext)
+    monitor = ServerMonitor(app_context)
     try:
         monitor.start()
     except Exception as e:

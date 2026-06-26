@@ -12,7 +12,7 @@ from decker.asset.manifest import (
     IconPackValidationError,
     validate_icons_json,
 )
-from decker.asset.paths import ICONPACKS_DIR, ensure_asset_dirs
+from decker.asset.paths import ensure_asset_dirs, iconpacks_dir
 from decker.asset.store import IconPackStore
 from decker.common.manager import Manager
 
@@ -29,7 +29,7 @@ class IconPackManager(Manager):
 
     def __init__(self, store: IconPackStore | None = None, packs_dir: Path | None = None) -> None:
         self._store = store or IconPackStore()
-        self._packs_dir = packs_dir or ICONPACKS_DIR
+        self._packs_dir = packs_dir or iconpacks_dir()
 
     def create(self, context: "ServerContext") -> None:
         """Ensure asset directories exist and register any on-disk drop-ins."""
