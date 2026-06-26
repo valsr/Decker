@@ -108,7 +108,7 @@ class ConnectionManager:
             self._conn = rpyc.utils.factory.connect(
                 self._host,
                 self._port,
-                service=lambda: _ClientService(self._on_server_event),
+                service=_ClientService(self._on_server_event),
             )
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not connect to server at %s:%d — %s", self._host, self._port, e)
