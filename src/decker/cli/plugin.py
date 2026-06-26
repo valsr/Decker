@@ -7,9 +7,8 @@ Unlike other CLI commands, these never talk to the server — they only touch
 import shutil
 from pathlib import Path
 
+from decker.common import paths as decker_paths
 from decker.plugin.manifest import ManifestValidationError, PluginManifest
-
-_PLUGINS_DIR = Path.home() / ".decker" / "plugins"
 
 
 class PluginCliError(Exception):
@@ -27,22 +26,24 @@ def install(source: str | Path) -> Path:
     except ManifestValidationError as exc:
         raise PluginCliError(str(exc)) from exc
 
-    dest_dir = _PLUGINS_DIR / _install_dir_name(manifest)
+    plugins_dir = decker_paths.plugins()
+    dest_dir = plugins_dir / _install_dir_name(manifest)
     if dest_dir.exists():
         raise PluginCliError(f"a plugin is already installed at {dest_dir}")
 
-    _PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
+    plugins_dir.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source_dir, dest_dir)
     return dest_dir
 
 
 def list_installed() -> list[dict[str, str]]:
     """Return metadata for every plugin in ~/.decker/plugins/: uuid, type, and status."""
-    if not _PLUGINS_DIR.exists():
+    plugins_dir = decker_paths.plugins()
+    if not plugins_dir.exists():
         return []
 
     entries: list[dict[str, str]] = []
-    for entry in sorted(_PLUGINS_DIR.iterdir()):
+    for entry in sorted(plugins_dir.iterdir()):
         if not entry.is_dir():
             continue
         plugin_type = "elgato" if entry.name.endswith(".sdPlugin") else "native"
@@ -56,7 +57,8 @@ def list_installed() -> list[dict[str, str]]:
 
 def remove(uuid: str) -> None:
     """Remove the installed plugin matching uuid (native or .sdPlugin). Raises PluginCliError if not found."""
-    for candidate in (_PLUGINS_DIR / uuid, _PLUGINS_DIR / f"{uuid}.sdPlugin"):
+    plugins_dir = decker_paths.plugins()
+    for candidate in (plugins_dir / uuid, plugins_dir / f"{uuid}.sdPlugin"):
         if candidate.exists():
             shutil.rmtree(candidate)
             return

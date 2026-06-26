@@ -26,7 +26,7 @@ def _make_source_plugin(tmp_path, manifest=_NATIVE_MANIFEST, name="source"):
 @pytest.fixture(autouse=True)
 def _isolated_plugins_dir(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "installed-plugins"
-    monkeypatch.setattr(plugin_cli, "_PLUGINS_DIR", plugins_dir)
+    monkeypatch.setattr("decker.common.paths.plugins", lambda: plugins_dir)
     return plugins_dir
 
 
