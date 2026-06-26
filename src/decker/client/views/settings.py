@@ -14,7 +14,7 @@ class SettingsView(BaseView):
         self._host_input = QLineEdit()
         self._port_input = QLineEdit()
         self._saved_label = QLabel()
-        self._saved_label.setStyleSheet("color: #2d8a4e; font-size: 12px;")
+        self._saved_label.setProperty("role", "success")
         self._saved_label.setVisible(False)
 
         layout = QVBoxLayout(self)
@@ -32,7 +32,7 @@ class SettingsView(BaseView):
 
         layout.addWidget(QLabel("Failed plugins"))
         self._failed_plugins_label = QLabel("(none)")
-        self._failed_plugins_label.setStyleSheet("color: #c0392b; font-size: 12px;")
+        self._failed_plugins_label.setProperty("role", "error")
         layout.addWidget(self._failed_plugins_label)
 
         layout.addStretch()

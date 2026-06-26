@@ -197,10 +197,9 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         self.setWindowTitle("Decker")
-        self.setStyleSheet("background-color: #f2f2f7;")
         self.resize(320, 240)
         if ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(ICON_PATH)))
         self.setCentralWidget(self._stack)
-        self._toast.setStyleSheet("background-color: #e8e8ed; color: #c0392b; padding: 6px 10px; border-radius: 4px;")
+        self._toast.setObjectName("toast")
         self._toast.hide()
