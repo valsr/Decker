@@ -16,7 +16,7 @@ class TestCopyToUserIcons:
         import decker.client.icon_picker as module  # pylint: disable=import-outside-toplevel
 
         dest_dir = tmp_path / "user-icons"
-        monkeypatch.setattr(module, "USER_ICONS_DIR", dest_dir)
+        monkeypatch.setattr(module, "user_icons_dir", lambda: dest_dir)
         monkeypatch.setattr(module, "ensure_asset_dirs", lambda: dest_dir.mkdir(parents=True, exist_ok=True))
 
         source = tmp_path / "icon.svg"

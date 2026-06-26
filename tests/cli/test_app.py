@@ -152,7 +152,7 @@ class TestPluginSubcommand:
         mock_conn_cls.assert_not_called()
 
     def test_plugin_list_exits_0(self, capsys, tmp_path, monkeypatch):
-        monkeypatch.setattr("decker.cli.plugin._PLUGINS_DIR", tmp_path / "plugins")
+        monkeypatch.setattr("decker.common.paths.plugins", lambda: tmp_path / "plugins")
         with patch.object(sys, "argv", ["decker-cli", "plugin", "list"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
@@ -191,7 +191,7 @@ class TestIconpackSubcommand:
         assert_that(capsys.readouterr().out).contains("Usage")
 
     def test_iconpack_list_exits_0(self, capsys, tmp_path, monkeypatch):
-        monkeypatch.setattr("decker.asset.iconpack.ICONPACKS_DIR", tmp_path / "iconpacks")
+        monkeypatch.setattr("decker.asset.iconpack.iconpacks_dir", lambda: tmp_path / "iconpacks")
         monkeypatch.setattr("decker.asset.iconpack.IconPackStore", lambda: IconPackStore(tmp_path / "decker.db"))
         with patch.object(sys, "argv", ["decker-cli", "iconpack", "list"]):
             with pytest.raises(SystemExit) as exc_info:
@@ -221,7 +221,7 @@ class TestIconpackSubcommand:
         assert_that(exc_info.value.code).is_equal_to(1)
 
     def test_iconpack_remove_unknown_uuid_exits_1(self, capsys, tmp_path, monkeypatch):
-        monkeypatch.setattr("decker.asset.iconpack.ICONPACKS_DIR", tmp_path / "iconpacks")
+        monkeypatch.setattr("decker.asset.iconpack.iconpacks_dir", lambda: tmp_path / "iconpacks")
         with patch.object(sys, "argv", ["decker-cli", "iconpack", "remove", "unknown"]):
             with pytest.raises(SystemExit) as exc_info:
                 main()

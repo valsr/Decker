@@ -2,6 +2,7 @@
 
 import sys
 from argparse import ArgumentParser
+from pathlib import Path
 from typing import Any
 
 from decker.cli import iconpack as iconpack_cli
@@ -9,6 +10,7 @@ from decker.cli import plugin as plugin_cli
 from decker.cli.connection import CliConnection
 from decker.cli.formatter import format_result
 from decker.common import config
+from decker.common import paths as decker_paths
 
 
 def create_parser() -> ArgumentParser:
@@ -17,6 +19,12 @@ def create_parser() -> ArgumentParser:
     parser.add_argument("--host", default=None, help="Server host (overrides config)")
     parser.add_argument("--port", type=int, default=None, help="Server port (overrides config)")
     parser.add_argument("-v", "--verbose", action="count", default=0)
+    parser.add_argument(
+        "--prefix",
+        default=None,
+        metavar="DIR",
+        help="Override the home directory used to locate the .decker folder (default: user home).",
+    )
     parser.add_argument("command", nargs="*", help="Command path (e.g. status, start, help status)")
     try:
         import argcomplete  # pylint: disable=import-outside-toplevel
@@ -31,6 +39,10 @@ def main() -> None:
     """CLI entry point."""
     parser = create_parser()
     args = parser.parse_args()
+
+    if args.prefix is not None:
+        decker_paths.configure(Path(args.prefix))
+
     host, port = _resolve_connection_args(args)
 
     if not args.command:

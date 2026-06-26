@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from decker.asset.iconpack import IconPackManager
-from decker.asset.paths import USER_ICONS_DIR, ensure_asset_dirs
+from decker.asset.paths import ensure_asset_dirs, user_icons_dir
 
 _IMAGE_FILE_FILTER = "Images (*.svg *.png *.jpg *.jpeg *.gif *.webp)"
 _ICON_EXTENSIONS = (".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp")
@@ -24,7 +24,7 @@ _ICON_EXTENSIONS = (".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 def copy_to_user_icons(source_path: Path) -> Path:
     """Copy source_path into ~/.decker/assets/user-icons/, creating the directory if needed."""
     ensure_asset_dirs()
-    dest_path = USER_ICONS_DIR / source_path.name
+    dest_path = user_icons_dir() / source_path.name
     shutil.copy2(source_path, dest_path)
     return dest_path
 

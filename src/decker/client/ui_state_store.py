@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-_DEFAULT_DB_PATH = Path.home() / ".decker" / "config.db"
+from decker.common import paths as decker_paths
 
 _SCHEMA = "CREATE TABLE IF NOT EXISTS ui_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
 
@@ -16,8 +16,8 @@ _SCHEMA = "CREATE TABLE IF NOT EXISTS ui_state (key TEXT PRIMARY KEY, value TEXT
 class UiStateStore:
     """Generic JSON-encoded key/value store for UI state."""
 
-    def __init__(self, db_path: str | Path = _DEFAULT_DB_PATH) -> None:
-        self._db_path = Path(db_path)
+    def __init__(self, db_path: str | Path | None = None) -> None:
+        self._db_path = Path(db_path) if db_path is not None else decker_paths.client_db()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.execute(_SCHEMA)

@@ -15,7 +15,7 @@ _ICONS = {"icon1": "icon1.svg"}
 def _isolated_paths(tmp_path, monkeypatch):
     packs_dir = tmp_path / "iconpacks"
     db_path = tmp_path / "decker.db"
-    monkeypatch.setattr(iconpack_core, "ICONPACKS_DIR", packs_dir)
+    monkeypatch.setattr(iconpack_core, "iconpacks_dir", lambda: packs_dir)
     monkeypatch.setattr(iconpack_core, "IconPackStore", lambda: IconPackStore(db_path))
     return packs_dir
 
