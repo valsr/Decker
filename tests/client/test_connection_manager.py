@@ -193,7 +193,9 @@ class TestConnectionManager:
         mock_conn.root.key_get_states.return_value = json.dumps([{"key_index": 0, "label": "5", "settings": {}}])
         self.manager._conn = mock_conn  # pylint: disable=protected-access
         AppContext.reset()
-        AppContext.get().active_device = DeviceHardwareInfo(id="dev1", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15)
+        AppContext.get().active_device = DeviceHardwareInfo(
+            id="dev1", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15
+        )
         self.manager._refresh_key_display_states()  # pylint: disable=protected-access
         events = [e for e in EventManager.get().drain() if isinstance(e, KeyDisplayStatesUpdatedEvent)]
         assert_that(events).is_length(1)

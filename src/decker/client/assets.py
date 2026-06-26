@@ -4,13 +4,17 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
+from decker.common import config
+
 ICON_PATH: Path = Path(__file__).parent.parent / "assets" / "decker.svg"
 _STYLESHEET_PATH: Path = Path(__file__).parent / "style.qss"
 
 
 def load_stylesheet() -> str:
     """Return the application QSS stylesheet."""
-    return _STYLESHEET_PATH.read_text(encoding="utf-8")
+    stylesheet_path = config.get_as_or_default("client.style_sheet", str, _STYLESHEET_PATH)
+    # TODO Monitor for changes and re-load
+    return stylesheet_path.read_text(encoding="utf-8")
 
 
 try:
