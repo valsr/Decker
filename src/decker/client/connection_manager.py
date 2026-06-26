@@ -60,6 +60,16 @@ class ConnectionManager:
         self.connected: bool = False
         self._reported_plugin_failures: set[str] = set()
 
+    @property
+    def host(self) -> str:
+        """The server hostname this manager connects to."""
+        return self._host
+
+    @property
+    def port(self) -> int:
+        """The server port this manager connects to."""
+        return self._port
+
     def start(self) -> None:
         """Start the background connection thread. No-op if already running."""
         if self._thread is not None and self._thread.is_alive():
