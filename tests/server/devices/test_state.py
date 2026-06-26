@@ -11,7 +11,7 @@ from decker.server.devices.state import DeviceState, PerKeyState
 
 
 def _make_store(tmpdir: str) -> DeviceStateStore:
-    s = DeviceStateStore(db_path=Path(tmpdir) / "test.db")
+    s = DeviceStateStore(data_dir=Path(tmpdir))
     s.create(MagicMock())
     return s
 

@@ -31,7 +31,7 @@ def _make_hw_info(
 @pytest.fixture()
 def store():
     with tempfile.TemporaryDirectory() as tmpdir:
-        s = DeviceStateStore(db_path=Path(tmpdir) / "test.db")
+        s = DeviceStateStore(data_dir=Path(tmpdir))
         s.create(MagicMock())
         yield s
         s.destroy()
