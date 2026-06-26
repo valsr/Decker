@@ -26,7 +26,7 @@ class ActionConfigPanel(QStackedWidget):
         self._save_cb: Callable[[dict[str, Any]], None] | None = None
 
         placeholder = QLabel("Select a key to configure")
-        placeholder.setStyleSheet("color: #8e8e93; font-size: 12px;")
+        placeholder.setProperty("role", "muted")
         self.addWidget(placeholder)  # page 0
 
         self.addWidget(self._build_counter_page())  # page 1
