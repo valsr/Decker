@@ -107,17 +107,17 @@ class MainWindow(QMainWindow):
         self.switch_to(ViewName.CONNECTING)
         self._connection_manager.start()
 
-    def closeEvent(self, event: Any) -> None:  # pylint: disable=invalid-name
+    def closeEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
         """Persist window geometry and view state, then stop the connection manager."""
         self._save_geometry()
         for view in self._views.values():
             view.save_state()
         self._connection_manager.stop()
-        super().closeEvent(event)
+        super().closeEvent(a0)
 
-    def showEvent(self, event: Any) -> None:  # pylint: disable=invalid-name
+    def showEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
         """Restore window geometry after the first show — required for Wayland compatibility."""
-        super().showEvent(event)
+        super().showEvent(a0)
         if not self._geometry_restored:
             self._geometry_restored = True
             self._restore_geometry()

@@ -60,6 +60,7 @@ class ConnectionManager:
     def _run(self) -> None:
         last_heartbeat = 0.0
         last_key_refresh = 0.0
+        
         while not self._stop_event.is_set():
             if self._conn is None:
                 self._try_connect()

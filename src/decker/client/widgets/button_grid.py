@@ -20,11 +20,12 @@ class KeyButtonWidget(QPushButton):
     action_dropped = pyqtSignal(int, object)
     long_pressed = pyqtSignal(int)
 
-    def __init__(self, index: int, width: int, height: int) -> None:
+    def __init__(self, index: int, key_info: KeyInfo) -> None:
         super().__init__()
-        self.setFixedSize(width, height)
+        self._info = key_info
+        self.setFixedSize(self._info.pixel_width, self._info.pixel_height)
         self.index = index
-        self._label: str = str(index + 1)
+        self._label: str = ""
         self._refresh_text()
         self.setAcceptDrops(True)
         self._long_press_active = False
@@ -135,7 +136,7 @@ class ButtonGridWidget(QWidget):
         for index in range(self.key_count):
             key = self._key_info[index]
             row, col = key.row, key.col
-            button = KeyButtonWidget(index, key.pixel_width, key.pixel_height)
+            button = KeyButtonWidget(index, key)
             button.clicked.connect(lambda _checked=False, i=index: self.key_selected.emit(i))
             button.long_pressed.connect(self.key_long_pressed.emit)
             button.action_dropped.connect(self.action_dropped.emit)

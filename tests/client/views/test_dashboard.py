@@ -18,7 +18,9 @@ from decker.common.model import DeviceHardwareInfo, KeyInfo
 
 
 def _make_keys(rows: int, cols: int) -> list[KeyInfo]:
-    return [KeyInfo(row=r, col=c, pixel_width=72, pixel_height=72, type="key") for r in range(rows) for c in range(cols)]
+    return [
+        KeyInfo(row=r, col=c, pixel_width=72, pixel_height=72, type="key") for r in range(rows) for c in range(cols)
+    ]
 
 
 _KEYS_15 = _make_keys(3, 5)
