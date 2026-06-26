@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-_DEFAULT_DB_PATH = Path.home() / ".decker" / "decker.db"
+from decker.common import paths as decker_paths
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -21,8 +21,8 @@ CREATE TABLE IF NOT EXISTS settings (
 class PluginSettingsStore:
     """Reads and writes action settings, persisted across server restarts."""
 
-    def __init__(self, db_path: str | Path = _DEFAULT_DB_PATH) -> None:
-        self._db_path = Path(db_path)
+    def __init__(self, db_path: str | Path | None = None) -> None:
+        self._db_path = Path(db_path) if db_path is not None else decker_paths.db()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.execute(_SCHEMA)

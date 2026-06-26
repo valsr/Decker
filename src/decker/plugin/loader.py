@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from decker.common import paths as decker_paths
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.manifest import ManifestValidationError, PluginManifest
 from decker.plugin.native_loader import (
@@ -11,8 +12,6 @@ from decker.plugin.native_loader import (
     NativePluginLoadError,
     load_native_plugin,
 )
-
-_DEFAULT_PLUGINS_DIR = Path.home() / ".decker" / "plugins"
 
 
 @dataclass(frozen=True)
@@ -38,8 +37,8 @@ class PluginLoader:
     Elgato plugins are only manifest-parsed here — their Node.js subprocess starts lazily.
     """
 
-    def __init__(self, plugins_dir: str | Path = _DEFAULT_PLUGINS_DIR) -> None:
-        self._plugins_dir = Path(plugins_dir)
+    def __init__(self, plugins_dir: str | Path | None = None) -> None:
+        self._plugins_dir = Path(plugins_dir) if plugins_dir is not None else decker_paths.plugins()
 
     def scan(self) -> PluginScanResult:
         """Scan the plugins directory and load every entry found there."""

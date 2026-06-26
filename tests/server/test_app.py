@@ -38,6 +38,9 @@ class TestMain:
         for verbose, expected_level in [(0, 30), (1, 20), (2, 10)]:
             args = MagicMock()
             args.verbose = verbose
+            args.prefix = None
+            args.device = None
+            args.reset_device_data = False
             mock_parse_args.return_value = args
             main()
             mock_configure.assert_called_with(
@@ -51,6 +54,9 @@ class TestMain:
     def test_starts_and_stops_monitor(self, mock_parse_args: MagicMock, mock_monitor_cls: MagicMock) -> None:
         args = MagicMock()
         args.verbose = 0
+        args.prefix = None
+        args.device = None
+        args.reset_device_data = False
         mock_parse_args.return_value = args
         instance = MagicMock()
         mock_monitor_cls.return_value = instance
@@ -65,6 +71,9 @@ class TestMain:
     def test_stop_called_even_on_exception(self, mock_parse_args: MagicMock, mock_monitor_cls: MagicMock) -> None:
         args = MagicMock()
         args.verbose = 0
+        args.prefix = None
+        args.device = None
+        args.reset_device_data = False
         mock_parse_args.return_value = args
         instance = MagicMock()
         instance.start.side_effect = RuntimeError("boom")

@@ -31,6 +31,18 @@ ValueType = str | int | float | bool | list[Any] | None
 _DEFAULTS_PATH: Path = Path(__file__).parent / "defaults.yml"
 _USER_CONFIG_PATH: Path = Path.home() / ".decker" / "config.yaml"
 
+
+def configure_prefix(config_path: Path) -> None:
+    """Reinitialise the config singleton using a different user-config file.
+
+    Call this (via ``decker.common.paths.configure``) before reading any config key.
+    """
+    global _config, _USER_CONFIG_PATH  # pylint: disable=global-statement
+    _USER_CONFIG_PATH = config_path
+    _config = Config(DefaultBackend(_DEFAULTS_PATH), UserBackend(_USER_CONFIG_PATH), MemoryBackend())
+    _config.load()
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

@@ -6,13 +6,12 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from decker.common import paths as decker_paths
 from decker.common.manager import Manager
 from decker.common.model import DeviceHardwareInfo, KeyInfo
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
-
-_DEFAULT_DB_PATH = Path.home() / ".decker" / "decker.db"
 
 _SCHEMA_DEVICES = """
 CREATE TABLE IF NOT EXISTS devices (
@@ -52,9 +51,9 @@ CREATE TABLE IF NOT EXISTS key_labels (
 class DeviceStateStore(Manager):
     """Persists device hardware info, per-key images, and per-key labels to decker.db."""
 
-    def __init__(self, db_path: str | Path = _DEFAULT_DB_PATH) -> None:
+    def __init__(self, db_path: str | Path | None = None) -> None:
         self._lock = threading.Lock()
-        self._db_path = Path(db_path)
+        self._db_path = Path(db_path) if db_path is not None else decker_paths.db()
         self._conn: sqlite3.Connection | None = None
 
     def create(self, context: "ServerContext") -> None:
@@ -240,6 +239,20 @@ class DeviceStateStore(Manager):
         """Remove both the persisted image and label for a key slot."""
         self.delete_key_image(device_id, key_index)
         self.delete_key_label(device_id, key_index)
+
+    def delete_all_key_state_for_device(self, device_id: str) -> None:
+        """Remove all persisted images and labels for a device."""
+        with self._lock:
+            self._db.execute("DELETE FROM key_images WHERE device_id = ?", (device_id,))
+            self._db.execute("DELETE FROM key_labels WHERE device_id = ?", (device_id,))
+            self._db.commit()
+
+    def delete_all_key_state(self) -> None:
+        """Remove all persisted images and labels for every device."""
+        with self._lock:
+            self._db.execute("DELETE FROM key_images")
+            self._db.execute("DELETE FROM key_labels")
+            self._db.commit()
 
     # ------------------------------------------------------------------
     # Private helpers

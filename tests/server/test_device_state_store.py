@@ -172,3 +172,21 @@ class TestDeviceStateStoreDeleteKeyState:
 
     def test_delete_key_state_no_op_for_missing(self, store):
         store.delete_key_state("dev1", 99)  # should not raise
+
+    def test_delete_all_key_state_for_device_clears_that_device(self, store):
+        store.save_key_image("dev1", 0, b"img")
+        store.save_key_label("dev1", 0, "Play")
+        store.save_key_image("dev2", 1, b"other")
+        store.delete_all_key_state_for_device("dev1")
+        assert_that(store.get_key_image("dev1", 0)).is_none()
+        assert_that(store.get_key_label("dev1", 0)).is_none()
+        assert_that(store.get_key_image("dev2", 1)).is_equal_to(b"other")
+
+    def test_delete_all_key_state_clears_every_device(self, store):
+        store.save_key_image("dev1", 0, b"img1")
+        store.save_key_label("dev1", 0, "Play")
+        store.save_key_image("dev2", 1, b"img2")
+        store.delete_all_key_state()
+        assert_that(store.get_all_key_images("dev1")).is_empty()
+        assert_that(store.get_all_key_labels("dev1")).is_empty()
+        assert_that(store.get_all_key_images("dev2")).is_empty()
