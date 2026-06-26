@@ -1,32 +1,49 @@
-"""Tests for decker.client.views.connecting.ConnectingView."""
+"""Tests for decker.client.views.connecting.ConnectingOverlay."""
+
+from unittest.mock import MagicMock
 
 from assertpy import assert_that
+from PyQt6.QtWidgets import QWidget
 
-from decker.client.views.connecting import ConnectingView
+from decker.client.views.connecting import ConnectingOverlay
 
 
-class TestConnectingView:
-    def test_on_activate_resets_attempt_counter_and_starts_timer(self, qapp):  # pylint: disable=unused-argument
-        view = ConnectingView()
-        view._attempts = 7  # pylint: disable=protected-access
+def _make_overlay(qapp, parent: QWidget | None = None) -> ConnectingOverlay:  # pylint: disable=unused-argument
+    return ConnectingOverlay(host="localhost", port=18861, on_settings=MagicMock())
 
-        view.on_activate()
 
-        assert_that(view._attempts).is_equal_to(0)  # pylint: disable=protected-access
-        assert_that(view._tick_timer.isActive()).is_true()  # pylint: disable=protected-access
+class TestConnectingOverlay:
+    def test_label_contains_host_and_port(self, qapp):  # pylint: disable=unused-argument
+        overlay = _make_overlay(qapp)
+        assert_that(overlay._label.text()).contains("localhost").contains("18861")  # pylint: disable=protected-access
 
-    def test_on_deactivate_stops_timer(self, qapp):  # pylint: disable=unused-argument
-        view = ConnectingView()
-        view.on_activate()
+    def test_initially_hidden(self, qapp):  # pylint: disable=unused-argument
+        overlay = _make_overlay(qapp)
+        assert_that(overlay.isHidden()).is_true()
 
-        view.on_deactivate()
+    def test_on_deactivate_hides_overlay(self, qapp):  # pylint: disable=unused-argument
+        overlay = _make_overlay(qapp)
+        overlay.show()
+        overlay.on_deactivate()
+        assert_that(overlay.isHidden()).is_true()
 
-        assert_that(view._tick_timer.isActive()).is_false()  # pylint: disable=protected-access
+    def test_on_deactivate_clears_blurred_background(self, qapp):  # pylint: disable=unused-argument
+        overlay = _make_overlay(qapp)
+        overlay._blurred_bg = MagicMock()  # pylint: disable=protected-access
+        overlay.on_deactivate()
+        assert_that(overlay._blurred_bg).is_none()  # pylint: disable=protected-access
 
-    def test_tick_increments_attempt_counter(self, qapp):  # pylint: disable=unused-argument
-        view = ConnectingView()
-        view.on_activate()
+    def test_on_activate_shows_overlay(self, qapp):  # pylint: disable=unused-argument
+        parent = QWidget()
+        parent.resize(400, 300)
+        parent.show()
+        overlay = ConnectingOverlay(host="srv", port=9999, on_settings=MagicMock())
+        overlay.setParent(parent)
+        overlay.on_activate()
+        assert_that(overlay.isVisible()).is_true()
 
-        view._on_tick()  # pylint: disable=protected-access
-
-        assert_that(view._attempts).is_equal_to(1)  # pylint: disable=protected-access
+    def test_settings_button_calls_callback(self, qapp):  # pylint: disable=unused-argument
+        callback = MagicMock()
+        overlay = ConnectingOverlay(host="localhost", port=18861, on_settings=callback)
+        overlay._settings_btn.click()  # pylint: disable=protected-access
+        callback.assert_called_once()

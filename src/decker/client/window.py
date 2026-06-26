@@ -26,7 +26,7 @@ from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
 from decker.client.views import (
     BaseView,
-    ConnectingView,
+    ConnectingOverlay,
     DashboardView,
     DeviceView,
     ErrorView,
@@ -115,6 +115,13 @@ class MainWindow(QMainWindow):
         self._connection_manager.stop()
         super().closeEvent(a0)
 
+    def resizeEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
+        """Keep the connecting overlay sized to fill the central widget."""
+        super().resizeEvent(a0)
+        overlay = self._views.get(ViewName.CONNECTING)
+        if overlay is not None and overlay.isVisible():
+            overlay.resize(self._stack.size())
+
     def showEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
         """Restore window geometry after the first show — required for Wayland compatibility."""
         super().showEvent(a0)
@@ -134,9 +141,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(_INITIAL_VIEW_RECHECK_MS, self._apply_initial_view)
 
     def _apply_initial_view(self) -> None:
-        if self._connection_manager.connected:
-            self.switch_to(ViewName.DASHBOARD)
-        else:
+        self.switch_to(ViewName.DASHBOARD)
+        if not self._connection_manager.connected:
             self.switch_to(ViewName.CONNECTING)
         self.show()
 
@@ -189,7 +195,13 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(_TOAST_DURATION_MS, self._toast.hide)
 
     def _register_all_views(self) -> None:
-        self.register_view(ViewName.CONNECTING, ConnectingView())
+        overlay = ConnectingOverlay(
+            host=self._connection_manager.host,
+            port=self._connection_manager.port,
+            on_settings=lambda: self.switch_to(ViewName.SETTINGS),
+        )
+        overlay.setParent(self._stack)
+        self._views[ViewName.CONNECTING] = overlay
         self.register_view(ViewName.DASHBOARD, DashboardView())
         self.register_view(ViewName.DEVICE, DeviceView())
         self.register_view(ViewName.SETTINGS, SettingsView())
