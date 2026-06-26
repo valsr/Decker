@@ -2,34 +2,16 @@
 
 import base64
 import json
-import math
 from typing import Any
 
-from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QDrag, QIcon, QMouseEvent, QPixmap
+from PyQt6.QtCore import QByteArray, QSize, QTimer, pyqtSignal
+from PyQt6.QtGui import QIcon, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import QGridLayout, QPushButton, QVBoxLayout, QWidget
 
-# (rows, cols) for known Stream Deck key counts; unknown counts fall back to a near-square grid.
-_KNOWN_LAYOUTS: dict[int, tuple[int, int]] = {
-    6: (2, 3),
-    8: (2, 4),
-    15: (3, 5),
-    32: (4, 8),
-}
+from decker.common.model import KeyInfo
 
 _LONG_PRESS_MS = 500
 _MIME_TYPE = "application/x-decker-action"
-
-
-def grid_dimensions_for_key_count(key_count: int) -> tuple[int, int]:
-    """Return (rows, cols) for key_count, using known Stream Deck layouts where possible."""
-    if key_count <= 0:
-        return (0, 0)
-    if key_count in _KNOWN_LAYOUTS:
-        return _KNOWN_LAYOUTS[key_count]
-    cols = math.ceil(math.sqrt(key_count))
-    rows = math.ceil(key_count / cols)
-    return (rows, cols)
 
 
 class KeyButtonWidget(QPushButton):
@@ -38,9 +20,9 @@ class KeyButtonWidget(QPushButton):
     action_dropped = pyqtSignal(int, object)
     long_pressed = pyqtSignal(int)
 
-    def __init__(self, index: int) -> None:
+    def __init__(self, index: int, width: int, height: int) -> None:
         super().__init__()
-        self.setFixedSize(72, 72)
+        self.setFixedSize(width, height)
         self.index = index
         self._label: str = str(index + 1)
         self._refresh_text()
@@ -76,19 +58,19 @@ class KeyButtonWidget(QPushButton):
     # Long-press override
     # ------------------------------------------------------------------
 
-    def mousePressEvent(self, event: QMouseEvent | None) -> None:
+    def mousePressEvent(self, e: QMouseEvent | None) -> None:
         self._long_press_active = False
         self._long_press_timer.start()
-        super().mousePressEvent(event)
+        super().mousePressEvent(e)
 
-    def mouseReleaseEvent(self, event: QMouseEvent | None) -> None:
+    def mouseReleaseEvent(self, e: QMouseEvent | None) -> None:
         self._long_press_timer.stop()
         if self._long_press_active:
             self._long_press_active = False
             self.setDown(False)
             self.update()
             return
-        super().mouseReleaseEvent(event)
+        super().mouseReleaseEvent(e)
 
     def _on_long_press_fired(self) -> None:
         self._long_press_active = True
@@ -98,18 +80,18 @@ class KeyButtonWidget(QPushButton):
     # Drag-and-drop target
     # ------------------------------------------------------------------
 
-    def dragEnterEvent(self, event: Any) -> None:
-        if event.mimeData().hasFormat(_MIME_TYPE):
-            event.acceptProposedAction()
+    def dragEnterEvent(self, a0: Any) -> None:
+        if a0.mimeData().hasFormat(_MIME_TYPE):
+            a0.acceptProposedAction()
 
-    def dropEvent(self, event: Any) -> None:
-        raw: bytes = bytes(event.mimeData().data(_MIME_TYPE))
+    def dropEvent(self, a0: Any) -> None:
+        raw: bytes = bytes(a0.mimeData().data(_MIME_TYPE))
         try:
             data: dict[str, Any] = json.loads(raw.decode())
         except (ValueError, UnicodeDecodeError):
             return
         self.action_dropped.emit(self.index, data)
-        event.acceptProposedAction()
+        a0.acceptProposedAction()
 
     # ------------------------------------------------------------------
     # Private
@@ -130,30 +112,30 @@ class ButtonGridWidget(QWidget):
         super().__init__()
         self._grid_layout = QGridLayout()
         self._grid_layout.setSpacing(4)
+        self._key_info: list[KeyInfo] = []
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.addLayout(self._grid_layout)
         outer.addStretch()
-        self._key_count = 0
-        self._buttons: dict[int, KeyButtonWidget] = {}
 
     @property
     def key_count(self) -> int:
         """The number of keys currently rendered."""
-        return self._key_count
+        return len(self._key_info)
 
-    def set_key_count(self, key_count: int) -> None:
-        """Rebuild the grid for a device with key_count keys."""
-        self._key_count = key_count
-        self._buttons.clear()
+    def build(self, key_information: list[KeyInfo]):
+        self._key_info = key_information
+
+        # clear existing widgets
         while (item := self._grid_layout.takeAt(0)) is not None:
             if widget := item.widget():
                 widget.deleteLater()
+        self._buttons: dict[int, KeyButtonWidget] = {}
 
-        _, cols = grid_dimensions_for_key_count(key_count)
-        for index in range(key_count):
-            row, col = divmod(index, cols) if cols else (0, 0)
-            button = KeyButtonWidget(index)
+        for index in range(self.key_count):
+            key = self._key_info[index]
+            row, col = key.row, key.col
+            button = KeyButtonWidget(index, key.pixel_width, key.pixel_height)
             button.clicked.connect(lambda _checked=False, i=index: self.key_selected.emit(i))
             button.long_pressed.connect(self.key_long_pressed.emit)
             button.action_dropped.connect(self.action_dropped.emit)

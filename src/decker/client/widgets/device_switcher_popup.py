@@ -1,10 +1,10 @@
 """Frameless popup listing connected devices, anchored above the device-switcher button."""
 
-from typing import Any
-
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QFrame, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
+
+from decker.common.model import DeviceHardwareInfo
 
 
 class DeviceSwitcherPopup(QFrame):
@@ -13,19 +13,19 @@ class DeviceSwitcherPopup(QFrame):
     Esc or a click outside the popup dismisses it without emitting anything.
     """
 
-    device_selected = pyqtSignal(str)
+    device_selected = pyqtSignal(object)  # DeviceHardwareInfo
 
-    def __init__(self, devices: list[dict[str, Any]], parent: QWidget | None = None) -> None:
+    def __init__(self, devices: list[DeviceHardwareInfo], parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setFrameShape(QFrame.Shape.Box)
+        self._devices = devices
 
         self._list = QListWidget()
         for device in devices:
-            device_id = str(device.get("id") or "")
-            serial = str(device.get("serial") or "")
-            device_type = str(device.get("type", "Stream Deck"))
-            item = QListWidgetItem(f"{device_type}  ·  {serial}")
-            item.setData(1, device_id)
+            serial = device.serial or ""
+            label = f"{device.type}  ·  {serial}"
+            item = QListWidgetItem(label)
+            item.setData(1, device.id)
             self._list.addItem(item)
         self._list.itemClicked.connect(self._on_item_clicked)
 
@@ -42,7 +42,10 @@ class DeviceSwitcherPopup(QFrame):
         self.show()
 
     def _on_item_clicked(self, item: QListWidgetItem) -> None:
-        self.device_selected.emit(str(item.data(1)))
+        device_id = item.data(1)
+        device = next((d for d in self._devices if d.id == device_id), None)
+        if device is not None:
+            self.device_selected.emit(device)
         self.close()
 
     def keyPressEvent(self, event: QKeyEvent | None) -> None:  # pylint: disable=invalid-name

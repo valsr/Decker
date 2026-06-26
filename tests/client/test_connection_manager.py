@@ -17,6 +17,7 @@ from decker.client.events import (
     ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
+from decker.common.model import DeviceHardwareInfo
 
 
 class TestConnectionManager:
@@ -43,7 +44,9 @@ class TestConnectionManager:
         assert_that(events[0]).is_instance_of(ServerConnectedEvent)
         assert_that(events[1]).is_instance_of(DeviceListUpdatedEvent)
         assert isinstance(events[1], DeviceListUpdatedEvent)
-        assert_that(events[1].devices).is_equal_to([{"id": "abc123", "serial": "X"}])
+        assert_that(events[1].devices).is_length(1)
+        assert_that(events[1].devices[0].id).is_equal_to("abc123")
+        assert_that(events[1].devices[0].serial).is_equal_to("X")
 
     @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
     def test_try_connect_failure_leaves_disconnected_and_pushes_nothing(self, mock_connect: MagicMock):
@@ -190,7 +193,7 @@ class TestConnectionManager:
         mock_conn.root.key_get_states.return_value = json.dumps([{"key_index": 0, "label": "5", "settings": {}}])
         self.manager._conn = mock_conn  # pylint: disable=protected-access
         AppContext.reset()
-        AppContext.get().active_device = "dev1"
+        AppContext.get().active_device = DeviceHardwareInfo(id="dev1", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15)
         self.manager._refresh_key_display_states()  # pylint: disable=protected-access
         events = [e for e in EventManager.get().drain() if isinstance(e, KeyDisplayStatesUpdatedEvent)]
         assert_that(events).is_length(1)

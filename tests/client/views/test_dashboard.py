@@ -1,5 +1,6 @@
 """Tests for decker.client.views.dashboard.DashboardView."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
@@ -13,11 +14,19 @@ from decker.client.events import (
 from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
 from decker.client.views.dashboard import DashboardView
+from decker.common.model import DeviceHardwareInfo, KeyInfo
 
-_DEVICES = [
-    {"id": "aabbccdd", "type": "Stream Deck", "serial": "ABC123", "num_keys": 15, "keys": []},
-    {"id": "11223344", "type": "Stream Deck Mini", "serial": "XYZ999", "num_keys": 6, "keys": []},
-]
+
+def _make_keys(rows: int, cols: int) -> list[KeyInfo]:
+    return [KeyInfo(row=r, col=c, pixel_width=72, pixel_height=72, type="key") for r in range(rows) for c in range(cols)]
+
+
+_KEYS_15 = _make_keys(3, 5)
+_KEYS_6 = _make_keys(2, 3)
+
+_D1 = DeviceHardwareInfo(id="aabbccdd", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15, keys=_KEYS_15)
+_D2 = DeviceHardwareInfo(id="11223344", type="Stream Deck Mini", vendor_id=0, product_id=0, num_keys=6, keys=_KEYS_6)
+_DEVICES = [_D1, _D2]
 
 
 def _make_view(tmp_path) -> DashboardView:
@@ -28,10 +37,9 @@ class TestDashboardView:
     def setup_method(self):
         AppContext._instance = None  # pylint: disable=protected-access
 
-    def test_constructs_with_two_pages_and_default_key_count(self, qapp, tmp_path):  # pylint: disable=unused-argument
+    def test_constructs_with_two_page_pills_by_default(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
         assert_that(view._pill_bar.button_group.buttons()).is_length(2)  # pylint: disable=protected-access
-        assert_that(view._grid.key_count).is_equal_to(15)  # pylint: disable=protected-access
 
 
 class TestDeviceListHandling:
@@ -45,11 +53,11 @@ class TestDeviceListHandling:
 
         view.handle_event(DeviceListUpdatedEvent(devices=_DEVICES))
 
-        mock_window.set_active_device.assert_called_once_with("aabbccdd")
+        mock_window.set_active_device.assert_called_once_with(_D1)
 
     def test_does_not_override_already_active_device(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "11223344"
+        AppContext.get().active_device = _D2
         mock_window = MagicMock()
         AppContext.get().window = mock_window
 
@@ -59,30 +67,20 @@ class TestDeviceListHandling:
 
     def test_grid_resizes_to_active_devices_key_count(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "11223344"
+        AppContext.get().active_device = _D2
 
         view.handle_event(DeviceListUpdatedEvent(devices=_DEVICES))
 
         assert_that(view._grid.key_count).is_equal_to(6)  # pylint: disable=protected-access
 
-    def test_unknown_active_device_falls_back_to_default_key_count(
-        self, qapp, tmp_path
-    ):  # pylint: disable=unused-argument
-        view = _make_view(tmp_path)
-        AppContext.get().active_device = "does-not-exist"
-
-        view.handle_event(DeviceListUpdatedEvent(devices=_DEVICES))
-
-        assert_that(view._grid.key_count).is_equal_to(15)  # pylint: disable=protected-access
-
     def test_same_device_does_not_rebuild_grid(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "aabbccdd"
+        AppContext.get().active_device = _D1
         view.handle_event(DeviceListUpdatedEvent(devices=_DEVICES))
 
-        with patch.object(view._grid, "set_key_count") as mock_set:  # pylint: disable=protected-access
+        with patch.object(view._grid, "build") as mock_build:  # pylint: disable=protected-access
             view.handle_event(DeviceListUpdatedEvent(devices=_DEVICES))
-            mock_set.assert_not_called()
+            mock_build.assert_not_called()
 
 
 class TestActionListHandling:
@@ -130,7 +128,6 @@ class TestSaveAndRestoreState:
         view = DashboardView(ui_state_store=store)
         view._main_splitter.setSizes([300, 700])  # pylint: disable=protected-access
         view._content_splitter.setSizes([500, 200])  # pylint: disable=protected-access
-        # Qt may adjust sizes to fit the widget's actual pixel budget in headless mode
         actual_main = view._main_splitter.sizes()  # pylint: disable=protected-access
         actual_content = view._content_splitter.sizes()  # pylint: disable=protected-access
 
@@ -155,8 +152,6 @@ class TestSaveAndRestoreState:
 
         view = DashboardView(ui_state_store=UiStateStore(db_path))
 
-        # Qt scales saved pixel values to the widget's actual budget; verify the
-        # proportional split (33/67) was applied: first pane > 0 and smaller than second.
         sizes = view._main_splitter.sizes()  # pylint: disable=protected-access
         assert_that(sizes[0]).is_greater_than(0)
         assert_that(sizes[0]).is_less_than(sizes[1])
@@ -180,9 +175,9 @@ class TestDeviceSwitcher:
         AppContext.get().window = mock_window
         view._devices = _DEVICES  # pylint: disable=protected-access
 
-        view._on_device_selected("11223344")  # pylint: disable=protected-access
+        view._on_device_selected(_D2)  # pylint: disable=protected-access
 
-        mock_window.set_active_device.assert_called_once_with("11223344")
+        mock_window.set_active_device.assert_called_once_with(_D2)
         assert_that(view._grid.key_count).is_equal_to(6)  # pylint: disable=protected-access
 
 
@@ -200,14 +195,21 @@ class TestSettingsButton:
         mock_window.switch_to.assert_called_once_with(ViewName.SETTINGS)
 
 
+def _active_dev1(view: DashboardView) -> None:
+    """Set active device to id='dev1' and build a 15-key grid."""
+    AppContext.get().active_device = DeviceHardwareInfo(
+        id="dev1", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15
+    )
+    view._grid.build(_KEYS_15)  # pylint: disable=protected-access
+
+
 class TestKeyDisplayStates:
     def setup_method(self):
         AppContext._instance = None  # pylint: disable=protected-access
 
     def test_display_states_event_updates_key_labels(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "dev1"
-        view._grid.set_key_count(15)  # pylint: disable=protected-access
+        _active_dev1(view)
 
         view.handle_event(
             KeyDisplayStatesUpdatedEvent(
@@ -231,8 +233,8 @@ class TestKeyDisplayStates:
 
     def test_display_states_event_ignored_for_different_device(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "dev1"
-        view._grid.set_key_count(15)  # pylint: disable=protected-access
+        _active_dev1(view)
+
         view.handle_event(
             KeyDisplayStatesUpdatedEvent(
                 device_id="other-dev",
@@ -254,8 +256,8 @@ class TestKeyDisplayStates:
 
     def test_display_states_populates_key_slots(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "dev1"
-        view._grid.set_key_count(15)  # pylint: disable=protected-access
+        _active_dev1(view)
+
         view.handle_event(
             KeyDisplayStatesUpdatedEvent(
                 device_id="dev1",
@@ -281,13 +283,13 @@ class TestKeyInteractions:
 
     def test_key_selected_without_slot_shows_placeholder(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        view._grid.set_key_count(6)  # pylint: disable=protected-access
+        view._grid.build(_KEYS_6)  # pylint: disable=protected-access
         view._on_key_selected(0)  # pylint: disable=protected-access
         assert_that(view._config_panel.currentIndex()).is_equal_to(0)
 
     def test_key_selected_with_slot_simulates_press(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "dev1"
+        _active_dev1(view)
         mock_cm = MagicMock()
         AppContext.get().connection_manager = mock_cm
         view._key_slots[3] = {
@@ -296,13 +298,12 @@ class TestKeyInteractions:
             "context_id": "c",
             "settings": {},
         }  # pylint: disable=protected-access
-        view._grid.set_key_count(15)  # pylint: disable=protected-access
         view._on_key_selected(3)  # pylint: disable=protected-access
         mock_cm.call.assert_called_once_with("key_simulate_press", "dev1", 3)
 
     def test_key_long_pressed_simulates_long_press(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "dev1"
+        _active_dev1(view)
         mock_cm = MagicMock()
         AppContext.get().connection_manager = mock_cm
         view._key_slots[1] = {
@@ -316,11 +317,10 @@ class TestKeyInteractions:
 
     def test_action_dropped_calls_key_assign_rpc(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "dev1"
+        _active_dev1(view)
         mock_cm = MagicMock()
         mock_cm.call.return_value = True
         AppContext.get().connection_manager = mock_cm
-        view._grid.set_key_count(15)  # pylint: disable=protected-access
         view._on_action_dropped(
             4, {"plugin_uuid": "com.p", "action_uuid": "com.p.a"}
         )  # pylint: disable=protected-access
@@ -328,10 +328,8 @@ class TestKeyInteractions:
         assert_that(view._key_slots).contains_key(4)  # pylint: disable=protected-access
 
     def test_save_key_settings_calls_update_settings_rpc(self, qapp, tmp_path):  # pylint: disable=unused-argument
-        import json
-
         view = _make_view(tmp_path)
-        AppContext.get().active_device = "dev1"
+        _active_dev1(view)
         mock_cm = MagicMock()
         AppContext.get().connection_manager = mock_cm
         view._key_slots[2] = {

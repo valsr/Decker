@@ -18,6 +18,7 @@ from decker.client.events import (
     ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
+from decker.common.model import DeviceHardwareInfo, KeyInfo
 
 _RETRY_INTERVAL_S = 5.0
 _HEARTBEAT_INTERVAL_S = 5.0
@@ -131,10 +132,11 @@ class ConnectionManager:
         if self._conn is None:
             return
         try:
-            devices: list[dict[str, Any]] = self._call_json("devices_list")
+            raw: list[dict[str, Any]] = self._call_json("devices_list")
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not list devices: %s", e)
             return
+        devices = [_parse_hw_info(d) for d in raw]
         EventManager.get().push(DeviceListUpdatedEvent(devices=devices))
 
     def _refresh_actions(self) -> None:
@@ -164,7 +166,7 @@ class ConnectionManager:
             AppContext,  # pylint: disable=import-outside-toplevel
         )
 
-        device_id = AppContext.get().active_device
+        device_id = AppContext.get().active_device_id
         if device_id is None:
             return
         try:
@@ -182,3 +184,28 @@ class ConnectionManager:
         except Exception:  # pylint: disable=broad-except
             pass
         self._conn = None
+
+
+def _parse_hw_info(data: dict[str, Any]) -> DeviceHardwareInfo:
+    """Deserialise a raw device dict (from the JSON transport) into a DeviceHardwareInfo."""
+    keys = [
+        KeyInfo(
+            row=k.get("row", 0),
+            col=k.get("col", 0),
+            pixel_width=k.get("pixel_width", 0),
+            pixel_height=k.get("pixel_height", 0),
+            type=k.get("type", "key"),
+        )
+        for k in (data.get("keys") or [])
+    ]
+    return DeviceHardwareInfo(
+        id=data.get("id") or None,
+        type=str(data.get("type", "")),
+        vendor_id=int(data.get("vendor_id") or 0),
+        product_id=int(data.get("product_id") or 0),
+        num_keys=int(data.get("num_keys") or 0),
+        keys=keys,
+        serial=data.get("serial") or None,
+        path=str(data.get("path") or ""),
+        firmware=data.get("firmware") or None,
+    )

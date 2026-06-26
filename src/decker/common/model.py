@@ -28,6 +28,7 @@ class DeviceHardwareInfo:
     keys: list[KeyInfo] = field(default_factory=list)
     serial: str | None = None
     path: str = ""
+    firmware: str | None = None
 
 
 class KeyPressState(StrEnum):

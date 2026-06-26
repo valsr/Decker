@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from decker.client.view_name import ViewName
+from decker.common.model import DeviceHardwareInfo
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,7 @@ class ServerDisconnectedEvent:
 class DeviceListUpdatedEvent:
     """The set of devices known to the server has changed."""
 
-    devices: list[dict[str, Any]]
+    devices: list[DeviceHardwareInfo]
 
 
 @dataclass(frozen=True)
