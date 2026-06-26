@@ -4,15 +4,19 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 import rpyc.utils.factory
 from rpyc.core.protocol import Connection
+from rpyc.core.service import Service
+from rpyc.utils.helpers import BgServingThread
 
 from decker.client.events import (
     ActionListUpdatedEvent,
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
+    KeyEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
@@ -22,19 +26,35 @@ from decker.common.model import DeviceHardwareInfo, KeyInfo
 
 _RETRY_INTERVAL_S = 5.0
 _HEARTBEAT_INTERVAL_S = 5.0
-_KEY_REFRESH_INTERVAL_S = 2.0
+
+
+class _ClientService(Service):
+    """Exposed to the server so it can push events to this client."""
+
+    def __init__(self, on_event: Callable[[str, str], None]) -> None:
+        super().__init__()
+        self._on_event = on_event
+
+    def exposed_on_server_event(self, event_type: str, payload: str) -> None:
+        """Called by the server to deliver a push event."""
+        try:
+            self._on_event(event_type, payload)
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Error handling server event %s: %s", event_type, exc)
 
 
 class ConnectionManager:
     """Maintains a connection to the Decker server on a background thread.
 
     Pushes events to EventManager as connection state changes. Owns the worker thread's full lifecycle.
+    Server-initiated push events are received via _ClientService / BgServingThread.
     """
 
     def __init__(self, host: str, port: int) -> None:
         self._host = host
         self._port = port
         self._conn: Connection | None = None
+        self._bg_server: BgServingThread | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self.connected: bool = False
@@ -59,33 +79,33 @@ class ConnectionManager:
 
     def _run(self) -> None:
         last_heartbeat = 0.0
-        last_key_refresh = 0.0
-        
         while not self._stop_event.is_set():
             if self._conn is None:
                 self._try_connect()
                 if self._conn is None:
                     self._stop_event.wait(_RETRY_INTERVAL_S)
                 continue
-            self._stop_event.wait(_KEY_REFRESH_INTERVAL_S)
+            self._stop_event.wait(_HEARTBEAT_INTERVAL_S)
             if self._stop_event.is_set():
                 break
             now = time.monotonic()
             if now - last_heartbeat >= _HEARTBEAT_INTERVAL_S:
                 self._check_heartbeat()
                 last_heartbeat = now
-            if now - last_key_refresh >= _KEY_REFRESH_INTERVAL_S:
-                self._refresh_key_display_states()
-                last_key_refresh = now
 
     def _try_connect(self) -> None:
         try:
-            self._conn = rpyc.utils.factory.connect(self._host, self._port)
+            self._conn = rpyc.utils.factory.connect(
+                self._host,
+                self._port,
+                service=lambda: _ClientService(self._on_server_event),
+            )
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not connect to server at %s:%d — %s", self._host, self._port, e)
             return
         logging.info("Connected to server at %s:%d", self._host, self._port)
         self.connected = True
+        self._bg_server = BgServingThread(self._conn)
         EventManager.get().push(ServerConnectedEvent(host=self._host, port=self._port))
         self._refresh_devices()
         self._refresh_actions()
@@ -177,7 +197,42 @@ class ConnectionManager:
             return
         EventManager.get().push(KeyDisplayStatesUpdatedEvent(device_id=device_id, states=states))
 
+    def _on_server_event(self, event_type: str, payload: str) -> None:
+        """Dispatch a push event received from the server to the local EventManager."""
+        try:
+            data: dict[str, Any] = json.loads(payload)
+        except (ValueError, TypeError) as exc:
+            logging.warning("Malformed server event payload for %s: %s", event_type, exc)
+            return
+
+        if event_type == "key_event":
+            EventManager.get().push(
+                KeyEvent(
+                    device_id=str(data["device_id"]),
+                    key_index=int(data["key_index"]),
+                    pressed=bool(data["pressed"]),
+                )
+            )
+        elif event_type == "key_state_changed":
+            device_id = str(data["device_id"])
+            states: list[dict[str, Any]] = [
+                {
+                    "key_index": data["key_index"],
+                    "image_b64": data.get("image_b64"),
+                    "label": data.get("label", ""),
+                }
+            ]
+            EventManager.get().push(KeyDisplayStatesUpdatedEvent(device_id=device_id, states=states))
+        else:
+            logging.debug("Unknown server event type: %s", event_type)
+
     def _close_connection(self) -> None:
+        if self._bg_server is not None:
+            try:
+                self._bg_server.stop()
+            except Exception:  # pylint: disable=broad-except
+                pass
+            self._bg_server = None
         if self._conn is None:
             return
         try:

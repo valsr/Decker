@@ -1,5 +1,7 @@
 """Owns plugin discovery, the action registry, callback execution, and the Elgato bridge."""
 
+import base64
+import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -30,6 +32,9 @@ if TYPE_CHECKING:
 _BUNDLED_PLUGINS_DIR = Path(__file__).parent.parent / "bundled_plugins"
 
 
+_StateChangedCallback = Callable[[str, int], None]
+
+
 class _StreamDeckHardwareSink:
     """Applies hardware effects via DeviceManager; falls back gracefully if no device is open.
 
@@ -42,9 +47,11 @@ class _StreamDeckHardwareSink:
         self,
         device_manager: Any,  # DeviceManager | None — avoid circular import at module level
         label_setter: Callable[[str, int, str], None],
+        on_state_changed: _StateChangedCallback | None = None,
     ) -> None:
         self._device_manager = device_manager
         self._label_setter = label_setter
+        self._on_state_changed = on_state_changed
         self._renderer = AssetRenderer()
 
     def set_image(self, device_id: str, key_index: int, image: bytes) -> None:
@@ -53,10 +60,14 @@ class _StreamDeckHardwareSink:
             self._device_manager.set_image_bytes(device_id, key_index, image)
         else:
             logging.debug("set_image: no DeviceManager available")
+        if self._on_state_changed is not None:
+            self._on_state_changed(device_id, key_index)
 
     def set_title(self, device_id: str, key_index: int, title: str) -> None:
         """Store the display label for client polling (hardware text not rendered)."""
         self._label_setter(device_id, key_index, title)
+        if self._on_state_changed is not None:
+            self._on_state_changed(device_id, key_index)
 
     def set_state(self, device_id: str, key_index: int, state: int) -> None:
         """No-op: multi-state icon rendering is not implemented yet."""
@@ -92,7 +103,11 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
     def create(self, context: "ServerContext") -> None:
         """Wire up the device manager, scan and load plugins, then start the Elgato bridge."""
         self._device_manager = context.device_manager
-        self._sink = _StreamDeckHardwareSink(self._device_manager, self._set_key_label)
+        self._sink = _StreamDeckHardwareSink(
+            self._device_manager,
+            self._set_key_label,
+            on_state_changed=self._make_state_changed_cb(context),
+        )
         self._bridge = ElgatoBridge(self._sink, self._settings_store)
         bundled = self._bundled_loader.scan()
         user = self._user_loader.scan()
@@ -209,6 +224,22 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _make_state_changed_cb(self, context: "ServerContext") -> _StateChangedCallback:
+        def _on_state_changed(device_id: str, key_index: int) -> None:
+            device_state = context.device_manager.get_device_state(device_id)
+            if device_state is None:
+                return
+            per_key = device_state.get_key_state(key_index)
+            image_b64 = base64.b64encode(per_key.image).decode("ascii") if per_key.image else None
+            context.event_bus.push(
+                "key_state_changed",
+                json.dumps(
+                    {"device_id": device_id, "key_index": key_index, "image_b64": image_b64, "label": per_key.label}
+                ),
+            )
+
+        return _on_state_changed
 
     def _set_key_label(self, device_id: str, key_index: int, label: str) -> None:
         if self._device_manager is None:

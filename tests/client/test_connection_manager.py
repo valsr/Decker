@@ -6,12 +6,13 @@ from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
 
-from decker.client.connection_manager import ConnectionManager
+from decker.client.connection_manager import ConnectionManager, _ClientService
 from decker.client.context import AppContext
 from decker.client.events import (
     ActionListUpdatedEvent,
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
+    KeyEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
@@ -226,3 +227,53 @@ class TestConnectionManager:
             self.manager.stop()
 
             assert_that(self.manager._thread).is_none()  # pylint: disable=protected-access
+
+
+class TestClientService:
+    def setup_method(self):
+        EventManager.reset()
+
+    def test_exposed_on_server_event_invokes_callback(self):
+        received = []
+        service = _ClientService(on_event=lambda t, p: received.append((t, p)))
+        service.exposed_on_server_event("key_event", '{"key": 1}')
+        assert_that(received).is_length(1)
+        assert_that(received[0][0]).is_equal_to("key_event")
+
+    def test_exposed_on_server_event_swallows_callback_errors(self):
+        def bad_callback(t: str, p: str) -> None:
+            raise RuntimeError("boom")
+
+        service = _ClientService(on_event=bad_callback)
+        service.exposed_on_server_event("key_event", "{}")  # should not raise
+
+
+class TestOnServerEvent:
+    def setup_method(self):
+        EventManager.reset()
+        self.manager = ConnectionManager("localhost", 18861)
+
+    def test_key_event_dispatches_key_event(self):
+        payload = json.dumps({"device_id": "abc", "key_index": 3, "pressed": True})
+        self.manager._on_server_event("key_event", payload)  # pylint: disable=protected-access
+        events = [e for e in EventManager.get().drain() if isinstance(e, KeyEvent)]
+        assert_that(events).is_length(1)
+        assert_that(events[0].device_id).is_equal_to("abc")
+        assert_that(events[0].key_index).is_equal_to(3)
+        assert_that(events[0].pressed).is_true()
+
+    def test_key_state_changed_dispatches_display_states_event(self):
+        payload = json.dumps({"device_id": "abc", "key_index": 2, "image_b64": None, "label": "Hi"})
+        self.manager._on_server_event("key_state_changed", payload)  # pylint: disable=protected-access
+        events = [e for e in EventManager.get().drain() if isinstance(e, KeyDisplayStatesUpdatedEvent)]
+        assert_that(events).is_length(1)
+        assert_that(events[0].device_id).is_equal_to("abc")
+        assert_that(events[0].states[0]["key_index"]).is_equal_to(2)
+        assert_that(events[0].states[0]["label"]).is_equal_to("Hi")
+
+    def test_unknown_event_type_is_silently_ignored(self):
+        self.manager._on_server_event("some_future_event", "{}")  # pylint: disable=protected-access
+        assert_that(EventManager.get().drain()).is_empty()
+
+    def test_malformed_payload_does_not_raise(self):
+        self.manager._on_server_event("key_event", "NOT JSON")  # pylint: disable=protected-access

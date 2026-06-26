@@ -11,7 +11,9 @@ from PyQt6.QtWidgets import QHBoxLayout, QSplitter, QVBoxLayout, QWidget
 
 from decker.client.context import AppContext
 from decker.client.events import (
+    ActionListUpdatedEvent,
     AppEvent,
+    DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
 )
 from decker.client.mock_page_model import MockPageModel
@@ -38,19 +40,23 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
 
     def __init__(self, ui_state_store: UiStateStore | None = None) -> None:
         super().__init__()
-        self.resize(900, 700)
         self._ui_state_store = ui_state_store or UiStateStore()
+        self._build_ui()
+
+    def _build_ui(self):
+        self.resize(900, 700)
         self._last_expanded_sidebar_width = _DEFAULT_SIDEBAR_WIDTH
         self._page_model = MockPageModel(key_count=_DEFAULT_KEY_COUNT)
         self._device_popup: DeviceSwitcherPopup | None = None
         self._selected_key: int | None = None
         self._key_slots: dict[int, dict[str, Any]] = {}  # key_index → assignment metadata
+        self._active_device_id: str | None = None
 
         # UI sub-components
-        self._sidebar = SidebarWidget() # Panel with plugins and other menu items
-        self._pill_bar = PagePillBar() # Pager
-        self._grid = ButtonGridWidget() # Main button view
-        self._config_panel = ActionConfigPanel() # Button configuration
+        self._sidebar = SidebarWidget()  # Panel with plugins and other menu items
+        self._pill_bar = PagePillBar()  # Pager
+        self._grid = ButtonGridWidget()  # Main button view
+        self._config_panel = ActionConfigPanel()  # Button configuration
 
         self._content_splitter = QSplitter(Qt.Orientation.Vertical)
         self._content_splitter.addWidget(self._grid)
@@ -87,11 +93,11 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         pass
 
     def handle_event(self, event: AppEvent) -> bool | None:
-        # if isinstance(event, DeviceListUpdatedEvent):
-        #     self._on_devices_updated(event.devices)
-        # elif isinstance(event, ActionListUpdatedEvent):
-        #     self._sidebar.set_actions(event.actions)
-        if isinstance(event, KeyDisplayStatesUpdatedEvent):
+        if isinstance(event, DeviceListUpdatedEvent):
+            self._on_devices_updated(event.devices)
+        elif isinstance(event, ActionListUpdatedEvent):
+            self._sidebar.set_actions(event.actions)
+        elif isinstance(event, KeyDisplayStatesUpdatedEvent):
             self._on_display_states_updated(event.device_id, event.states)
         return None
 

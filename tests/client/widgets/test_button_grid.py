@@ -54,10 +54,10 @@ class TestButtonGridWidget:
 
 class TestKeyButtonWidget:
     def test_set_label_updates_display(self, qapp):  # pylint: disable=unused-argument
-        btn = KeyButtonWidget(0, 72, 72)
+        btn = KeyButtonWidget(0, KeyInfo(row=0, col=0, pixel_width=72, pixel_height=72, type="key"))
         btn.set_label("99")
         assert_that(btn.text()).is_equal_to("99")
 
     def test_default_text_is_key_number(self, qapp):  # pylint: disable=unused-argument
-        btn = KeyButtonWidget(4, 72, 72)
+        btn = KeyButtonWidget(4, KeyInfo(row=0, col=4, pixel_width=72, pixel_height=72, type="key"))
         assert_that(btn.text()).is_equal_to("5")

@@ -1,5 +1,6 @@
 """Manages the Decker RPyC server subprocess."""
 
+import json
 import logging
 import multiprocessing
 import signal
@@ -15,6 +16,7 @@ from decker.common.context import ServerAppContext
 from decker.common.manager import Manager
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices.manager import DeviceManager
+from decker.server.event_bus import EventBus
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
 from decker.server.server_context import ServerContext
@@ -125,16 +127,19 @@ class ServerProcess:
     # ------------------------------------------------------------------
 
     def _on_hardware_key_event(self, device_id: str, key_index: int, pressed: bool) -> None:
-        """Route a hardware key event to the plugin whose action is assigned to this key."""
+        """Route a hardware key event to the plugin and push it to all connected clients."""
         if self._context is None:
             return
         assignment = self._context.key_assignment_store.get(device_id, key_index)
-        if assignment is None:
-            return
-        if pressed:
-            self._context.plugin_manager.dispatch_key_down(assignment.target)
-        else:
-            self._context.plugin_manager.dispatch_key_up(assignment.target)
+        if assignment is not None:
+            if pressed:
+                self._context.plugin_manager.dispatch_key_down(assignment.target)
+            else:
+                self._context.plugin_manager.dispatch_key_up(assignment.target)
+        self._context.event_bus.push(
+            "key_event",
+            json.dumps({"device_id": device_id, "key_index": key_index, "pressed": pressed}),
+        )
 
     def _replay_assignments(self, device_id_filter: str | None = None) -> None:
         """Re-activate all persisted key assignments and reopen their devices.
@@ -227,6 +232,7 @@ class ServerProcess:
             icon_pack_manager=icon_pack_manager,
             key_assignment_store=key_store,
             device_state_store=state_store,
+            event_bus=EventBus(),
             server=None,
         )
 

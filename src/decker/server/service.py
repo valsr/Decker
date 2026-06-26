@@ -54,12 +54,16 @@ class DeckerService(Service):
         self._last_heartbeat: float = time.time()
 
     def on_connect(self, conn: Any) -> None:
-        """Handle client connection."""
+        """Handle client connection — register for server-push events."""
         logging.info("Client connected to Decker service")
+        if self._context is not None:
+            self._context.event_bus.register(conn)
 
     def on_disconnect(self, conn: Any) -> None:
-        """Handle client disconnection."""
+        """Handle client disconnection — stop pushing events to this client."""
         logging.info("Client disconnected from Decker service")
+        if self._context is not None:
+            self._context.event_bus.unregister(conn)
 
     @exposed
     def stop(self) -> bool:
