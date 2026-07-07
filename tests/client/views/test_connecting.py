@@ -5,11 +5,11 @@ from unittest.mock import MagicMock
 from assertpy import assert_that
 from PyQt6.QtWidgets import QWidget
 
-from decker.client.views.connecting import ConnectingOverlay
+from decker.client.views.connecting import ReconnectWaitingOverlay
 
 
-def _make_overlay(qapp, parent: QWidget | None = None) -> ConnectingOverlay:  # pylint: disable=unused-argument
-    return ConnectingOverlay(host="localhost", port=18861, on_settings=MagicMock())
+def _make_overlay(qapp, parent: QWidget | None = None) -> ReconnectWaitingOverlay:  # pylint: disable=unused-argument
+    return ReconnectWaitingOverlay(host="localhost", port=18861, on_settings=MagicMock())
 
 
 class TestConnectingOverlay:
@@ -37,13 +37,13 @@ class TestConnectingOverlay:
         parent = QWidget()
         parent.resize(400, 300)
         parent.show()
-        overlay = ConnectingOverlay(host="srv", port=9999, on_settings=MagicMock())
+        overlay = ReconnectWaitingOverlay(host="srv", port=9999, on_settings=MagicMock())
         overlay.setParent(parent)
         overlay.on_activate()
         assert_that(overlay.isVisible()).is_true()
 
     def test_settings_button_calls_callback(self, qapp):  # pylint: disable=unused-argument
         callback = MagicMock()
-        overlay = ConnectingOverlay(host="localhost", port=18861, on_settings=callback)
+        overlay = ReconnectWaitingOverlay(host="localhost", port=18861, on_settings=callback)
         overlay._settings_btn.click()  # pylint: disable=protected-access
         callback.assert_called_once()
