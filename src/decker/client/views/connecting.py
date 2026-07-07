@@ -13,7 +13,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from decker.client.constants import CONFIG_SERVER_HOST, CONFIG_SERVER_PORT
 from decker.client.views.base import BaseView
+from decker.common import config
 
 _BLUR_RADIUS = 18.0
 
@@ -35,20 +37,21 @@ def _grab_blurred(widget: QWidget, radius: float = _BLUR_RADIUS) -> QPixmap:
     return result
 
 
-class ConnectingOverlay(BaseView):
-    """Frosted-glass overlay that sits on top of the main view stack while reconnecting.
+class ReconnectWaitingOverlay(BaseView):
+    """Frosted-glass overlay that sits on top of the main view stack while reconnecting to the
+    server.
 
     Not added to the QStackedWidget — shown as a floating child of the stack widget.
     The underlying view (dashboard) remains rendered and is captured/blurred as the backdrop.
     """
 
-    def __init__(self, host: str, port: int, on_settings: Callable[[], None]) -> None:
+    def __init__(self, on_settings: Callable[[], None]) -> None:
         super().__init__()
         self._blurred_bg: QPixmap | None = None
         self.setAutoFillBackground(False)
         self.hide()
 
-        self._label = QLabel(f"Connecting to server ({host}:{port})")
+        self._label = QLabel(f"Connecting to {config.get(CONFIG_SERVER_HOST)}:{config.get(CONFIG_SERVER_PORT)}")
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._label.setObjectName("connecting-label")
 
@@ -61,9 +64,14 @@ class ConnectingOverlay(BaseView):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addStretch()
         layout.addWidget(self._label, alignment=Qt.AlignmentFlag.AlignCenter)
+
         layout.addSpacing(16)
         layout.addWidget(self._settings_btn, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addStretch()
+
+    def set_message(self, message:str):
+        self._message = message
+        self._label.setText(self._message)
 
     def on_activate(self) -> None:
         """Capture and blur the background, then display the overlay."""
@@ -81,7 +89,7 @@ class ConnectingOverlay(BaseView):
         self.hide()
         self._blurred_bg = None
 
-    def paintEvent(self, event: QPaintEvent | None) -> None:
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
         painter = QPainter(self)
         if self._blurred_bg is not None:
             painter.drawPixmap(0, 0, self._blurred_bg)
@@ -90,4 +98,4 @@ class ConnectingOverlay(BaseView):
 
 
 # Alias kept so that any test or import still referring to ConnectingView doesn't break.
-ConnectingView = ConnectingOverlay
+ConnectingView = ReconnectWaitingOverlay

@@ -7,7 +7,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QLabel, QMainWindow, QStackedWidget
 
 from decker.client.assets import ICON_PATH
-from decker.client.connection_manager import ConnectionManager
+from decker.client.connection_manager import ConnectionManager, ServerState
 from decker.client.context import AppContext
 from decker.client.events import (
     ActionListUpdatedEvent,
@@ -26,7 +26,7 @@ from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
 from decker.client.views import (
     BaseView,
-    ConnectingOverlay,
+    ReconnectWaitingOverlay,
     DashboardView,
     DeviceView,
     ErrorView,
@@ -134,16 +134,16 @@ class MainWindow(QMainWindow):
 
         Calls show() once the initial view is active, never before — avoids a blank frame.
         """
-        if self._connection_manager.connected:
-            self.switch_to(ViewName.DASHBOARD)
-            self.show()
-        else:
-            QTimer.singleShot(_INITIAL_VIEW_RECHECK_MS, self._apply_initial_view)
+
+        self.switch_to(ViewName.DASHBOARD)
+        # if self._connection_manager.is_ready:
+        #     self.show()
+        # else:
+        QTimer.singleShot(_INITIAL_VIEW_RECHECK_MS, self._apply_initial_view)
 
     def _apply_initial_view(self) -> None:
-        self.switch_to(ViewName.DASHBOARD)
-        if not self._connection_manager.connected:
-            self.switch_to(ViewName.CONNECTING)
+        self.switch_to(ViewName.CONNECTING)
+        # Check what message to show
         self.show()
 
     def _save_geometry(self) -> None:
@@ -195,11 +195,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(_TOAST_DURATION_MS, self._toast.hide)
 
     def _register_all_views(self) -> None:
-        overlay = ConnectingOverlay(
-            host=self._connection_manager.host,
-            port=self._connection_manager.port,
-            on_settings=lambda: self.switch_to(ViewName.SETTINGS),
-        )
+        overlay = ReconnectWaitingOverlay(on_settings=lambda: self.switch_to(ViewName.SETTINGS))
         overlay.setParent(self._stack)
         self._views[ViewName.CONNECTING] = overlay
         self.register_view(ViewName.DASHBOARD, DashboardView())
