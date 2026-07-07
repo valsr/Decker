@@ -799,15 +799,18 @@ testutils = ["gitpython (>3)"]
 
 [[package]]
 name = "pylint-per-file-ignores"
-version = "1.4.0"
+version = "3.2.1"
 description = "A pylint plugin to ignore error codes per file."
 optional = false
-python-versions = "<4.0.0,>=3.8.1"
+python-versions = "<4,>=3.10"
 groups = ["dev"]
 files = [
-    {file = "pylint_per_file_ignores-1.4.0-py3-none-any.whl", hash = "sha256:0cd82d22551738b4e63a0aa1dab2a1fc4016e8f27f1429159616483711e122fd"},
-    {file = "pylint_per_file_ignores-1.4.0.tar.gz", hash = "sha256:c0de7b3d0169571aefaa1ac3a82a265641b8825b54a0b6f5ef27c3b76b988609"},
+    {file = "pylint_per_file_ignores-3.2.1-py3-none-any.whl", hash = "sha256:aaac8b118791e742ccf7baaf42346978f6cd0440a9090d4087fc8ff26e4a31f2"},
+    {file = "pylint_per_file_ignores-3.2.1.tar.gz", hash = "sha256:0a89f3cdc6fa09244a3f5624ad977ac9b026f0b25b2adb48c97c080da8d858f9"},
 ]
+
+[package.dependencies]
+pylint = ">=3.3,<5"
 
 [[package]]
 name = "pyqt6"
@@ -1398,4 +1401,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.14"
-content-hash = "d619ce1fa797a497396ccd31df5ad679d1815448e17b9b531e18b88a60d4e60d"
+content-hash = "eb62ec8fc886b4bb79ce1aa16298397e06e63c9da46edfa296c4fa0c071c11ec"
