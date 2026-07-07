@@ -7,13 +7,18 @@ license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.14"
+streamdeck = "^0.9.8"
 termcolor = "^2.5.0"
-toml = "^0.10.2"
 flatten-dict = "^0.4.2"
-streamdeck = "^0.9.6"
 xxhash = "^3.5.0"
 rpyc = "^6.0.1"
+pyyaml = "^6.0.3"
+PyQt6 = "^6.0"
+argcomplete = "^3.6.3"
+websockets = "^16.0"
+cairosvg = "^2.7"
+pillow = "^12.2.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^25.1.0"
@@ -29,24 +34,27 @@ isort = "^6.0.1"
 pytest-asyncio = "^0.25.3"
 dill = "^0.3.9"
 pyenchant = "^3.2.2"
-types-toml = "^0.10.8.20240310"
+types-pyyaml = "^6.0.12.20260518"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poe.tasks]
-start = { cmd = "python -m decker" }
-run = { cmd = "python -m decker" }
-app = { cmd = "python -m decker" }
+server = { cmd = "python -m decker" }
+client = { cmd = "python -m decker.client" }
+cli = { cmd = "python -m decker.cli" }
 test  = { cmd = "pytest --cov-report term --cov-report xml:coverage.xml --cov=decker tests" }
 mypy  = { cmd  = "mypy ." }
 black = { cmd  = "black ." }
 isort = { cmd  = "isort ." }
 pylint = { cmd  = "pylint src" }
-install-stubs = { cmd = "mypy --install-types"}
-stubgen = { cmd = "stubgen -o stubs" }
+mypy-stubs = { cmd = "mypy --install-types"}
+stub-gen = { cmd = "stubgen -o .stubs --include-private" }
+icons = { cmd = "python src/decker/assets/rasterize.py" }
 format = ["isort", "black"]
+stubs = ["stub-gen", "mypy-stubs"]
+update-dictionary = { cmd = "python scripts/update_dictionary.py", help = "Regenerate spell.dic from codebase types and user dictionary" }
 
 [tool.poe.tasks.setup]
 help = "Setup the project"
@@ -64,6 +72,18 @@ show_error_codes = true
 check_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = false
+mypy_path = ["stubs", "typings", ".stubs"]
+exclude = [
+    "stubs",
+    "typings",
+    ".stubs",
+    ".venv",
+    "dist",
+    "build",
+    "docs",
+    "src/decker/assets/rasterize.py",
+    "src/decker/bundled_plugins",
+]
 
 [[tool.mypy.overrides]]
 module = ["decker.*"]
@@ -73,12 +93,15 @@ follow_untyped_imports = true
 module = ["StreamDeck.*"]
 disable_error_code = ["name-defined"]
 
-[tool.pytest]
-pythonpath = "tests"
+# Disable for 3rd party modules/stubs
+[[tool.mypy.overrides]]
+module = ["rpyc.*"]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 timeout = 300
 asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
 
 
 [tool.coverage.run]
@@ -105,7 +128,7 @@ spelling-private-dict-file = "spell.dic"
 # A comma-separated list of package or module names from where C extensions may
 # be loaded. Extensions are loading into the active Python interpreter and may
 # run arbitrary code.
-# extension-pkg-allow-list =
+extension-pkg-allow-list = ["PyQt6"]
 
 # A comma-separated list of package or module names from where C extensions may
 # be loaded. Extensions are loading into the active Python interpreter and may
@@ -126,18 +149,18 @@ fail-under = 9.0
 # from-stdin =
 
 # Files or directories to be skipped. They should be base names, not paths.
-ignore = ["CVS", "stubs"]
+ignore = [".stubs", ".typings", ".venv", "dist", "build", "docs"]
 
 # Add files or directories matching the regular expressions patterns to the
 # ignore-list. The regex matches against paths and can be in Posix or Windows
 # format. Because '\' represents the directory delimiter on Windows systems, it
 # can't be used as an escape character.
-# ignore-paths = ["tests\\.*"]
+ignore-paths = [".stubs/.*", ".typings/.*", ".venv/.*"]
 
 # Files or directories matching the regular expression patterns are skipped. The
 # regex matches against base names, not paths. The default value ignores Emacs
 # file locks
-ignore-patterns = ["^\\.#"]
+ignore-patterns = ["^/.#"]
 
 # List of module names for which member attributes should not be checked (useful
 # for modules/projects where namespaces are manipulated during runtime and thus
@@ -330,7 +353,7 @@ valid-metaclass-classmethod-first-arg = ["cls"]
 max-args = 5
 
 # Maximum number of attributes for a class (see R0902).
-max-attributes = 7
+max-attributes = 10
 
 # Maximum number of boolean expressions in an if statement (see R0916).
 max-bool-expr = 5
@@ -472,6 +495,9 @@ enable = ["c-extension-no-member"]
 
 per-file-ignores = [
     "/tests/:missing-function-docstring,missing-module-docstring,missing-class-docstring",
+    "/stubs/",
+    "/src/decker/server/application.py:import-outside-toplevel",
+    "/src/decker/cli/app.py:import-outside-toplevel",
 ]
 
 [tool.pylint.method_args]
@@ -674,3 +700,8 @@ redefining-builtins-modules = [
     "builtins",
     "io",
 ]
+
+[tool.pyright]
+stubPath = ".stubs"
+venvPath = "."
+venv = ".venv"

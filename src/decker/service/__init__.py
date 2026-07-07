@@ -1,3 +1,0 @@
-"""Server module."""
-
-import logging

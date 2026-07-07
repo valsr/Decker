@@ -1,0 +1,13 @@
+server:
+  port: 18861
+  memory_limit: 1073741824
+  health_check_interval: 5.0
+  max_failed_heartbeats: 2
+  startup_wait: 5.0
+
+client:
+  server_host: localhost
+  server_port: 18861
+
+plugin:
+  nodejs_path: node

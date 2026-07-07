@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#313244"/>
+      <stop offset="1" stop-color="#1e1e2e"/>
+    </linearGradient>
+    <linearGradient id="btn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b4d0fa"/>
+      <stop offset="1" stop-color="#6890e0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Device chassis -->
+  <rect x="24" y="44" width="208" height="168" rx="22" fill="url(#body)" stroke="#45475a" stroke-width="2"/>
+
+  <!-- 6 keys: 2 rows × 3 cols, each 44×44, gap 14 -->
+  <rect x="48"  y="77"  width="44" height="44" rx="9" fill="url(#btn)"/>
+  <rect x="106" y="77"  width="44" height="44" rx="9" fill="url(#btn)"/>
+  <rect x="164" y="77"  width="44" height="44" rx="9" fill="url(#btn)"/>
+  <rect x="48"  y="135" width="44" height="44" rx="9" fill="url(#btn)"/>
+  <rect x="106" y="135" width="44" height="44" rx="9" fill="url(#btn)"/>
+  <rect x="164" y="135" width="44" height="44" rx="9" fill="url(#btn)"/>
+</svg>
