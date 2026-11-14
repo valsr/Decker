@@ -40,3 +40,25 @@ class TestApiHandler:
             api.request("heartbeat")
         api.__del__()
         mock_conn.close.assert_called_once()
+
+    def test_request_reconnects_after_connection_dropped(self):
+        dead = MagicMock()
+        dead.root.heartbeat.side_effect = EOFError("stream has been closed")
+        fresh = MagicMock()
+        fresh.root.heartbeat.return_value = "ok"
+        with patch("decker.common.api.rpyc.utils.factory.connect", side_effect=[dead, fresh]) as mock_connect:
+            api = ApiHandler()
+            try:
+                api.request("heartbeat")
+                assert False, "expected exception"
+            except EOFError:
+                pass
+            result = api.request("heartbeat")
+        assert_that(result).is_equal_to("ok")
+        assert_that(mock_connect.call_count).is_equal_to(2)
+        dead.close.assert_called_once()
+
+    def test_close_is_idempotent(self):
+        api = ApiHandler()
+        api.close()
+        api.close()
