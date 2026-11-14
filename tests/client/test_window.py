@@ -22,7 +22,7 @@ from decker.client.window import MainWindow
 @pytest.fixture
 def connection_manager() -> MagicMock:
     manager = MagicMock()
-    manager.connected = False
+    manager.is_connected = False
     return manager
 
 
@@ -146,7 +146,7 @@ class TestCheckInitialView:
     def test_connected_switches_to_dashboard_and_shows(
         self, window, connection_manager  # pylint: disable=redefined-outer-name
     ):
-        connection_manager.connected = True
+        connection_manager.is_connected = True
 
         window.check_initial_view()
 
@@ -162,7 +162,7 @@ class TestCheckInitialView:
     def test_apply_initial_view_uses_dashboard_when_connected(
         self, window, connection_manager  # pylint: disable=redefined-outer-name
     ):
-        connection_manager.connected = True
+        connection_manager.is_connected = True
 
         window._apply_initial_view()  # pylint: disable=protected-access
 

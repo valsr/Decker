@@ -1,11 +1,11 @@
 """Owns the RPyC connection and its background worker thread. No Qt imports."""
 
-from enum import StrEnum
 import json
 import logging
 import threading
 import time
 from collections.abc import Callable
+from enum import StrEnum
 from typing import Any
 
 import rpyc.utils.factory
@@ -13,6 +13,7 @@ from rpyc.core.protocol import Connection
 from rpyc.core.service import Service
 from rpyc.utils.helpers import BgServingThread
 
+from decker.client import config as client_config
 from decker.client.events import (
     ActionListUpdatedEvent,
     DeviceListUpdatedEvent,
@@ -24,16 +25,19 @@ from decker.client.events import (
 )
 from decker.client.events.event_manager import EventManager
 from decker.common.model import DeviceHardwareInfo, KeyInfo
-import decker.client.config
 
 _RETRY_INTERVAL_S = 3.0
 _HEARTBEAT_INTERVAL_S = 5.0
 
+
 class ServerState(StrEnum):
-    DISCONNECTED = "disconnected" # No connection to server - no response
-    INITIALIZING = "initializing" # Connected to the server but initial data not yet pulled
-    UNHEALTHY= "unhealthy" # Connected to the server but the server is reporting errors (or missed healthchecks)
-    HEALTHY = "healthy" # Connected and no issues since last health check
+    """Connection state of the client towards the server, as seen by ConnectionManager."""
+
+    DISCONNECTED = "disconnected"  # no connection
+    INITIALIZING = "initializing"  # connected, initial data not yet pulled
+    UNHEALTHY = "unhealthy"  # connected, but the last heartbeat reported a non-healthy status
+    HEALTHY = "healthy"  # connected and the last heartbeat reported healthy
+
 
 class _ClientService(Service):
     """Exposed to the server so it can push events to this client."""
@@ -67,11 +71,13 @@ class ConnectionManager:
 
     @property
     def is_connected(self) -> bool:
+        """True while a connection to the server is open, regardless of its health."""
         return self.state != ServerState.DISCONNECTED
 
     @property
     def is_ready(self) -> bool:
-        return self.state in [ServerState.HEALTHY, ServerState.UNHEALTHY]
+        """True once the initial data pull has completed on the current connection."""
+        return self.state in (ServerState.HEALTHY, ServerState.UNHEALTHY)
 
     def start(self) -> None:
         """Start the background connection thread. No-op if already running."""
@@ -97,9 +103,7 @@ class ConnectionManager:
                 if self._conn is None:
                     self._stop_event.wait(_RETRY_INTERVAL_S)
                 continue
-            else:
-                self._stop_event.wait(_HEARTBEAT_INTERVAL_S)
-
+            self._stop_event.wait(_HEARTBEAT_INTERVAL_S)
             if self._stop_event.is_set():
                 break
             now = time.monotonic()
@@ -111,8 +115,8 @@ class ConnectionManager:
         host: str = ""
         port: int = -1
         try:
-            host = decker.client.config.get_server()
-            port = decker.client.config.get_port()
+            host = client_config.get_server_host()
+            port = client_config.get_server_port()
             self._conn = rpyc.utils.factory.connect(
                 host,
                 port,
@@ -125,7 +129,15 @@ class ConnectionManager:
         self.state = ServerState.INITIALIZING
         self._bg_server = BgServingThread(self._conn)
         EventManager.get().push(ServerConnectedEvent(host=host, port=port))
-        self.state = ServerState.HEALTHY
+        self._refresh_all()
+        self._refresh_key_display_states()
+        if self._conn is not None:
+            self.state = ServerState.HEALTHY
+
+    def _refresh_all(self) -> None:
+        self._refresh_devices()
+        self._refresh_actions()
+        self._check_plugin_failures()
 
     def _call_json(self, method: str, *args: Any) -> Any:
         """Call an RPC method that returns a JSON string and decode it."""
@@ -137,17 +149,17 @@ class ConnectionManager:
     def _check_heartbeat(self) -> None:
         try:
             response: dict[str, Any] = self._call_json("heartbeat")
-
-            if response.get("status") == "healthy":
-                self.state = ServerState.HEALTHY
-            else:
-                self.state = ServerState.UNHEALTHY
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Server heartbeat failed: %s", e)
             self._close_connection()
-            self.state = ServerState.DISCONNECTED
             EventManager.get().push(ServerDisconnectedEvent(reason=str(e)))
             return
+        if response.get("status") == "healthy":
+            self.state = ServerState.HEALTHY
+        else:
+            logging.warning("Server reported unhealthy status: %r", response)
+            self.state = ServerState.UNHEALTHY
+        self._refresh_all()
 
     def _check_plugin_failures(self) -> None:
         if self._conn is None:
@@ -242,6 +254,7 @@ class ConnectionManager:
             logging.debug("Unknown server event type: %s", event_type)
 
     def _close_connection(self) -> None:
+        self.state = ServerState.DISCONNECTED
         if self._bg_server is not None:
             try:
                 self._bg_server.stop()
@@ -255,7 +268,6 @@ class ConnectionManager:
         except Exception:  # pylint: disable=broad-except
             pass
         self._conn = None
-        self.state = ServerState.DISCONNECTED
 
 
 def _parse_hw_info(data: dict[str, Any]) -> DeviceHardwareInfo:

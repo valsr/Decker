@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
 
-from decker.client.connection_manager import ConnectionManager, _ClientService
+from decker.client.connection_manager import (
+    ConnectionManager,
+    ServerState,
+    _ClientService,
+)
 from decker.client.context import AppContext
 from decker.client.events import (
     ActionListUpdatedEvent,
@@ -24,10 +28,18 @@ from decker.common.model import DeviceHardwareInfo
 class TestConnectionManager:
     def setup_method(self):
         EventManager.reset()
-        self.manager = ConnectionManager("localhost", 18861)
+        self._config_patches = [
+            patch("decker.client.config.get_server_host", return_value="localhost"),
+            patch("decker.client.config.get_server_port", return_value=18861),
+        ]
+        for p in self._config_patches:
+            p.start()
+        self.manager = ConnectionManager()
 
     def teardown_method(self):
         self.manager.stop()
+        for p in self._config_patches:
+            p.stop()
 
     @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
     def test_try_connect_success_marks_connected_and_pushes_events(self, mock_connect: MagicMock):
@@ -39,7 +51,7 @@ class TestConnectionManager:
 
         self.manager._try_connect()  # pylint: disable=protected-access
 
-        assert_that(self.manager.connected).is_true()
+        assert_that(self.manager.state).is_equal_to(ServerState.HEALTHY)
         events = EventManager.get().drain()
         assert_that(events).is_length(3)
         assert_that(events[0]).is_instance_of(ServerConnectedEvent)
@@ -55,18 +67,18 @@ class TestConnectionManager:
 
         self.manager._try_connect()  # pylint: disable=protected-access
 
-        assert_that(self.manager.connected).is_false()
+        assert_that(self.manager.state).is_equal_to(ServerState.DISCONNECTED)
         assert_that(EventManager.get().drain()).is_empty()
 
     def test_check_heartbeat_failure_pushes_disconnected_event(self):
         mock_conn = MagicMock()
         mock_conn.root.heartbeat.side_effect = ConnectionResetError("lost")
         self.manager._conn = mock_conn  # pylint: disable=protected-access
-        self.manager.connected = True
+        self.manager.state = ServerState.HEALTHY
 
         self.manager._check_heartbeat()  # pylint: disable=protected-access
 
-        assert_that(self.manager.connected).is_false()
+        assert_that(self.manager.state).is_equal_to(ServerState.DISCONNECTED)
         events = EventManager.get().drain()
         assert_that(events).is_length(1)
         assert_that(events[0]).is_instance_of(ServerDisconnectedEvent)
@@ -78,7 +90,7 @@ class TestConnectionManager:
         mock_conn.root.plugins_load_failures.return_value = json.dumps([])
         mock_conn.root.plugins_actions_list.return_value = json.dumps([])
         self.manager._conn = mock_conn  # pylint: disable=protected-access
-        self.manager.connected = True
+        self.manager.state = ServerState.HEALTHY
 
         self.manager._check_heartbeat()  # pylint: disable=protected-access
 
@@ -86,15 +98,51 @@ class TestConnectionManager:
         assert_that(events).is_length(2)
         assert_that(events[0]).is_instance_of(DeviceListUpdatedEvent)
 
+    def test_check_heartbeat_non_healthy_status_marks_unhealthy_but_stays_connected(self):
+        mock_conn = MagicMock()
+        mock_conn.root.heartbeat.return_value = json.dumps({"status": "degraded"})
+        mock_conn.root.devices_list.return_value = json.dumps([])
+        mock_conn.root.plugins_load_failures.return_value = json.dumps([])
+        mock_conn.root.plugins_actions_list.return_value = json.dumps([])
+        self.manager._conn = mock_conn  # pylint: disable=protected-access
+        self.manager.state = ServerState.HEALTHY
+
+        self.manager._check_heartbeat()  # pylint: disable=protected-access
+
+        assert_that(self.manager.state).is_equal_to(ServerState.UNHEALTHY)
+        assert_that(self.manager.is_connected).is_true()
+        assert_that(self.manager.is_ready).is_true()
+
+    def test_initializing_state_is_connected_but_not_ready(self):
+        self.manager.state = ServerState.INITIALIZING
+
+        assert_that(self.manager.is_connected).is_true()
+        assert_that(self.manager.is_ready).is_false()
+
+    def test_disconnected_state_is_neither_connected_nor_ready(self):
+        assert_that(self.manager.is_connected).is_false()
+        assert_that(self.manager.is_ready).is_false()
+
+    @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
+    def test_try_connect_reads_host_and_port_from_config(self, mock_connect: MagicMock):
+        mock_connect.side_effect = ConnectionRefusedError("refused")
+        with (
+            patch("decker.client.config.get_server_host", return_value="otherhost"),
+            patch("decker.client.config.get_server_port", return_value=9999),
+        ):
+            self.manager._try_connect()  # pylint: disable=protected-access
+
+        assert_that(mock_connect.call_args.args[:2]).is_equal_to(("otherhost", 9999))
+
     def test_stop_closes_connection_and_clears_connected(self):
         mock_conn = MagicMock()
         self.manager._conn = mock_conn  # pylint: disable=protected-access
-        self.manager.connected = True
+        self.manager.state = ServerState.HEALTHY
 
         self.manager.stop()
 
         mock_conn.close.assert_called_once()
-        assert_that(self.manager.connected).is_false()
+        assert_that(self.manager.state).is_equal_to(ServerState.DISCONNECTED)
 
     @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
     def test_try_connect_pushes_plugin_load_failed_event(self, mock_connect: MagicMock):
@@ -154,7 +202,7 @@ class TestConnectionManager:
             [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
         )
         self.manager._conn = mock_conn  # pylint: disable=protected-access
-        self.manager.connected = True
+        self.manager.state = ServerState.HEALTHY
 
         self.manager._check_heartbeat()  # pylint: disable=protected-access
 
@@ -251,7 +299,7 @@ class TestClientService:
 class TestOnServerEvent:
     def setup_method(self):
         EventManager.reset()
-        self.manager = ConnectionManager("localhost", 18861)
+        self.manager = ConnectionManager()
 
     def test_key_event_dispatches_key_event(self):
         payload = json.dumps({"device_id": "abc", "key_index": 3, "pressed": True})

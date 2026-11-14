@@ -7,13 +7,11 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
 
-from decker.client.context import AppContext
 import decker.common.logging
 from decker.client.assets import load_stylesheet
 from decker.client.connection_manager import ConnectionManager
 from decker.client.tray import TrayIcon
 from decker.client.window import MainWindow
-from decker.common import config
 from decker.common import paths as decker_paths
 
 
@@ -32,9 +30,6 @@ def main() -> None:
     """Client entry point."""
     args = _create_parser().parse_args()
 
-    # Create app context
-    context = AppContext.get()
-
     if args.prefix is not None:
         decker_paths.configure(Path(args.prefix))
 
@@ -42,7 +37,6 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setStyleSheet(load_stylesheet())
 
-    # IF server not define open settings instead
     connection_manager = ConnectionManager()
     connection_manager.start()
 
