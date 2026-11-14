@@ -14,9 +14,6 @@ if TYPE_CHECKING:
 class AppContext:
     """Shared client state. MainWindow is the sole writer; views are read-only consumers."""
 
-    """The prefix/global path used to locate configuration/files"""
-    path_prefix: str = "~/"
-
     connected: bool = False
     active_device: DeviceHardwareInfo | None = None
     last_command: str | None = None
@@ -41,5 +38,3 @@ class AppContext:
     def reset(cls) -> None:
         """Replace the singleton with a fresh instance — used by MainWindow.restart()."""
         cls._instance = cls()
-
-    # TODO Configuration is part of APPContext

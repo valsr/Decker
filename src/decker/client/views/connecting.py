@@ -13,9 +13,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from decker.client.constants import CONFIG_SERVER_HOST, CONFIG_SERVER_PORT
+from decker.client import config as client_config
 from decker.client.views.base import BaseView
-from decker.common import config
 
 _BLUR_RADIUS = 18.0
 
@@ -51,7 +50,7 @@ class ReconnectWaitingOverlay(BaseView):
         self.setAutoFillBackground(False)
         self.hide()
 
-        self._label = QLabel(f"Connecting to {config.get(CONFIG_SERVER_HOST)}:{config.get(CONFIG_SERVER_PORT)}")
+        self._label = QLabel()
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._label.setObjectName("connecting-label")
 
@@ -69,12 +68,13 @@ class ReconnectWaitingOverlay(BaseView):
         layout.addWidget(self._settings_btn, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addStretch()
 
-    def set_message(self, message:str):
-        self._message = message
-        self._label.setText(self._message)
+    def set_message(self, message: str) -> None:
+        """Replace the overlay's status text."""
+        self._label.setText(message)
 
     def on_activate(self) -> None:
         """Capture and blur the background, then display the overlay."""
+        self.set_message(f"Connecting to server ({client_config.get_server_host()}:{client_config.get_server_port()})")
         parent = self.parentWidget()
         if parent is not None:
             self._blurred_bg = _grab_blurred(parent)
@@ -95,7 +95,3 @@ class ReconnectWaitingOverlay(BaseView):
             painter.drawPixmap(0, 0, self._blurred_bg)
         painter.fillRect(self.rect(), QColor(20, 20, 30, 160))
         painter.end()
-
-
-# Alias kept so that any test or import still referring to ConnectingView doesn't break.
-ConnectingView = ReconnectWaitingOverlay

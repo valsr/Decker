@@ -7,7 +7,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QLabel, QMainWindow, QStackedWidget
 
 from decker.client.assets import ICON_PATH
-from decker.client.connection_manager import ConnectionManager, ServerState
+from decker.client.connection_manager import ConnectionManager
 from decker.client.context import AppContext
 from decker.client.events import (
     ActionListUpdatedEvent,
@@ -26,10 +26,10 @@ from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
 from decker.client.views import (
     BaseView,
-    ReconnectWaitingOverlay,
     DashboardView,
     DeviceView,
     ErrorView,
+    ReconnectWaitingOverlay,
     SettingsView,
 )
 from decker.common.model import DeviceHardwareInfo
@@ -134,16 +134,16 @@ class MainWindow(QMainWindow):
 
         Calls show() once the initial view is active, never before — avoids a blank frame.
         """
-
-        self.switch_to(ViewName.DASHBOARD)
-        # if self._connection_manager.is_ready:
-        #     self.show()
-        # else:
-        QTimer.singleShot(_INITIAL_VIEW_RECHECK_MS, self._apply_initial_view)
+        if self._connection_manager.is_connected:
+            self.switch_to(ViewName.DASHBOARD)
+            self.show()
+        else:
+            QTimer.singleShot(_INITIAL_VIEW_RECHECK_MS, self._apply_initial_view)
 
     def _apply_initial_view(self) -> None:
-        self.switch_to(ViewName.CONNECTING)
-        # Check what message to show
+        self.switch_to(ViewName.DASHBOARD)
+        if not self._connection_manager.is_connected:
+            self.switch_to(ViewName.CONNECTING)
         self.show()
 
     def _save_geometry(self) -> None:
