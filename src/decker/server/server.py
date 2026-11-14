@@ -26,8 +26,9 @@ from decker.server.service import DeckerService
 class ServerProcess:
     """Spawns and owns the RPyC server subprocess."""
 
-    def __init__(self, port: int, startup_wait: float, app_context: ServerAppContext) -> None:
+    def __init__(self, port: int, startup_wait: float, app_context: ServerAppContext, host: str = "localhost") -> None:
         """Initialize the server process."""
+        self.host = host
         self.port = port
         self._startup_wait = startup_wait
         self._process: multiprocessing.Process | None = None
@@ -263,12 +264,13 @@ class ServerProcess:
 
         server = ThreadPoolServer(
             DeckerService,
+            hostname=self.host,
             port=self.port,
             protocol_config={"allow_public_attrs": True},
         )
         self._context.server = server
         DeckerService.configure_context(self._context)
-        logging.info("RPyC server listening on port %d", self.port)
+        logging.info("RPyC server listening on %s:%d", self.host, self.port)
         try:
             server.start()
         finally:

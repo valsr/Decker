@@ -8,7 +8,7 @@ import pytest
 from assertpy import assert_that
 
 from decker.common.context import ServerAppContext
-from decker.server.monitor import ServerMonitor, _read_rss_bytes
+from decker.server.monitor import ServerMonitor, _connect_host, _read_rss_bytes
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
 
 
@@ -48,6 +48,7 @@ class TestReadRssBytes:
 def _make_monitor() -> ServerMonitor:
     with patch("decker.server.monitor.config") as mock_cfg:
         mock_cfg.get_as.side_effect = lambda key, typ: {
+            "server.host": "localhost",
             "server.port": 18861,
             "server.startup_wait": 5.0,
             "server.health_check_interval": 5.0,
@@ -74,7 +75,7 @@ class TestServerMonitorHeartbeat:
     def test_heartbeat_ok_resets_failed_count(self):
         m = _make_monitor()
         m._failed_heartbeats = 2  # pylint: disable=protected-access
-        with patch("decker.server.monitor.API") as mock_api:
+        with patch.object(m, "_api") as mock_api:
             healthy = DeckerServiceStatus(service_status=DeckerStatusEnum.HEALTHY, last_heartbeat=0.0)
             mock_api.request_as.side_effect = lambda t, fn, *a, **kw: healthy if fn == "heartbeat" else None
             result = m._heartbeat_ok()  # pylint: disable=protected-access
@@ -83,7 +84,7 @@ class TestServerMonitorHeartbeat:
 
     def test_heartbeat_failure_increments_count(self):
         m = _make_monitor()
-        with patch("decker.server.monitor.API") as mock_api:
+        with patch.object(m, "_api") as mock_api:
             mock_api.request_as.side_effect = ConnectionRefusedError("refused")
             result = m._heartbeat_ok()  # pylint: disable=protected-access
         assert_that(m._failed_heartbeats).is_equal_to(1)  # pylint: disable=protected-access
@@ -92,14 +93,14 @@ class TestServerMonitorHeartbeat:
     def test_heartbeat_fails_after_max_failures(self):
         m = _make_monitor()
         m._failed_heartbeats = 2  # pylint: disable=protected-access
-        with patch("decker.server.monitor.API") as mock_api:
+        with patch.object(m, "_api") as mock_api:
             mock_api.request_as.side_effect = ConnectionRefusedError("refused")
             result = m._heartbeat_ok()  # pylint: disable=protected-access
         assert_that(result).is_false()
 
     def test_unexpected_heartbeat_response_counts_as_failure(self):
         m = _make_monitor()
-        with patch("decker.server.monitor.API") as mock_api:
+        with patch.object(m, "_api") as mock_api:
             mock_api.request_as.return_value = None
             result = m._heartbeat_ok()  # pylint: disable=protected-access
         assert_that(m._failed_heartbeats).is_equal_to(1)  # pylint: disable=protected-access
@@ -154,7 +155,7 @@ class TestServerMonitorCheckOnce:
         m = _make_monitor()
         m._server.is_running = True  # type: ignore[misc]  # pylint: disable=protected-access
         m._failed_heartbeats = 3  # already at/past max  # pylint: disable=protected-access
-        with patch("decker.server.monitor.API") as mock_api:
+        with patch.object(m, "_api") as mock_api:
             mock_api.request_as.side_effect = ConnectionRefusedError("refused")
             m._check_once()  # pylint: disable=protected-access
         m._server.stop.assert_called()  # type: ignore[attr-defined]
@@ -165,7 +166,7 @@ class TestServerMonitorCheckOnce:
         m._server.pid = 12345  # type: ignore[misc]  # pylint: disable=protected-access
         m._memory_limit = 10  # pylint: disable=protected-access
         with (
-            patch("decker.server.monitor.API") as mock_api,
+            patch.object(m, "_api") as mock_api,
             patch("decker.server.monitor._read_rss_bytes", return_value=999999999),
         ):
             mock_api.request_as.return_value = DeckerServiceStatus(
@@ -180,3 +181,40 @@ class TestServerMonitorCheckOnce:
         m._server.start.return_value = True  # type: ignore[attr-defined]
         m._restart_server()  # pylint: disable=protected-access
         assert_that(m._failed_heartbeats).is_equal_to(0)  # pylint: disable=protected-access
+
+    def test_restart_server_drops_cached_api_connection(self):
+        m = _make_monitor()
+        m._api = MagicMock()  # pylint: disable=protected-access
+        m._server.start.return_value = True  # type: ignore[attr-defined]
+        m._restart_server()  # pylint: disable=protected-access
+        m._api.close.assert_called_once()  # pylint: disable=protected-access
+
+    def test_heartbeat_targets_configured_port(self):
+        with patch("decker.server.monitor.config") as mock_cfg:
+            mock_cfg.get_as.side_effect = lambda key, typ: {
+                "server.host": "0.0.0.0",
+                "server.port": 19999,
+                "server.startup_wait": 5.0,
+                "server.health_check_interval": 5.0,
+                "server.max_failed_heartbeats": 3,
+                "server.memory_limit": 1024,
+            }[key]
+            with patch("decker.server.monitor.ServerProcess"):
+                m = ServerMonitor(ServerAppContext())
+        assert_that(m._api.port).is_equal_to(19999)  # pylint: disable=protected-access
+        assert_that(m._api.host).is_equal_to("localhost")  # pylint: disable=protected-access
+
+
+class TestConnectHost:
+    @pytest.mark.parametrize(
+        "bind,expected",
+        [
+            ("0.0.0.0", "localhost"),
+            ("", "localhost"),
+            ("::", "localhost"),
+            ("localhost", "localhost"),
+            ("192.168.1.5", "192.168.1.5"),
+        ],
+    )
+    def test_maps_wildcard_bind_addresses_to_localhost(self, bind, expected):
+        assert_that(_connect_host(bind)).is_equal_to(expected)
