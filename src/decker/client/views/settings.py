@@ -3,6 +3,7 @@
 from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from decker.client import config as client_config
+from decker.client.context import AppContext
 from decker.client.views.base import BaseView
 
 
@@ -46,6 +47,25 @@ class SettingsView(BaseView):
         self._saved_label.setVisible(False)
 
     def _on_save(self) -> None:
-        client_config.set_server(self._host_input.text().strip(), int(self._port_input.text().strip()))
+        host = self._host_input.text().strip()
+        port = _parse_port(self._port_input.text())
+        if not host or port is None:
+            self._saved_label.setProperty("role", "error")
+            self._saved_label.setText("Enter a host and a port between 1 and 65535.")
+            self._saved_label.setVisible(True)
+            return
+        client_config.set_server(host, port)
+        connection_manager = AppContext.get().connection_manager
+        if connection_manager is not None:
+            connection_manager.request_reconnect()
+        self._saved_label.setProperty("role", "success")
         self._saved_label.setText("Saved.")
         self._saved_label.setVisible(True)
+
+
+def _parse_port(text: str) -> int | None:
+    try:
+        port = int(text.strip())
+    except ValueError:
+        return None
+    return port if 0 < port < 65536 else None

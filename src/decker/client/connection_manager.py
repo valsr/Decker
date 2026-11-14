@@ -65,9 +65,13 @@ class ConnectionManager:
         self._conn: Connection | None = None
         self._bg_server: BgServingThread | None = None
         self._stop_event = threading.Event()
+        self._wake_event = threading.Event()
+        self._reconnect_requested = threading.Event()
         self._thread: threading.Thread | None = None
         self.state: ServerState = ServerState.DISCONNECTED
         self._reported_plugin_failures: set[str] = set()
+        self._last_devices: list[DeviceHardwareInfo] | None = None
+        self._last_actions: list[dict[str, Any]] | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -90,26 +94,54 @@ class ConnectionManager:
     def stop(self) -> None:
         """Signal the worker thread to stop and close the connection."""
         self._stop_event.set()
+        self._wake_event.set()
         if self._thread is not None:
             self._thread.join(timeout=_HEARTBEAT_INTERVAL_S)
             self._thread = None
         self._close_connection()
 
+    def request_reconnect(self) -> None:
+        """Drop the current connection (if any) and reconnect using the current config."""
+        self._reconnect_requested.set()
+        self._wake_event.set()
+
+    def _wait(self, timeout: float) -> None:
+        self._wake_event.wait(timeout)
+        self._wake_event.clear()
+
     def _run(self) -> None:
         last_heartbeat = 0.0
         while not self._stop_event.is_set():
+            try:
+                last_heartbeat = self._run_once(last_heartbeat)
+            except Exception as e:  # pylint: disable=broad-except
+                # The worker must never die, or the client silently stops reconnecting.
+                logging.exception("Unexpected error in connection worker")
+                self._drop_connection(f"internal error: {e}")
+                self._wait(_RETRY_INTERVAL_S)
+
+    def _run_once(self, last_heartbeat: float) -> float:
+        if self._reconnect_requested.is_set():
+            self._reconnect_requested.clear()
+            if self._conn is not None:
+                self._drop_connection("reconnect requested")
+        if self._conn is None:
+            self._try_connect()
             if self._conn is None:
-                self._try_connect()
-                if self._conn is None:
-                    self._stop_event.wait(_RETRY_INTERVAL_S)
-                continue
-            self._stop_event.wait(_HEARTBEAT_INTERVAL_S)
-            if self._stop_event.is_set():
-                break
-            now = time.monotonic()
-            if now - last_heartbeat >= _HEARTBEAT_INTERVAL_S:
-                self._check_heartbeat()
-                last_heartbeat = now
+                self._wait(_RETRY_INTERVAL_S)
+            return last_heartbeat
+        self._wait(_HEARTBEAT_INTERVAL_S)
+        if self._stop_event.is_set() or self._reconnect_requested.is_set():
+            return last_heartbeat
+        now = time.monotonic()
+        if now - last_heartbeat >= _HEARTBEAT_INTERVAL_S:
+            self._check_heartbeat()
+            return now
+        return last_heartbeat
+
+    def _drop_connection(self, reason: str) -> None:
+        self._close_connection()
+        EventManager.get().push(ServerDisconnectedEvent(reason=reason))
 
     def _try_connect(self) -> None:
         host: str = ""
@@ -127,11 +159,14 @@ class ConnectionManager:
             return
         logging.info("Connected to server at %s:%d", host, port)
         self.state = ServerState.INITIALIZING
+        self._last_devices = None
+        self._last_actions = None
         self._bg_server = BgServingThread(self._conn)
         EventManager.get().push(ServerConnectedEvent(host=host, port=port))
         self._refresh_all()
         self._refresh_key_display_states()
-        if self._conn is not None:
+        # A concurrent stop() may have closed the connection during the initial pull.
+        if self.state == ServerState.INITIALIZING:
             self.state = ServerState.HEALTHY
 
     def _refresh_all(self) -> None:
@@ -148,13 +183,14 @@ class ConnectionManager:
 
     def _check_heartbeat(self) -> None:
         try:
-            response: dict[str, Any] = self._call_json("heartbeat")
+            response = self._call_json("heartbeat")
+            if not isinstance(response, dict):
+                raise ValueError(f"unexpected heartbeat response: {response!r}")
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Server heartbeat failed: %s", e)
-            self._close_connection()
-            EventManager.get().push(ServerDisconnectedEvent(reason=str(e)))
+            self._drop_connection(str(e))
             return
-        if response.get("status") == "healthy":
+        if response.get("service_status") == "healthy":
             self.state = ServerState.HEALTHY
         else:
             logging.warning("Server reported unhealthy status: %r", response)
@@ -165,7 +201,7 @@ class ConnectionManager:
         if self._conn is None:
             return
         try:
-            failures: list[dict[str, Any]] = self._call_json("plugins_load_failures")
+            failures: list[dict[str, Any]] = self._call_json("plugins_load_failures") or []
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not fetch plugin load failures: %s", e)
             return
@@ -181,10 +217,13 @@ class ConnectionManager:
             return
         try:
             raw: list[dict[str, Any]] = self._call_json("devices_list")
+            devices = [_parse_hw_info(d) for d in raw]
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not list devices: %s", e)
             return
-        devices = [_parse_hw_info(d) for d in raw]
+        if devices == self._last_devices:
+            return
+        self._last_devices = devices
         EventManager.get().push(DeviceListUpdatedEvent(devices=devices))
 
     def _refresh_actions(self) -> None:
@@ -195,6 +234,9 @@ class ConnectionManager:
         except Exception as e:  # pylint: disable=broad-except
             logging.warning("Could not list plugin actions: %s", e)
             return
+        if actions == self._last_actions:
+            return
+        self._last_actions = actions
         EventManager.get().push(ActionListUpdatedEvent(actions=actions))
 
     def call(self, method: str, *args: Any) -> Any:

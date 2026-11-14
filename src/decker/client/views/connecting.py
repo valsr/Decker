@@ -74,7 +74,7 @@ class ReconnectWaitingOverlay(BaseView):
 
     def on_activate(self) -> None:
         """Capture and blur the background, then display the overlay."""
-        self.set_message(f"Connecting to server ({client_config.get_server_host()}:{client_config.get_server_port()})")
+        self.set_message(_connecting_message())
         parent = self.parentWidget()
         if parent is not None:
             self._blurred_bg = _grab_blurred(parent)
@@ -95,3 +95,10 @@ class ReconnectWaitingOverlay(BaseView):
             painter.drawPixmap(0, 0, self._blurred_bg)
         painter.fillRect(self.rect(), QColor(20, 20, 30, 160))
         painter.end()
+
+
+def _connecting_message() -> str:
+    try:
+        return f"Connecting to server ({client_config.get_server_host()}:{client_config.get_server_port()})"
+    except (KeyError, TypeError, ValueError):
+        return "Connecting to server (invalid server settings)"
