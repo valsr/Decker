@@ -17,7 +17,7 @@ def create_parser() -> argparse.ArgumentParser:
     metadata = importlib.metadata.metadata("decker")
     parser = argparse.ArgumentParser(
         prog=metadata["Name"],
-        description=metadata["Description"],
+        description=metadata["Summary"],
     )
     parser.add_argument(
         "--version",
