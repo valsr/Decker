@@ -19,16 +19,7 @@ class ApiHandler:
 
     def __del__(self):
         """Clean up the connection when the object is destroyed."""
-        if not self._connection:
-            return
-
-        logging.info("Closing connection to server at %s:%d", self.host, self.port)
-        try:
-            self._connection.close()
-        except Exception:
-            pass
-        finally:
-            self._connection = None
+        self.close()
 
     def _init_connection(self):
         """Initialize the connection to the server."""
@@ -51,9 +42,22 @@ class ApiHandler:
             logging.error("No connection established.")
             return None
 
-        remote_func = getattr(self._connection.root, func_name)
-        response = remote_func(*args, **kwargs)
-        return response
+        try:
+            return getattr(self._connection.root, func_name)(*args, **kwargs)
+        except (EOFError, OSError):
+            # Drop the dead connection so the next request reconnects (e.g. after a server restart).
+            self.close()
+            raise
+
+    def close(self) -> None:
+        """Close the cached connection, if any; the next request opens a new one."""
+        connection, self._connection = self._connection, None
+        if connection is None:
+            return
+        try:
+            connection.close()
+        except Exception:  # pylint: disable=broad-except
+            pass
 
     def request_as(self, target_type: Any, func_name: str, *args, **kwargs) -> Any:
         """Call a remote function and deserialize the JSON result into target_type.
@@ -72,6 +76,3 @@ class ApiHandler:
             name = getattr(target_type, "__name__", repr(target_type))
             logging.warning("Could not convert response to %s: %s", name, exc)
             return None
-
-
-API = ApiHandler()
