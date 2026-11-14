@@ -72,8 +72,12 @@ class ElgatoBridge:
         plugin_uuid: str | None = None
         try:
             async for raw in connection:
-                raw_text = raw if isinstance(raw, str) else raw.decode()
-                plugin_uuid = self._handle_message(connection, raw_text, plugin_uuid)
+                try:
+                    raw_text = raw if isinstance(raw, str) else raw.decode()
+                    plugin_uuid = self._handle_message(connection, raw_text, plugin_uuid)
+                except (ValueError, UnicodeDecodeError) as exc:
+                    # One malformed message must not drop the plugin's connection.
+                    logging.warning("Ignoring malformed message from Elgato plugin %s: %s", plugin_uuid, exc)
         finally:
             if plugin_uuid is not None:
                 self._connections.pop(plugin_uuid, None)

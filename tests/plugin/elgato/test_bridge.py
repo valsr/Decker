@@ -1,4 +1,5 @@
 import asyncio
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -86,3 +87,35 @@ def _wait_for(predicate, timeout=2.0):
             return True
         time.sleep(0.01)
     return False
+
+
+class _FakeConnection:
+    def __init__(self, messages: list[str | bytes]) -> None:
+        self._messages = messages
+
+    def __aiter__(self):
+        return self._iter()
+
+    async def _iter(self):
+        for message in self._messages:
+            yield message
+
+
+class TestHandleConnection:
+    @pytest.mark.asyncio
+    async def test_malformed_message_does_not_drop_connection(self):
+        bridge = _make_bridge()
+        register = json.dumps({"event": "registerPlugin", "payload": {"pluginUUID": "com.elgato.test"}})
+        seen: list[str] = []
+        original = bridge._handle_message  # pylint: disable=protected-access
+
+        def _record(connection, raw, plugin_uuid):
+            seen.append(raw)
+            return original(connection, raw, plugin_uuid)
+
+        bridge._handle_message = _record  # pylint: disable=protected-access
+        connection = _FakeConnection(["not json", b"\xff\xfe", register])
+
+        await bridge._handle_connection(connection)  # pylint: disable=protected-access
+
+        assert_that(seen).contains(register)
