@@ -23,6 +23,27 @@ from decker.client.events import (
 )
 from decker.client.events.event_manager import EventManager
 from decker.common.model import DeviceHardwareInfo
+from decker.common.utils import api_response
+from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
+
+
+@api_response
+def _server_status(status: DeckerStatusEnum) -> DeckerServiceStatus:
+    return DeckerServiceStatus(service_status=status, last_heartbeat=0.0)
+
+
+def _heartbeat_payload(status: DeckerStatusEnum) -> str:
+    """Build a heartbeat reply with the server's own serializer so the wire format can't drift."""
+    return str(_server_status(status))
+
+
+def _healthy_conn() -> MagicMock:
+    conn = MagicMock()
+    conn.root.heartbeat.return_value = _heartbeat_payload(DeckerStatusEnum.HEALTHY)
+    conn.root.devices_list.return_value = json.dumps([])
+    conn.root.plugins_load_failures.return_value = json.dumps([])
+    conn.root.plugins_actions_list.return_value = json.dumps([])
+    return conn
 
 
 class TestConnectionManager:
@@ -85,7 +106,7 @@ class TestConnectionManager:
 
     def test_check_heartbeat_success_refreshes_devices(self):
         mock_conn = MagicMock()
-        mock_conn.root.heartbeat.return_value = json.dumps({"status": "healthy"})
+        mock_conn.root.heartbeat.return_value = _heartbeat_payload(DeckerStatusEnum.HEALTHY)
         mock_conn.root.devices_list.return_value = json.dumps([{"id": "abc123"}])
         mock_conn.root.plugins_load_failures.return_value = json.dumps([])
         mock_conn.root.plugins_actions_list.return_value = json.dumps([])
@@ -100,7 +121,7 @@ class TestConnectionManager:
 
     def test_check_heartbeat_non_healthy_status_marks_unhealthy_but_stays_connected(self):
         mock_conn = MagicMock()
-        mock_conn.root.heartbeat.return_value = json.dumps({"status": "degraded"})
+        mock_conn.root.heartbeat.return_value = _heartbeat_payload(DeckerStatusEnum.UNHEALTHY)
         mock_conn.root.devices_list.return_value = json.dumps([])
         mock_conn.root.plugins_load_failures.return_value = json.dumps([])
         mock_conn.root.plugins_actions_list.return_value = json.dumps([])
@@ -133,6 +154,84 @@ class TestConnectionManager:
             self.manager._try_connect()  # pylint: disable=protected-access
 
         assert_that(mock_connect.call_args.args[:2]).is_equal_to(("otherhost", 9999))
+
+    def test_check_heartbeat_healthy_server_reply_marks_healthy(self):
+        self.manager._conn = _healthy_conn()  # pylint: disable=protected-access
+        self.manager.state = ServerState.UNHEALTHY
+
+        self.manager._check_heartbeat()  # pylint: disable=protected-access
+
+        assert_that(self.manager.state).is_equal_to(ServerState.HEALTHY)
+
+    def test_check_heartbeat_non_dict_reply_disconnects_without_raising(self):
+        conn = _healthy_conn()
+        conn.root.heartbeat.return_value = json.dumps(None)
+        self.manager._conn = conn  # pylint: disable=protected-access
+        self.manager.state = ServerState.HEALTHY
+
+        self.manager._check_heartbeat()  # pylint: disable=protected-access
+
+        assert_that(self.manager.state).is_equal_to(ServerState.DISCONNECTED)
+        assert_that(EventManager.get().drain()[-1]).is_instance_of(ServerDisconnectedEvent)
+
+    def test_refresh_devices_malformed_payload_does_not_raise(self):
+        conn = _healthy_conn()
+        conn.root.devices_list.return_value = json.dumps([{"vendor_id": "abc"}])
+        self.manager._conn = conn  # pylint: disable=protected-access
+
+        self.manager._refresh_devices()  # pylint: disable=protected-access
+
+        assert_that(EventManager.get().drain()).is_empty()
+
+    def test_refresh_does_not_push_unchanged_device_and_action_lists(self):
+        conn = _healthy_conn()
+        conn.root.devices_list.return_value = json.dumps([{"id": "abc123"}])
+        self.manager._conn = conn  # pylint: disable=protected-access
+
+        self.manager._refresh_all()  # pylint: disable=protected-access
+        first = EventManager.get().drain()
+        self.manager._refresh_all()  # pylint: disable=protected-access
+        second = EventManager.get().drain()
+
+        assert_that([type(e) for e in first]).contains(DeviceListUpdatedEvent, ActionListUpdatedEvent)
+        assert_that(second).is_empty()
+
+    def test_run_once_survives_unexpected_error(self):
+        self.manager._run_once = MagicMock(side_effect=[RuntimeError("boom"), 0.0])  # type: ignore[method-assign]
+        self.manager._wait = MagicMock(side_effect=lambda _t: self.manager._stop_event.set())  # type: ignore[method-assign]
+
+        self.manager._run()  # pylint: disable=protected-access
+
+        assert_that(self.manager.state).is_equal_to(ServerState.DISCONNECTED)
+
+    def test_request_reconnect_drops_connection_and_pushes_disconnect(self):
+        conn = _healthy_conn()
+        self.manager._conn = conn  # pylint: disable=protected-access
+        self.manager.state = ServerState.HEALTHY
+        self.manager.request_reconnect()
+        self.manager._try_connect = MagicMock()  # type: ignore[method-assign]
+        self.manager._wait = MagicMock()  # type: ignore[method-assign]
+
+        self.manager._run_once(0.0)  # pylint: disable=protected-access
+
+        conn.close.assert_called_once()
+        self.manager._try_connect.assert_called_once()  # pylint: disable=protected-access
+        assert_that(EventManager.get().drain()[0]).is_instance_of(ServerDisconnectedEvent)
+
+    @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
+    def test_try_connect_does_not_overwrite_state_closed_during_initial_pull(self, mock_connect: MagicMock):
+        conn = _healthy_conn()
+
+        def _close_mid_pull() -> str:
+            self.manager._close_connection()  # pylint: disable=protected-access
+            return json.dumps([])
+
+        conn.root.devices_list.side_effect = _close_mid_pull
+        mock_connect.return_value = conn
+
+        self.manager._try_connect()  # pylint: disable=protected-access
+
+        assert_that(self.manager.state).is_equal_to(ServerState.DISCONNECTED)
 
     def test_stop_closes_connection_and_clears_connected(self):
         mock_conn = MagicMock()
@@ -195,7 +294,7 @@ class TestConnectionManager:
 
     def test_check_heartbeat_success_refreshes_actions(self):
         mock_conn = MagicMock()
-        mock_conn.root.heartbeat.return_value = json.dumps({"status": "healthy"})
+        mock_conn.root.heartbeat.return_value = _heartbeat_payload(DeckerStatusEnum.HEALTHY)
         mock_conn.root.devices_list.return_value = json.dumps([])
         mock_conn.root.plugins_load_failures.return_value = json.dumps([])
         mock_conn.root.plugins_actions_list.return_value = json.dumps(

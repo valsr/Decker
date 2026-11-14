@@ -57,3 +57,9 @@ class TestConnectingOverlay:
         overlay = ReconnectWaitingOverlay(on_settings=callback)
         overlay._settings_btn.click()  # pylint: disable=protected-access
         callback.assert_called_once()
+
+    def test_on_activate_tolerates_invalid_port_setting(self, qapp):  # pylint: disable=unused-argument
+        overlay = _make_overlay(qapp)
+        with patch("decker.client.config.get_server_port", side_effect=ValueError("bad")):
+            overlay.on_activate()
+        assert_that(overlay._label.text()).contains("invalid")  # pylint: disable=protected-access
