@@ -221,10 +221,12 @@ class TestConnectionManager:
     @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
     def test_try_connect_does_not_overwrite_state_closed_during_initial_pull(self, mock_connect: MagicMock):
         conn = _healthy_conn()
-        conn.root.devices_list.side_effect = lambda: (
-            self.manager._close_connection(),  # pylint: disable=protected-access
-            json.dumps([]),
-        )[1]
+
+        def _close_mid_pull() -> str:
+            self.manager._close_connection()  # pylint: disable=protected-access
+            return json.dumps([])
+
+        conn.root.devices_list.side_effect = _close_mid_pull
         mock_connect.return_value = conn
 
         self.manager._try_connect()  # pylint: disable=protected-access
