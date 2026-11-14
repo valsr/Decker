@@ -280,7 +280,7 @@ def _parse_hw_info(data: dict[str, Any]) -> DeviceHardwareInfo:
             pixel_height=k.get("pixel_height", 0),
             type=k.get("type", "key"),
         )
-        for k in (data.get("keys") or [])
+        for k in data.get("keys") or []
     ]
     return DeviceHardwareInfo(
         id=data.get("id") or None,
