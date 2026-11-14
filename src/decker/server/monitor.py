@@ -1,15 +1,12 @@
 """Server monitor — starts, supervises, and auto-restarts the Decker server subprocess."""
 
 import logging
-import math
-import random
 import time
 from dataclasses import dataclass
 
 from decker.common import config
-from decker.common.api import API
+from decker.common.api import ApiHandler
 from decker.common.context import ServerAppContext
-from decker.common.model import DeviceHardwareInfo
 from decker.server.server import ServerProcess
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
 
@@ -31,6 +28,11 @@ def _read_rss_bytes(pid: int) -> int | None:
     return None
 
 
+def _connect_host(bind_host: str) -> str:
+    """Map the server's bind address to an address the monitor can connect to."""
+    return "localhost" if bind_host in ("", "0.0.0.0", "::") else bind_host
+
+
 @dataclass
 class ServerStatus:
     """Structured status information about the server process."""
@@ -47,9 +49,11 @@ class ServerMonitor:
 
     def __init__(self, context: ServerAppContext) -> None:
         """Initialize the server monitor from configuration."""
+        host = config.get_as("server.host", str)
         port = config.get_as("server.port", int)
         startup_wait = config.get_as("server.startup_wait", float)
-        self._server = ServerProcess(port, startup_wait, context)
+        self._server = ServerProcess(port, startup_wait, context, host=host)
+        self._api: ApiHandler = ApiHandler(host=_connect_host(host), port=port)
         self._interval: float = config.get_as("server.health_check_interval", float)
         self._max_failed_heartbeats: int = config.get_as("server.max_failed_heartbeats", int)
         self._memory_limit: int = config.get_as("server.memory_limit", int)
@@ -136,13 +140,11 @@ class ServerMonitor:
     def _heartbeat_ok(self) -> bool:
         """Send a heartbeat and return True while the server is still within its failure budget."""
         try:
-            response = API.request_as(DeckerServiceStatus, "heartbeat")
+            response = self._api.request_as(DeckerServiceStatus, "heartbeat")
             logging.debug("Heartbeat response: %s", response)
             if response is not None and response.service_status == DeckerStatusEnum.HEALTHY:
                 self._failed_heartbeats = 0
                 logging.debug("Heartbeat OK")
-                # TODO: DEMO-ONLY: Remove this log and return False if the service status is unhealthy, to test auto-restart.
-                self._do_demo()
                 return True
         except Exception as e:
             logging.warning("Heartbeat failed: %s", e)
@@ -150,45 +152,6 @@ class ServerMonitor:
         self._failed_heartbeats += 1
         logging.warning("Failed heartbeats: %d/%d", self._failed_heartbeats, self._max_failed_heartbeats)
         return self._failed_heartbeats < self._max_failed_heartbeats
-
-    def _do_demo(self) -> None:
-        """DEMO-ONLY:"""
-        try:
-            logging.info("DEMO: Send a draw command to a random button")
-            # first find the device IDs so we can target a real button (instead of "random"), but ignore any errors since this is just a demo
-            devices: list[DeviceHardwareInfo] = API.request_as(
-                list[DeviceHardwareInfo], "devices_list"
-            )  # ignore errors and response since this is just a demo
-
-            if not devices:
-                logging.warning("DEMO: No devices found, skipping draw command")
-                return
-
-            device = devices[0]
-
-            if not device.id:
-                logging.warning("DEMO: No device_id found in first device, skipping draw command")
-                return
-
-            # Generate a simple image (red square) and send it to the first key of the first device, ignoring any errors since this is just a demo
-            import io
-
-            from PIL import Image
-
-            button = random.randint(0, device.num_keys - 1)
-            button_def = device.keys[button]
-            img = Image.new(
-                "RGB",
-                (button_def.pixel_width, button_def.pixel_height),
-                (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)),
-            )
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            logging.debug("Button dimensions: %d x %d", button_def.pixel_width, button_def.pixel_height)
-            API.request("set_image", device.id, button, buf.getvalue())
-            logging.info("DEMO: Draw command sent to device %s key %s", device.id, button)
-        except Exception as e:
-            logging.warning("DEMO command failed: %s", e)
 
     def _memory_ok(self) -> bool:
         """Return False if the server's RSS exceeds the configured limit."""
@@ -213,6 +176,7 @@ class ServerMonitor:
         """Stop the server, reset state, and start it again."""
         logging.info("Restarting server process")
         self._server.stop()
+        self._api.close()
         self._failed_heartbeats = 0
 
         if not self._server.start():

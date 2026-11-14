@@ -1,4 +1,7 @@
 server:
+  # Interface the RPyC server listens on. The server has no authentication, so keep this on
+  # localhost unless remote clients are needed (e.g. 0.0.0.0 to listen on all interfaces).
+  host: localhost
   port: 18861
   memory_limit: 1073741824
   health_check_interval: 5.0
