@@ -21,16 +21,16 @@ cairosvg = "^2.7"
 pillow = "^12.2.0"
 
 [tool.poetry.group.dev.dependencies]
-black = "^25.1.0"
-mypy = "^1.15.0"
+black = "^26"
+mypy = "^2"
 pytest = "^8.3.4"
 pytest-timeout = "^2.3.1"
-pytest-cov = "^6.0.0"
-pylint = "^3.3.4"
+pytest-cov = "^7"
+pylint = "^4"
 assertpy = "^1.1"
 assertpy-stubs = "^1.1.2"
-pylint-per-file-ignores = "^1.4.0"
-isort = "^6.0.1"
+pylint-per-file-ignores = "^4.0.0"
+isort = "^9.0.2"
 pytest-asyncio = "^0.25.3"
 dill = "^0.3.9"
 pyenchant = "^3.2.2"
@@ -196,9 +196,6 @@ persistent = true
 # Discover python modules and packages in the file system subtree.
 recursive = true
 
-# When enabled, pylint would attempt to guess common misconfiguration and emit
-# user-friendly hints instead of false-positive error messages.
-suggestion-mode = true
 
 # Allow loading of arbitrary C extensions. Extensions are imported into the
 # active Python interpreter and may run arbitrary code.
@@ -494,10 +491,9 @@ disable = [
 enable = ["c-extension-no-member"]
 
 per-file-ignores = [
-    "/tests/:missing-function-docstring,missing-module-docstring,missing-class-docstring",
-    "/stubs/",
-    "/src/decker/server/application.py:import-outside-toplevel",
-    "/src/decker/cli/app.py:import-outside-toplevel",
+    "tests/**/*.py:missing-function-docstring,missing-module-docstring,missing-class-docstring",
+    "src/decker/server/application.py:import-outside-toplevel",
+    "src/decker/cli/app.py:import-outside-toplevel",
 ]
 
 [tool.pylint.method_args]
