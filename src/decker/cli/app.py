@@ -170,8 +170,8 @@ def _cmd_plugin_list(_args: list[str]) -> int:
         return 0
     width = max(len(p["uuid"]) for p in plugins)
     for p in plugins:
-        uuid, plugin_type, status = p["uuid"], p["type"], p["status"]
-        print(f"  {uuid:<{width}}  {plugin_type:<7}  {status}")
+        uuid, status = p["uuid"], p["status"]
+        print(f"  {uuid:<{width}}  {status}")
     return 0
 
 

@@ -32,7 +32,6 @@ class PluginManifest:
     version: str
     author: str
     actions: tuple[PluginAction, ...]
-    code_path: str | None = None  # entry point script relative to the plugin directory; Elgato plugins only
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PluginManifest":
@@ -53,14 +52,12 @@ class PluginManifest:
         plugin_icon = _optional_str(data.get("Icon"))
         actions = tuple(cls._parse_action(entry, plugin_icon) for entry in actions_data)
 
-        code_path = data.get("CodePath")
         return cls(
             uuid=uuid,
             name=str(data["Name"]),
             version=str(data["Version"]),
             author=str(data["Author"]),
             actions=actions,
-            code_path=str(code_path) if code_path is not None else None,
         )
 
     @staticmethod

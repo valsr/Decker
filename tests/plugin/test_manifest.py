@@ -19,14 +19,6 @@ class TestFromDict:
         assert_that(manifest.actions).is_length(1)
         assert_that(manifest.actions[0].uuid).is_equal_to("com.decker.clock.show")
 
-    def test_code_path_defaults_to_none(self):
-        manifest = PluginManifest.from_dict(_VALID)
-        assert_that(manifest.code_path).is_none()
-
-    def test_code_path_parsed_when_present(self):
-        manifest = PluginManifest.from_dict({**_VALID, "CodePath": "app.js"})
-        assert_that(manifest.code_path).is_equal_to("app.js")
-
     @pytest.mark.parametrize("field", ["UUID", "Name", "Version", "Author", "Actions"])
     def test_missing_required_field_raises(self, field):
         data = dict(_VALID)

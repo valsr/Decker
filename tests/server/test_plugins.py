@@ -53,11 +53,6 @@ _UNKNOWN_TARGET = ActionTarget(
 )
 
 
-@pytest.fixture(autouse=True)
-def _no_real_elgato_bridge(monkeypatch):
-    monkeypatch.setattr("decker.server.plugins.ElgatoBridge", lambda *a, **k: MagicMock())
-
-
 @pytest.fixture
 def plugins_dir(tmp_path):
     plugin_dir = tmp_path / "com.decker.test"
@@ -79,47 +74,6 @@ def manager(tmp_path, plugins_dir):
     mgr._settings_store = mgr._settings_store.__class__(tmp_path / "plugins.db")  # pylint: disable=protected-access
     mgr.create(_mock_context())
     mgr._sink = MagicMock()  # pylint: disable=protected-access
-    yield mgr
-    mgr.destroy()
-
-
-_ELGATO_MANIFEST = {
-    "UUID": "com.elgato.cpu-monitor",
-    "Name": "CPU Monitor",
-    "Version": "1.0.0",
-    "Author": "Elgato",
-    "Actions": [{"UUID": "com.elgato.cpu-monitor.show", "Name": "Show"}],
-    "CodePath": "app.js",
-}
-
-
-@pytest.fixture
-def elgato_manager(tmp_path, plugins_dir, monkeypatch):
-    elgato_dir = plugins_dir / "com.elgato.cpu-monitor.sdPlugin"
-    elgato_dir.mkdir()
-    (elgato_dir / "manifest.json").write_text(json.dumps(_ELGATO_MANIFEST))
-
-    process_instances = []
-
-    class _FakeProcess:
-        def __init__(self, config):
-            self.config = config
-            self.started = False
-            self.stopped = False
-            process_instances.append(self)
-
-        def start(self):
-            self.started = True
-
-        def stop(self):
-            self.stopped = True
-
-    monkeypatch.setattr("decker.server.plugins.ElgatoPluginProcess", _FakeProcess)
-
-    mgr = PluginManager(plugins_dir)
-    mgr._settings_store = mgr._settings_store.__class__(tmp_path / "plugins.db")  # pylint: disable=protected-access
-    mgr.create(_mock_context())
-    mgr.process_instances = process_instances  # type: ignore[attr-defined]
     yield mgr
     mgr.destroy()
 
@@ -162,23 +116,6 @@ class TestPluginManagerLifecycle:
         monkeypatch.setattr("decker.server.plugins.read_icon", MagicMock(side_effect=AssertionError("re-read")))
 
         assert_that(manager.list_actions()).is_not_empty()
-
-    def test_elgato_action_icon_is_included(self, elgato_manager, plugins_dir):
-        icon_dir = plugins_dir / "com.elgato.cpu-monitor.sdPlugin" / "imgs"
-        icon_dir.mkdir()
-        (icon_dir / "show.png").write_bytes(b"\x89PNGdata")
-        manifest = dict(
-            _ELGATO_MANIFEST, Actions=[{"UUID": "com.elgato.cpu-monitor.show", "Name": "Show", "Icon": "imgs/show"}]
-        )
-        (plugins_dir / "com.elgato.cpu-monitor.sdPlugin" / "manifest.json").write_text(json.dumps(manifest))
-        rescanned = PluginManager(plugins_dir)
-        for discovered in rescanned._user_loader.scan().elgato:  # pylint: disable=protected-access
-            rescanned._elgato_plugins[discovered.manifest.uuid] = discovered  # pylint: disable=protected-access
-
-        show = next(a for a in rescanned.list_actions() if a["plugin_uuid"] == "com.elgato.cpu-monitor")
-
-        assert_that(base64.b64decode(show["icon_b64"])).is_equal_to(b"\x89PNGdata")
-        rescanned.destroy()
 
     def test_activate_action_dispatches_on_will_appear(self, manager):
         manager.activate_action(_TARGET)
@@ -271,33 +208,3 @@ class TestPluginManagerLifecycle:
                 "com.decker.test", "com.decker.test.show", "ctx-1"
             )
         ).is_equal_to({"v": 1})
-
-
-class TestElgatoActivation:
-    def test_activate_unknown_plugin_is_noop(self, elgato_manager):
-        elgato_manager.activate_elgato_action("com.elgato.unknown", "ctx-1")
-        assert_that(elgato_manager.process_instances).is_empty()
-
-    def test_activate_starts_process_on_first_context(self, elgato_manager):
-        elgato_manager.activate_elgato_action("com.elgato.cpu-monitor", "ctx-1")
-        assert_that(elgato_manager.process_instances).is_length(1)
-        assert_that(elgato_manager.process_instances[0].started).is_true()
-
-    def test_activate_does_not_spawn_second_process_for_second_context(self, elgato_manager):
-        elgato_manager.activate_elgato_action("com.elgato.cpu-monitor", "ctx-1")
-        elgato_manager.activate_elgato_action("com.elgato.cpu-monitor", "ctx-2")
-        assert_that(elgato_manager.process_instances).is_length(1)
-
-    def test_deactivate_unknown_plugin_is_noop(self, elgato_manager):
-        elgato_manager.deactivate_elgato_action("com.elgato.unknown", "ctx-1")  # should not raise
-
-    def test_deactivate_last_context_stops_process(self, elgato_manager):
-        elgato_manager.activate_elgato_action("com.elgato.cpu-monitor", "ctx-1")
-        elgato_manager.deactivate_elgato_action("com.elgato.cpu-monitor", "ctx-1")
-        assert_that(elgato_manager.process_instances[0].stopped).is_true()
-
-    def test_deactivate_keeps_process_alive_while_other_contexts_remain(self, elgato_manager):
-        elgato_manager.activate_elgato_action("com.elgato.cpu-monitor", "ctx-1")
-        elgato_manager.activate_elgato_action("com.elgato.cpu-monitor", "ctx-2")
-        elgato_manager.deactivate_elgato_action("com.elgato.cpu-monitor", "ctx-1")
-        assert_that(elgato_manager.process_instances[0].stopped).is_false()

@@ -1,4 +1,4 @@
-"""Owns plugin discovery, the action registry, callback execution, and the Elgato bridge."""
+"""Owns plugin discovery, the action registry, and callback execution."""
 
 import base64
 import json
@@ -8,21 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from decker.asset.renderer import AssetRenderer
-from decker.common import config
 from decker.common.manager import Manager
 from decker.plugin.context import ActionContext, ActionTarget
-from decker.plugin.elgato.bridge import DEFAULT_PORT as ELGATO_BRIDGE_PORT
-from decker.plugin.elgato.bridge import ElgatoBridge
-from decker.plugin.elgato.process import (
-    ElgatoPluginProcess,
-    ElgatoPluginProcessError,
-    ElgatoProcessConfig,
-)
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.executor import PluginExecutor
 from decker.plugin.gestures import Gesture, GestureRecognizer
 from decker.plugin.icons import read_icon
-from decker.plugin.loader import DiscoveredElgatoPlugin, PluginLoader
+from decker.plugin.loader import PluginLoader
 from decker.plugin.manifest import PluginManifest
 from decker.plugin.native_loader import LoadedNativePlugin
 from decker.plugin.registry import ActionRegistry
@@ -93,48 +85,34 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
         self._settings_store = PluginSettingsStore()
         self._user_loader = PluginLoader(plugins_dir) if plugins_dir is not None else PluginLoader()
         self._bundled_loader = PluginLoader(_BUNDLED_PLUGINS_DIR)
-        self._bridge: ElgatoBridge | None = None
         self._failures: list[PluginLoadFailedEvent] = []
         self._native_plugins: dict[str, LoadedNativePlugin] = {}
-        self._elgato_plugins: dict[str, DiscoveredElgatoPlugin] = {}
-        self._elgato_processes: dict[str, ElgatoPluginProcess] = {}
-        self._elgato_live_contexts: dict[str, set[str]] = {}
         self._device_manager: Any = None
         self._icon_cache: dict[tuple[Path, str | None], str] = {}
         self._recognizers: dict[str, GestureRecognizer] = {}
         self._sink: _StreamDeckHardwareSink = _StreamDeckHardwareSink(None, self._set_key_label)
 
     def create(self, context: "ServerContext") -> None:
-        """Wire up the device manager, scan and load plugins, then start the Elgato bridge."""
+        """Wire up the device manager, then scan and load plugins."""
         self._device_manager = context.device_manager
         self._sink = _StreamDeckHardwareSink(
             self._device_manager,
             self._set_key_label,
             on_state_changed=self._make_state_changed_cb(context),
         )
-        self._bridge = ElgatoBridge(self._sink, self._settings_store)
         bundled = self._bundled_loader.scan()
         user = self._user_loader.scan()
         self._failures = bundled.failures + user.failures
         for loaded in bundled.native + user.native:
             self._native_plugins[loaded.manifest.uuid] = loaded
-        for discovered in bundled.elgato + user.elgato:
-            self._elgato_plugins[discovered.manifest.uuid] = discovered
-        self._bridge.start()
         logging.info(
-            "PluginManager started: %d native, %d Elgato, %d failed to load",
+            "PluginManager started: %d loaded, %d failed to load",
             len(self._native_plugins),
-            len(self._elgato_plugins),
             len(self._failures),
         )
 
     def destroy(self) -> None:
-        """Stop the Elgato bridge, plugin subprocesses, and release resources."""
-        for process in self._elgato_processes.values():
-            process.stop()
-        self._elgato_processes.clear()
-        if self._bridge is not None:
-            self._bridge.stop()
+        """Stop plugin callbacks and release resources."""
         self._executor.shutdown()
         self._settings_store.close()
 
@@ -148,10 +126,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
         Each entry carries icon_b64: the action's icon image, base64-encoded, or "" if it has none.
         """
         actions: list[dict[str, str]] = []
-        for manifest, plugin_dir in [(p.manifest, p.plugin_dir) for p in self._native_plugins.values()] + [
-            (p.manifest, p.plugin_dir) for p in self._elgato_plugins.values()
-        ]:
-            actions.extend(self._manifest_actions(manifest, plugin_dir))
+        for loaded in self._native_plugins.values():
+            actions.extend(self._manifest_actions(loaded.manifest, loaded.plugin_dir))
         return actions
 
     def get_key_display_states(self, device_id: str) -> list[dict[str, Any]]:
@@ -188,41 +164,6 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
         ctx = ActionContext(target, self._sink, self._settings_store)
         self._executor.dispatch(target.plugin_uuid, instance.on_will_disappear, ctx)
         self._registry.unregister(target.plugin_uuid, target.action_uuid, target.context_id)
-
-    def activate_elgato_action(self, plugin_uuid: str, context_id: str) -> None:
-        """Spawn the plugin's Node.js subprocess if this is its first live action instance."""
-        discovered = self._elgato_plugins.get(plugin_uuid)
-        if discovered is None:
-            logging.warning("Cannot activate unknown Elgato plugin %s", plugin_uuid)
-            return
-
-        live_contexts = self._elgato_live_contexts.setdefault(plugin_uuid, set())
-        if not live_contexts:
-            process = ElgatoPluginProcess(
-                ElgatoProcessConfig(
-                    plugin_dir=discovered.plugin_dir,
-                    entry_point=discovered.manifest.code_path or "app.js",
-                    port=ELGATO_BRIDGE_PORT,
-                    plugin_uuid=plugin_uuid,
-                    node_path=config.get_as_or_default("plugin.nodejs_path", str, "node"),
-                )
-            )
-            try:
-                process.start()
-            except ElgatoPluginProcessError as exc:
-                logging.error("%s", exc)
-                return
-            self._elgato_processes[plugin_uuid] = process
-        live_contexts.add(context_id)
-
-    def deactivate_elgato_action(self, plugin_uuid: str, context_id: str) -> None:
-        """Tear down the plugin's Node.js subprocess once its last live action instance is gone."""
-        live_contexts = self._elgato_live_contexts.get(plugin_uuid)
-        if live_contexts is None:
-            return
-        live_contexts.discard(context_id)
-        if not live_contexts and plugin_uuid in self._elgato_processes:
-            self._elgato_processes.pop(plugin_uuid).stop()
 
     def dispatch_key_down(self, target: ActionTarget) -> None:
         """Dispatch on_key_down, then feed the press to the action's gesture recognizer."""
