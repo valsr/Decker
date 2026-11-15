@@ -19,12 +19,13 @@ from decker.client.events import (
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     KeyEvent,
+    PagesUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
-from decker.common.model import DeviceHardwareInfo, KeyInfo
+from decker.common.model import DeviceHardwareInfo, DevicePages, KeyInfo, PageInfo
 
 _RETRY_INTERVAL_S = 3.0
 _HEARTBEAT_INTERVAL_S = 5.0
@@ -54,7 +55,7 @@ class _ClientService(Service):
             logging.warning("Error handling server event %s: %s", event_type, exc)
 
 
-class ConnectionManager:
+class ConnectionManager:  # pylint: disable=too-many-instance-attributes
     """Maintains a connection to the Decker server on a background thread.
 
     Pushes events to EventManager as connection state changes. Owns the worker thread's full lifecycle.
@@ -67,6 +68,7 @@ class ConnectionManager:
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
         self._reconnect_requested = threading.Event()
+        self._device_refresh_requested = threading.Event()
         self._thread: threading.Thread | None = None
         self.state: ServerState = ServerState.DISCONNECTED
         self._reported_plugin_failures: set[str] = set()
@@ -105,6 +107,11 @@ class ConnectionManager:
         self._reconnect_requested.set()
         self._wake_event.set()
 
+    def request_device_refresh(self) -> None:
+        """Re-fetch the active device's pages and key states on the worker thread."""
+        self._device_refresh_requested.set()
+        self._wake_event.set()
+
     def _wait(self, timeout: float) -> None:
         self._wake_event.wait(timeout)
         self._wake_event.clear()
@@ -133,6 +140,9 @@ class ConnectionManager:
         self._wait(_HEARTBEAT_INTERVAL_S)
         if self._stop_event.is_set() or self._reconnect_requested.is_set():
             return last_heartbeat
+        if self._device_refresh_requested.is_set():
+            self._device_refresh_requested.clear()
+            self._refresh_active_device()
         now = time.monotonic()
         if now - last_heartbeat >= _HEARTBEAT_INTERVAL_S:
             self._check_heartbeat()
@@ -164,7 +174,7 @@ class ConnectionManager:
         self._bg_server = BgServingThread(self._conn)
         EventManager.get().push(ServerConnectedEvent(host=host, port=port))
         self._refresh_all()
-        self._refresh_key_display_states()
+        self._refresh_active_device()
         # A concurrent stop() may have closed the connection during the initial pull.
         if self.state == ServerState.INITIALIZING:
             self.state = ServerState.HEALTHY
@@ -249,15 +259,24 @@ class ConnectionManager:
             logging.warning("RPC %s failed: %s", method, exc)
             return None
 
-    def _refresh_key_display_states(self) -> None:
-        if self._conn is None:
-            return
-        from decker.client.context import (
-            AppContext,  # pylint: disable=import-outside-toplevel
-        )
+    def _refresh_active_device(self) -> None:
+        self._refresh_pages()
+        self._refresh_key_display_states()
 
-        device_id = AppContext.get().active_device_id
-        if device_id is None:
+    def _refresh_pages(self) -> None:
+        device_id = _active_device_id()
+        if self._conn is None or device_id is None:
+            return
+        try:
+            pages = _parse_device_pages(self._call_json("pages_list", device_id))
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Could not fetch pages for %s: %s", device_id, exc)
+            return
+        EventManager.get().push(PagesUpdatedEvent(pages=pages))
+
+    def _refresh_key_display_states(self) -> None:
+        device_id = _active_device_id()
+        if self._conn is None or device_id is None:
             return
         try:
             states: list[dict[str, Any]] = self._call_json("key_get_states", device_id)
@@ -292,6 +311,9 @@ class ConnectionManager:
                 }
             ]
             EventManager.get().push(KeyDisplayStatesUpdatedEvent(device_id=device_id, states=states))
+        elif event_type == "pages_changed":
+            if data.get("device_id") == _active_device_id():
+                self.request_device_refresh()
         else:
             logging.debug("Unknown server event type: %s", event_type)
 
@@ -310,6 +332,29 @@ class ConnectionManager:
         except Exception:  # pylint: disable=broad-except
             pass
         self._conn = None
+
+
+def _active_device_id() -> str | None:
+    from decker.client.context import (  # pylint: disable=import-outside-toplevel  # avoids an import cycle
+        AppContext,
+    )
+
+    return AppContext.get().active_device_id
+
+
+def _parse_device_pages(data: Any) -> DevicePages:
+    """Deserialise a pages_list response; raises ValueError if it is malformed."""
+    if not isinstance(data, dict):
+        raise ValueError(f"unexpected pages response: {data!r}")
+    pages = [PageInfo(page_id=str(p["page_id"]), name=str(p["name"])) for p in data.get("pages") or []]
+    if not pages:
+        raise ValueError("device has no pages")
+    return DevicePages(
+        device_id=str(data["device_id"]),
+        pages=pages,
+        default_page_id=str(data["default_page_id"]),
+        active_page_id=str(data["active_page_id"]),
+    )
 
 
 def _parse_hw_info(data: dict[str, Any]) -> DeviceHardwareInfo:

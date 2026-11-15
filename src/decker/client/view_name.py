@@ -9,5 +9,4 @@ class ViewName(StrEnum):
     CONNECTING = "connecting"
     DASHBOARD = "dashboard"
     DEVICE = "device"
-    SETTINGS = "settings"
     ERROR = "error"

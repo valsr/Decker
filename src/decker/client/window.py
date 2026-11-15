@@ -15,6 +15,7 @@ from decker.client.events import (
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     KeyEvent,
+    PagesUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
@@ -30,8 +31,8 @@ from decker.client.views import (
     DeviceView,
     ErrorView,
     ReconnectWaitingOverlay,
-    SettingsView,
 )
+from decker.client.widgets.settings_dialog import SettingsDialog
 from decker.common.model import DeviceHardwareInfo
 
 _WINDOW_GEOMETRY_KEY = "window_geometry"
@@ -58,6 +59,8 @@ class MainWindow(QMainWindow):
 
         self._stack: QStackedWidget = QStackedWidget()
         self._toast: QLabel = QLabel(self)
+        # Created before the window's own handlers so it observes events the window consumes.
+        self._settings_dialog: SettingsDialog = SettingsDialog(self)
         self._register_all_views()
         self._build_ui()
         self._register_event_handlers()
@@ -88,6 +91,10 @@ class MainWindow(QMainWindow):
         """Set the active device and navigate to the device view."""
         AppContext.get().active_device = device
         self.switch_to(ViewName.DEVICE)
+
+    def open_settings(self) -> None:
+        """Show the non-modal settings dialog, or bring it to the front if already open."""
+        self._settings_dialog.open_dialog()
 
     def set_active_device(self, device: DeviceHardwareInfo) -> None:
         """Set the active device without changing the active view."""
@@ -164,7 +171,13 @@ class MainWindow(QMainWindow):
         em.subscribe(ServerDisconnectedEvent, self._on_server_disconnected)
         em.subscribe(ServerConnectedEvent, self._on_server_connected)
         em.subscribe(PluginLoadFailedEvent, self._on_plugin_load_failed)
-        for event_type in (DeviceListUpdatedEvent, ActionListUpdatedEvent, KeyDisplayStatesUpdatedEvent, KeyEvent):
+        for event_type in (
+            DeviceListUpdatedEvent,
+            ActionListUpdatedEvent,
+            KeyDisplayStatesUpdatedEvent,
+            KeyEvent,
+            PagesUpdatedEvent,
+        ):
             em.subscribe(event_type, self._forward_to_active_view)
 
     def _on_server_disconnected(self, _event: ServerDisconnectedEvent) -> bool:
@@ -195,12 +208,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(_TOAST_DURATION_MS, self._toast.hide)
 
     def _register_all_views(self) -> None:
-        overlay = ReconnectWaitingOverlay(on_settings=lambda: self.switch_to(ViewName.SETTINGS))
+        overlay = ReconnectWaitingOverlay(on_settings=self.open_settings)
         overlay.setParent(self._stack)
         self._views[ViewName.CONNECTING] = overlay
         self.register_view(ViewName.DASHBOARD, DashboardView())
         self.register_view(ViewName.DEVICE, DeviceView())
-        self.register_view(ViewName.SETTINGS, SettingsView())
         self.register_view(ViewName.ERROR, ErrorView())
 
     def _build_ui(self) -> None:

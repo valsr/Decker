@@ -6,7 +6,7 @@
 
 - **Server monitor** (`src/decker/server/monitor.py`) — the process launched by `poe server`. Starts the server subprocess, then polls it continuously for health (RPyC heartbeat) and memory usage. If the server fails to respond or exceeds the memory limit (1 GiB), the monitor kills it and restarts it automatically.
 - **Server** (`src/decker/server/`) — handles hardware communication via `python-elgato-streamdeck`. Runs **headlessly** as a separate subprocess (RPyC on port 18861), supports multiple simultaneous clients. Started and supervised exclusively by the server monitor. Exposed RPC commands: `stop`, `heartbeat`, `status`, `devices.list`, `commands`. There is no `start` RPC — the server is already running when clients connect.
-- **Client / UI** (`src/decker/client/`) — a PyQt6 GUI built on a `QStackedWidget` view system. `MainWindow` (`window.py`) registers 5 views (`ConnectingView`, `DashboardView`, `DeviceView`, `SettingsView`, `ErrorView`) keyed by `ViewName(StrEnum)` and is the sole writer to the `AppContext` singleton. `ConnectionManager` owns the RPyC connection on a background thread (no Qt imports) and pushes `AppEvent`s (`ServerConnectedEvent`, `ServerDisconnectedEvent`, `DeviceListUpdatedEvent`, `KeyEvent`) through a thread-safe `EventHub`, which `MainWindow` drains on a 16 ms `QTimer` and routes to the active view.
+- **Client / UI** (`src/decker/client/`) — a PyQt6 GUI built on a `QStackedWidget` view system. `MainWindow` (`window.py`) registers its views (`DashboardView`, `DeviceView`, `ErrorView`, plus the `ReconnectWaitingOverlay` shown while disconnected) keyed by `ViewName(StrEnum)` and is the sole writer to the `AppContext` singleton. Settings live in a separate non-modal `SettingsDialog` (`widgets/settings_dialog.py`). `ConnectionManager` owns the RPyC connection on a background thread (no Qt imports) and pushes `AppEvent`s (`ServerConnectedEvent`, `ServerDisconnectedEvent`, `DeviceListUpdatedEvent`, `KeyEvent`) through a thread-safe `EventHub`, which `MainWindow` drains on a 16 ms `QTimer` and routes to the active view.
 - **CLI client** (`src/decker/cli/`) — a terminal client (`poe cli <command>`) that introspects the server's live RPC surface via `commands()` — no hardcoded command list.
 
 Early alpha; the hardware integration layer and server/client separation are the current focus.
@@ -89,6 +89,7 @@ Run `format` before the others; it changes files that the linter then re-checks.
 - Server must support multiple simultaneous clients.
 - All hardware interaction goes through the server; the client never talks to hardware directly.
 - Fault-tolerance (restart, health checking, memory limiting) lives in the monitor, not in the server.
+- Key assignments, key images and labels are stored per page (`PageStore`, `pages.py`). Each device shows one active page; only that page's actions are live, and `PageController` (`page_controller.py`) owns every page switch. Key RPCs take a `page_id`.
 - Device IDs are stable 8-char CRC-32 hex strings derived from the device serial number. The selected device is persisted as `client.default_device` in the user config layer.
 - Configuration is YAML-based; use `flatten-dict` for nested config operations.
 - RPyC is the IPC layer between server and client.

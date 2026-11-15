@@ -14,6 +14,7 @@ from decker.common.model import DeviceHardwareInfo
 from decker.server import devices
 from decker.server.devices import Device
 from decker.server.devices.state import DeviceState
+from decker.server.pages import initial_page_id
 
 if TYPE_CHECKING:
     from decker.server.device_state_store import DeviceStateStore
@@ -50,10 +51,12 @@ class DeviceManager(Manager):
         self._states: dict[str, DeviceState] = {}
         self._lock = threading.Lock()
         self._state_store: "DeviceStateStore | None" = None
+        self._page_resolver: Callable[[str], str] = initial_page_id
 
     def create(self, context: "ServerContext") -> None:
-        """Wire the device state store; devices are opened lazily on first open_device() call."""
+        """Wire the state store and active-page lookup; devices are opened lazily by open_device()."""
         self._state_store = context.device_state_store
+        self._page_resolver = context.page_controller.active_page_id
 
     def destroy(self) -> None:
         """Reset and close all open devices."""
@@ -75,7 +78,26 @@ class DeviceManager(Manager):
         if state is not None:
             state.clear_key(key_index)
         elif self._state_store is not None:
-            self._state_store.delete_key_state(device_id, key_index)
+            self._state_store.delete_key_state(device_id, self._page_resolver(device_id), key_index)
+
+    def show_page(self, device_id: str, page_id: str) -> bool:
+        """Load page_id's cached key state and redraw every key; keys with no cached image are blanked.
+
+        Returns False if the device cannot be opened.
+        """
+        device = self.open_device(device_id)
+        state = self._states.get(device_id)
+        if device is None or state is None:
+            return False
+        state.switch_page(page_id)
+        images = dict(state.get_all_images())
+        for key_index in range(device.get_hw_info().num_keys):
+            image = images.get(key_index)
+            if image is not None:
+                device.set_image_bytes(key_index, image)
+            else:
+                device.clear_key_image(key_index)
+        return True
 
     def _on_hw_key_event(self, device: Device, key_index: int, pressed: bool) -> None:
         device.on_key_event(key_index, pressed)
@@ -162,7 +184,9 @@ class DeviceManager(Manager):
             )
             self._devices[device.device_id] = device
 
-        state = DeviceState(device.device_id, self._state_store, device.get_key_state)
+        state = DeviceState(
+            device.device_id, self._state_store, device.get_key_state, self._page_resolver(device.device_id)
+        )
         state.restore_from_store()
         self._states[device.device_id] = state
 
@@ -205,4 +229,4 @@ class DeviceManager(Manager):
             if state is not None:
                 state.update_key_image(key_index, rendered)
             elif self._state_store is not None:
-                self._state_store.save_key_image(device_id, key_index, rendered)
+                self._state_store.save_key_image(device_id, self._page_resolver(device_id), key_index, rendered)

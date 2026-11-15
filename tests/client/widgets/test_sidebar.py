@@ -1,4 +1,5 @@
 from assertpy import assert_that
+from PyQt6.QtWidgets import QToolButton, QVBoxLayout
 
 from decker.client.widgets.sidebar import SidebarWidget
 
@@ -42,21 +43,12 @@ class TestSidebarWidget:
 
         assert_that(sidebar._action_list.count()).is_equal_to(2)  # pylint: disable=protected-access
 
-    def test_device_switcher_button_exposed(self, qapp):  # pylint: disable=unused-argument
+    def test_has_no_buttons_and_list_fills_remaining_space(self, qapp):  # pylint: disable=unused-argument
         sidebar = SidebarWidget()
-        assert_that(sidebar.device_switcher_button).is_not_none()
+        layout = sidebar.layout()
+        assert isinstance(layout, QVBoxLayout)
 
-    def test_button_signals_emit(self, qapp):  # pylint: disable=unused-argument
-        sidebar = SidebarWidget()
-        theme_calls = []
-        settings_calls = []
-        device_calls = []
-        sidebar.theme_clicked.connect(lambda: theme_calls.append(1))
-        sidebar.settings_clicked.connect(lambda: settings_calls.append(1))
-        sidebar.device_switcher_clicked.connect(lambda: device_calls.append(1))
-
-        sidebar.device_switcher_button.click()
-
-        assert_that(device_calls).is_length(1)
-        assert_that(theme_calls).is_empty()
-        assert_that(settings_calls).is_empty()
+        assert_that(sidebar.findChildren(QToolButton)).is_empty()
+        assert_that(layout.stretch(layout.indexOf(sidebar._action_list))).is_equal_to(
+            1
+        )  # pylint: disable=protected-access

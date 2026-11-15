@@ -21,6 +21,7 @@ def _make_state(store: DeviceStateStore | None = None, press_state: KeyPressStat
         device_id="dev1",
         store=store,
         press_state_getter=lambda _: press_state,
+        page_id="p1",
     )
 
 
@@ -47,7 +48,7 @@ class TestDeviceStateImages:
             store = _make_store(tmpdir)
             state = _make_state(store)
             state.update_key_image(1, b"PNG")
-            assert_that(store.get_key_image("dev1", 1)).is_equal_to(b"PNG")
+            assert_that(store.get_key_image("dev1", "p1", 1)).is_equal_to(b"PNG")
             store.destroy()
 
     def test_update_key_image_no_store_does_not_raise(self):
@@ -83,7 +84,7 @@ class TestDeviceStateLabels:
             store = _make_store(tmpdir)
             state = _make_state(store)
             state.update_key_label(3, "Stop")
-            assert_that(store.get_key_label("dev1", 3)).is_equal_to("Stop")
+            assert_that(store.get_key_label("dev1", "p1", 3)).is_equal_to("Stop")
             store.destroy()
 
     def test_update_key_label_no_store_does_not_raise(self):
@@ -103,7 +104,7 @@ class TestDeviceStateLabels:
 
 class TestDeviceStatePressState:
     def test_get_key_state_press_state_comes_from_getter(self):
-        state = DeviceState("dev1", None, lambda _: KeyPressState.HELD)
+        state = DeviceState("dev1", None, lambda _: KeyPressState.HELD, "p1")
         assert_that(state.get_key_state(0).press_state).is_equal_to(KeyPressState.HELD)
 
     def test_press_state_getter_receives_key_index(self):
@@ -113,7 +114,7 @@ class TestDeviceStatePressState:
             received.append(key_index)
             return KeyPressState.UP
 
-        state = DeviceState("dev1", None, getter)
+        state = DeviceState("dev1", None, getter, "p1")
         state.get_key_state(5)
         assert_that(received).contains(5)
 
@@ -135,8 +136,8 @@ class TestDeviceStateClearKey:
             state.update_key_image(0, b"img")
             state.update_key_label(0, "Play")
             state.clear_key(0)
-            assert_that(store.get_key_image("dev1", 0)).is_none()
-            assert_that(store.get_key_label("dev1", 0)).is_none()
+            assert_that(store.get_key_image("dev1", "p1", 0)).is_none()
+            assert_that(store.get_key_label("dev1", "p1", 0)).is_none()
             store.destroy()
 
     def test_clear_key_no_op_for_unset_key(self):
@@ -148,10 +149,10 @@ class TestDeviceStateRestoreFromStore:
     def test_restore_loads_images_and_labels(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _make_store(tmpdir)
-            store.save_key_image("dev1", 0, b"img0")
-            store.save_key_image("dev1", 1, b"img1")
-            store.save_key_label("dev1", 0, "Play")
-            store.save_key_label("dev1", 2, "Stop")
+            store.save_key_image("dev1", "p1", 0, b"img0")
+            store.save_key_image("dev1", "p1", 1, b"img1")
+            store.save_key_label("dev1", "p1", 0, "Play")
+            store.save_key_label("dev1", "p1", 2, "Stop")
 
             state = _make_state(store)
             state.restore_from_store()
@@ -174,3 +175,44 @@ class TestDeviceStateRestoreFromStore:
             assert_that(state.get_all_images()).is_empty()
             assert_that(state.get_all_labels()).is_empty()
             store.destroy()
+
+
+class TestDeviceStatePages:
+    def test_writes_go_to_current_page(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _make_store(tmpdir)
+            state = _make_state(store)
+
+            state.update_key_image(0, b"on-p1")
+            state.update_key_label(0, "P1")
+
+            assert_that(state.page_id).is_equal_to("p1")
+            assert_that(store.get_key_image("dev1", "p1", 0)).is_equal_to(b"on-p1")
+            assert_that(store.get_key_image("dev1", "p2", 0)).is_none()
+            store.destroy()
+
+    def test_switch_page_loads_that_pages_state_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _make_store(tmpdir)
+            store.save_key_image("dev1", "p2", 3, b"on-p2")
+            store.save_key_label("dev1", "p2", 4, "Two")
+            state = _make_state(store)
+            state.update_key_image(0, b"on-p1")
+
+            state.switch_page("p2")
+
+            assert_that(state.page_id).is_equal_to("p2")
+            assert_that(state.get_all_images()).is_equal_to([(3, b"on-p2")])
+            assert_that(state.get_all_labels()).is_equal_to([(4, "Two")])
+            state.clear_key(3)
+            assert_that(store.get_key_image("dev1", "p2", 3)).is_none()
+            assert_that(store.get_key_image("dev1", "p1", 0)).is_equal_to(b"on-p1")
+            store.destroy()
+
+    def test_switch_page_without_store_just_clears(self):
+        state = _make_state(store=None)
+        state.update_key_image(0, b"img")
+
+        state.switch_page("p2")
+
+        assert_that(state.get_all_images()).is_empty()

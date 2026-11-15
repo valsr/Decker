@@ -154,6 +154,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
             return []
         return [{"key_index": k, "label": v} for k, v in state.get_all_labels()]
 
+    def store_settings(self, target: ActionTarget, settings: dict[str, Any]) -> None:
+        """Persist settings for an action instance so its plugin reads them on activation."""
+        self._settings_store.set_settings(target.plugin_uuid, target.action_uuid, target.context_id, settings)
+
     def activate_action(self, target: ActionTarget) -> None:
         """Instantiate a native action for this target and dispatch on_will_appear."""
         loaded = self._native_plugins.get(target.plugin_uuid)

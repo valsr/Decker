@@ -9,8 +9,12 @@ from assertpy import assert_that
 from decker.plugin.context import ActionTarget
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.server.key_assignments import KeyAssignmentStore
+from decker.server.page_controller import PageController
+from decker.server.pages import PageStore, initial_page_id
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
+
+P1 = initial_page_id("dev1")
 
 
 def _make_target(device_id="dev1", key_index=0, plugin="com.p", action="com.p.a", ctx="ctx1"):
@@ -19,15 +23,25 @@ def _make_target(device_id="dev1", key_index=0, plugin="com.p", action="com.p.a"
     )
 
 
-def _make_context(plugin_manager: MagicMock, store: KeyAssignmentStore) -> ServerContext:
-    return ServerContext(
-        device_manager=MagicMock(),
+def _make_context(plugin_manager: MagicMock, store: KeyAssignmentStore, device_manager=None) -> ServerContext:
+    """A context with real page and key stores (sharing one database) and mocked hardware/plugins."""
+    page_store = PageStore(db_path=store._db_path)  # pylint: disable=protected-access
+    controller = PageController()
+    dm = device_manager or MagicMock()
+    dm.show_page.return_value = True
+    ctx = ServerContext(
+        device_manager=dm,
         plugin_manager=plugin_manager,
         icon_pack_manager=MagicMock(),
         key_assignment_store=store,
         device_state_store=MagicMock(),
+        page_store=page_store,
+        page_controller=controller,
         event_bus=MagicMock(),
     )
+    page_store.create(ctx)
+    controller.create(ctx)
+    return ctx
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +110,7 @@ class TestKeySimulateLongPress:
     def test_simulate_long_press_dispatches_key_down_and_up(self, store, manager):
         DeckerService.configure_context(_make_context(manager, store))
         target = _make_target()
-        store.assign("dev1", 0, target, {})
+        store.assign("dev1", P1, 0, target, {})
         s = DeckerService()
         with patch("decker.server.service.time.sleep") as mock_sleep:
             result = s.key_simulate_long_press("dev1", 0)
@@ -134,66 +148,57 @@ class TestPluginsActionsList:
 
 class TestKeyAssign:
     def test_assign_activates_action(self, service, manager, store):
-        result = service.key_assign("dev1", 0, "com.p", "com.p.a", "ctx1", json.dumps({"step": 2}))
+        result = service.key_assign("dev1", P1, 0, "com.p", "com.p.a", "ctx1", json.dumps({"step": 2}))
         assert_that(result).is_true()
         manager.activate_action.assert_called_once()
-        assert_that(store.get("dev1", 0)).is_not_none()
+        assert_that(store.get("dev1", P1, 0)).is_not_none()
 
     def test_assign_deactivates_previous_if_exists(self, service, manager, store):
         target = _make_target()
-        store.assign("dev1", 0, target, {})
-        service.key_assign("dev1", 0, "com.q", "com.q.b", "ctx2")
+        store.assign("dev1", P1, 0, target, {})
+        service.key_assign("dev1", P1, 0, "com.q", "com.q.b", "ctx2")
         manager.deactivate_action.assert_called_once_with(target)
 
     def test_assign_returns_false_without_context(self):
         s = DeckerService()
-        assert_that(s.key_assign("dev1", 0, "p", "a", "c")).is_false()
+        assert_that(s.key_assign("dev1", P1, 0, "p", "a", "c")).is_false()
 
     def test_assign_opens_device_via_device_manager(self, store, manager):
         dm = MagicMock()
-        DeckerService.configure_context(
-            ServerContext(
-                device_manager=dm,
-                plugin_manager=manager,
-                icon_pack_manager=MagicMock(),
-                key_assignment_store=store,
-                device_state_store=MagicMock(),
-                event_bus=MagicMock(),
-            )
-        )
-        DeckerService().key_assign("dev1", 0, "com.p", "com.p.a", "ctx1")
+        DeckerService.configure_context(_make_context(manager, store, device_manager=dm))
+        DeckerService().key_assign("dev1", P1, 0, "com.p", "com.p.a", "ctx1")
         dm.open_device.assert_called_with("dev1")
 
 
 class TestKeyUnassign:
     def test_unassign_deactivates_action(self, service, manager, store):
         target = _make_target()
-        store.assign("dev1", 0, target, {})
-        result = service.key_unassign("dev1", 0)
+        store.assign("dev1", P1, 0, target, {})
+        result = service.key_unassign("dev1", P1, 0)
         assert_that(result).is_true()
         manager.deactivate_action.assert_called_once_with(target)
-        assert_that(store.get("dev1", 0)).is_none()
+        assert_that(store.get("dev1", P1, 0)).is_none()
 
     def test_unassign_returns_false_when_unassigned(self, service, manager):
-        result = service.key_unassign("dev1", 0)
+        result = service.key_unassign("dev1", P1, 0)
         assert_that(result).is_false()
         manager.deactivate_action.assert_not_called()
 
     def test_unassign_returns_false_without_context(self):
         s = DeckerService()
-        assert_that(s.key_unassign("dev1", 0)).is_false()
+        assert_that(s.key_unassign("dev1", P1, 0)).is_false()
 
 
 class TestKeyUpdateSettings:
     def test_update_settings_dispatches_settings_changed(self, service, manager, store):
         target = _make_target()
-        store.assign("dev1", 0, target, {"step": 1})
-        result = service.key_update_settings("dev1", 0, json.dumps({"step": 5}))
+        store.assign("dev1", P1, 0, target, {"step": 1})
+        result = service.key_update_settings("dev1", P1, 0, json.dumps({"step": 5}))
         assert_that(result).is_true()
         manager.dispatch_settings_changed.assert_called_once_with(target)
 
     def test_update_settings_returns_false_for_unassigned_slot(self, service, manager):
-        result = service.key_update_settings("dev1", 99, json.dumps({"step": 1}))
+        result = service.key_update_settings("dev1", P1, 99, json.dumps({"step": 1}))
         assert_that(result).is_false()
         manager.dispatch_settings_changed.assert_not_called()
 
@@ -255,7 +260,7 @@ class TestKeyGetStates:
         service._context.device_manager.open_device.return_value = mock_device  # pylint: disable=protected-access
         service._context.device_manager.get_device_state.return_value = mock_ds  # pylint: disable=protected-access
         target = _make_target()
-        store.assign("dev1", 0, target, {"step": 2})
+        store.assign("dev1", P1, 0, target, {"step": 2})
 
         states = json.loads(service.key_get_states("dev1"))
 
@@ -285,7 +290,7 @@ class TestKeyGetStates:
 class TestKeySimulatePress:
     def test_simulate_press_dispatches_key_down_and_up(self, service, manager, store):
         target = _make_target()
-        store.assign("dev1", 0, target, {})
+        store.assign("dev1", P1, 0, target, {})
         result = service.key_simulate_press("dev1", 0)
         assert_that(result).is_true()
         manager.dispatch_key_down.assert_called_once_with(target)
@@ -295,3 +300,98 @@ class TestKeySimulatePress:
         result = service.key_simulate_press("dev1", 99)
         assert_that(result).is_false()
         manager.dispatch_key_down.assert_not_called()
+
+
+class TestKeysOnInactivePage:
+    @pytest.fixture()
+    def page2(self, service):
+        return service._context.page_store.add_page("dev1").page_id  # pylint: disable=protected-access
+
+    def test_assign_to_inactive_page_stores_without_activating(self, service, manager, store, page2):
+        assert_that(service.key_assign("dev1", page2, 0, "com.p", "com.p.a", "c", json.dumps({"step": 4}))).is_true()
+
+        manager.activate_action.assert_not_called()
+        manager.store_settings.assert_called_once()
+        saved = store.get("dev1", page2, 0)
+        assert saved is not None
+        assert_that(saved.settings).is_equal_to({"step": 4})
+
+    def test_assign_to_unknown_page_is_refused(self, service, manager, store):
+        assert_that(service.key_assign("dev1", "nope", 0, "com.p", "com.p.a", "c")).is_false()
+        assert_that(store.get("dev1", "nope", 0)).is_none()
+
+    def test_unassign_on_inactive_page_clears_only_stored_state(self, service, manager, store, page2):
+        store.assign("dev1", page2, 0, _make_target(), {})
+
+        assert_that(service.key_unassign("dev1", page2, 0)).is_true()
+
+        manager.deactivate_action.assert_not_called()
+        ctx = service._context  # pylint: disable=protected-access
+        ctx.device_state_store.delete_key_state.assert_called_once_with("dev1", page2, 0)
+        ctx.device_manager.clear_key_state.assert_not_called()
+
+    def test_update_settings_on_inactive_page_does_not_notify_plugin(self, service, manager, store, page2):
+        store.assign("dev1", page2, 0, _make_target(), {"step": 1})
+
+        assert_that(service.key_update_settings("dev1", page2, 0, json.dumps({"step": 2}))).is_true()
+
+        manager.dispatch_settings_changed.assert_not_called()
+        manager.store_settings.assert_called_once()
+
+    def test_get_states_and_simulate_press_use_active_page(self, service, manager, store, page2):
+        on_page2 = _make_target(ctx="p2")
+        store.assign("dev1", page2, 0, on_page2, {})
+        assert_that(service.key_simulate_press("dev1", 0)).is_false()
+
+        service.page_activate("dev1", page2)
+
+        assert_that(service.key_simulate_press("dev1", 0)).is_true()
+        manager.dispatch_key_down.assert_called_once_with(on_page2)
+
+
+class TestPageRpcs:
+    def test_without_context(self):
+        s = DeckerService()
+        assert_that(json.loads(s.pages_list("dev1"))).is_none()
+        assert_that(json.loads(s.page_add("dev1"))).is_none()
+        assert_that(s.page_rename("dev1", P1, "x")).is_false()
+        assert_that(s.page_delete("dev1", P1)).is_false()
+        assert_that(s.page_set_default("dev1", P1)).is_false()
+        assert_that(s.page_activate("dev1", P1)).is_false()
+
+    def test_pages_list(self, service):
+        result = json.loads(service.pages_list("dev1"))
+
+        assert_that(result).is_equal_to(
+            {
+                "device_id": "dev1",
+                "pages": [{"page_id": P1, "name": "Page 1"}],
+                "default_page_id": P1,
+                "active_page_id": P1,
+            }
+        )
+
+    def test_add_rename_default_activate_delete(self, service):
+        page = json.loads(service.page_add("dev1", "Media"))
+        assert_that(page["name"]).is_equal_to("Media")
+        assert_that(json.loads(service.page_add("dev1"))["name"]).is_equal_to("Page 2")
+
+        assert_that(service.page_rename("dev1", page["page_id"], "Audio")).is_true()
+        assert_that(service.page_set_default("dev1", page["page_id"])).is_true()
+        assert_that(service.page_activate("dev1", page["page_id"])).is_true()
+
+        listing = json.loads(service.pages_list("dev1"))
+        assert_that([p["name"] for p in listing["pages"]]).is_equal_to(["Page 1", "Audio", "Page 2"])
+        assert_that(listing["default_page_id"]).is_equal_to(page["page_id"])
+        assert_that(listing["active_page_id"]).is_equal_to(page["page_id"])
+
+        assert_that(service.page_delete("dev1", page["page_id"])).is_true()
+        assert_that(json.loads(service.pages_list("dev1"))["pages"]).is_length(2)
+
+    def test_page_commands_are_listed(self, service):
+        commands = json.loads(service.commands())
+
+        assert_that(commands).contains_key(
+            "pages.list", "page.add", "page.rename", "page.delete", "page.set.default", "page.activate"
+        )
+        assert_that(commands["key.assign"]["params"]).starts_with("device_id, page_id, key_index")

@@ -209,6 +209,17 @@ class Device:
         except Exception as exc:  # pylint: disable=broad-except
             logging.error("Device.set_image_bytes failed for %s[%d]: %s", self.id, key_index, exc)
 
+    def clear_key_image(self, key_index: int) -> None:
+        """Blank the hardware key and forget its cached rendered image."""
+        try:
+            tracker = self._key_trackers.get(key_index)
+            if tracker is not None:
+                tracker.image = None
+            self._try_open()
+            self._device.set_key_image(key_index, None)
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.error("Device.clear_key_image failed for %s[%d]: %s", self.id, key_index, exc)
+
     def close(self) -> None:
         """Reset and close the underlying hardware connection."""
         try:

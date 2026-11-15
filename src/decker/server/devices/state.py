@@ -1,4 +1,4 @@
-"""Per-device in-memory key state, backed by DeviceStateStore for persistence."""
+"""Per-device in-memory key state for the page on the hardware, backed by DeviceStateStore."""
 
 import threading
 from collections.abc import Callable
@@ -22,10 +22,11 @@ class PerKeyState:
 
 
 class DeviceState:
-    """Tracks mutable key state for one device and persists changes to the store.
+    """Tracks mutable key state for the page currently shown on one device, persisting changes per page.
 
     Call update_key_image / update_key_label on each write-through event.
     Call get_key_state to read a consistent snapshot for any key index.
+    Call switch_page when the device shows a different page.
     """
 
     def __init__(
@@ -33,8 +34,10 @@ class DeviceState:
         device_id: str,
         store: "DeviceStateStore | None",
         press_state_getter: Callable[[int], KeyPressState],
+        page_id: str,
     ) -> None:
         self._device_id = device_id
+        self._page_id = page_id
         self._store = store
         self._get_press_state = press_state_getter
         self._lock = threading.Lock()
@@ -50,14 +53,14 @@ class DeviceState:
         with self._lock:
             self._images[key_index] = image
         if self._store is not None:
-            self._store.save_key_image(self._device_id, key_index, image)
+            self._store.save_key_image(self._device_id, self._page_id, key_index, image)
 
     def update_key_label(self, key_index: int, label: str) -> None:
         """Store the display label for a key in memory and persist it."""
         with self._lock:
             self._labels[key_index] = label
         if self._store is not None:
-            self._store.save_key_label(self._device_id, key_index, label)
+            self._store.save_key_label(self._device_id, self._page_id, key_index, label)
 
     def clear_key(self, key_index: int) -> None:
         """Remove in-memory image and label for a key and delete them from the store."""
@@ -65,11 +68,16 @@ class DeviceState:
             self._images.pop(key_index, None)
             self._labels.pop(key_index, None)
         if self._store is not None:
-            self._store.delete_key_state(self._device_id, key_index)
+            self._store.delete_key_state(self._device_id, self._page_id, key_index)
 
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
+
+    @property
+    def page_id(self) -> str:
+        """The page whose key state is held in memory (the page shown on the hardware)."""
+        return self._page_id
 
     def get_key_state(self, key_index: int) -> PerKeyState:
         """Return a snapshot of image, label, and live press state for a key."""
@@ -98,11 +106,19 @@ class DeviceState:
     # ------------------------------------------------------------------
 
     def restore_from_store(self) -> None:
-        """Populate in-memory state from persisted images and labels."""
+        """Populate in-memory state from the current page's persisted images and labels."""
         if self._store is None:
             return
         with self._lock:
-            for key_index, image in self._store.get_all_key_images(self._device_id):
+            for key_index, image in self._store.get_all_key_images(self._device_id, self._page_id):
                 self._images[key_index] = image
-            for key_index, label in self._store.get_all_key_labels(self._device_id):
+            for key_index, label in self._store.get_all_key_labels(self._device_id, self._page_id):
                 self._labels[key_index] = label
+
+    def switch_page(self, page_id: str) -> None:
+        """Drop the in-memory state and load page_id's persisted images and labels instead."""
+        with self._lock:
+            self._page_id = page_id
+            self._images.clear()
+            self._labels.clear()
+        self.restore_from_store()

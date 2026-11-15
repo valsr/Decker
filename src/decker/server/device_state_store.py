@@ -1,4 +1,4 @@
-"""SQLite-backed persistence for device hardware info, key images, and key labels.
+"""SQLite-backed persistence for device hardware info and per-page key images and labels.
 
 Each device gets its own database file: ~/.decker/device-<id>.db
 """
@@ -7,11 +7,12 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from decker.common import paths as decker_paths
 from decker.common.manager import Manager
 from decker.common.model import DeviceHardwareInfo, KeyInfo
+from decker.server.pages import initial_page_id
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
@@ -31,20 +32,27 @@ CREATE TABLE IF NOT EXISTS devices (
 """
 
 _SCHEMA_KEY_IMAGES = """
-CREATE TABLE IF NOT EXISTS key_images (
-    key_index   INTEGER PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS page_key_images (
+    page_id     TEXT NOT NULL,
+    key_index   INTEGER NOT NULL,
     image       BLOB NOT NULL,
-    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (page_id, key_index)
 )
 """
 
 _SCHEMA_KEY_LABELS = """
-CREATE TABLE IF NOT EXISTS key_labels (
-    key_index   INTEGER PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS page_key_labels (
+    page_id     TEXT NOT NULL,
+    key_index   INTEGER NOT NULL,
     label       TEXT NOT NULL,
-    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (page_id, key_index)
 )
 """
+
+# Tables used before pages existed: (legacy table, page table, value column). Migrated on first open.
+_LEGACY_TABLES = (("key_images", "page_key_images", "image"), ("key_labels", "page_key_labels", "label"))
 
 _DB_PREFIX = "device-"
 _DB_SUFFIX = ".db"
@@ -83,6 +91,7 @@ class DeviceStateStore(Manager):
             conn.row_factory = sqlite3.Row
             for schema in [_SCHEMA_DEVICES, _SCHEMA_KEY_IMAGES, _SCHEMA_KEY_LABELS]:
                 conn.execute(schema)
+            _migrate_to_pages(conn, device_id)
             conn.commit()
             self._connections[device_id] = conn
         return self._connections[device_id]
@@ -174,105 +183,54 @@ class DeviceStateStore(Manager):
         return result
 
     # ------------------------------------------------------------------
-    # Key images
+    # Key images and labels (per page)
     # ------------------------------------------------------------------
 
-    def save_key_image(self, device_id: str, key_index: int, image: bytes) -> None:
-        """Upsert the rendered PNG for a key slot."""
+    def save_key_image(self, device_id: str, page_id: str, key_index: int, image: bytes) -> None:
+        """Upsert the rendered PNG for a key slot on a page."""
+        self._upsert("page_key_images", "image", device_id, page_id, key_index, image)
+
+    def get_key_image(self, device_id: str, page_id: str, key_index: int) -> bytes | None:
+        """Return the last persisted PNG for a key slot on a page, or None."""
+        value = self._select_one("page_key_images", "image", device_id, page_id, key_index)
+        return bytes(value) if value is not None else None
+
+    def get_all_key_images(self, device_id: str, page_id: str) -> list[tuple[int, bytes]]:
+        """Return all persisted (key_index, image) pairs for a page."""
+        return [(key, bytes(value)) for key, value in self._select_all("page_key_images", "image", device_id, page_id)]
+
+    def save_key_label(self, device_id: str, page_id: str, key_index: int, label: str) -> None:
+        """Upsert the display label for a key slot on a page."""
+        self._upsert("page_key_labels", "label", device_id, page_id, key_index, label)
+
+    def get_key_label(self, device_id: str, page_id: str, key_index: int) -> str | None:
+        """Return the last persisted display label for a key slot on a page, or None."""
+        value = self._select_one("page_key_labels", "label", device_id, page_id, key_index)
+        return str(value) if value is not None else None
+
+    def get_all_key_labels(self, device_id: str, page_id: str) -> list[tuple[int, str]]:
+        """Return all persisted (key_index, label) pairs for a page."""
+        return [(key, str(value)) for key, value in self._select_all("page_key_labels", "label", device_id, page_id)]
+
+    def delete_key_state(self, device_id: str, page_id: str, key_index: int) -> None:
+        """Remove both the persisted image and label for a key slot on a page."""
         with self._lock:
             conn = self._get_conn(device_id)
-            conn.execute(
-                """
-                INSERT INTO key_images (key_index, image, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(key_index) DO UPDATE SET
-                    image      = excluded.image,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (key_index, image),
-            )
+            for table in ("page_key_images", "page_key_labels"):
+                conn.execute(f"DELETE FROM {table} WHERE page_id = ? AND key_index = ?", (page_id, key_index))
             conn.commit()
 
-    def get_key_image(self, device_id: str, key_index: int) -> bytes | None:
-        """Return the last persisted PNG for a key slot, or None."""
-        with self._lock:
-            row = (
-                self._get_conn(device_id)
-                .execute(
-                    "SELECT image FROM key_images WHERE key_index = ?",
-                    (key_index,),
-                )
-                .fetchone()
-            )
-        return bytes(row["image"]) if row else None
-
-    def get_all_key_images(self, device_id: str) -> list[tuple[int, bytes]]:
-        """Return all persisted (key_index, image) pairs for a device."""
-        with self._lock:
-            rows = self._get_conn(device_id).execute("SELECT key_index, image FROM key_images").fetchall()
-        return [(row["key_index"], bytes(row["image"])) for row in rows]
-
-    def delete_key_image(self, device_id: str, key_index: int) -> None:
-        """Remove the persisted image for a key slot."""
+    def delete_page_state(self, device_id: str, page_id: str) -> None:
+        """Remove every persisted image and label on a page."""
         with self._lock:
             conn = self._get_conn(device_id)
-            conn.execute("DELETE FROM key_images WHERE key_index = ?", (key_index,))
-            conn.commit()
-
-    # ------------------------------------------------------------------
-    # Key labels
-    # ------------------------------------------------------------------
-
-    def save_key_label(self, device_id: str, key_index: int, label: str) -> None:
-        """Upsert the display label for a key slot."""
-        with self._lock:
-            conn = self._get_conn(device_id)
-            conn.execute(
-                """
-                INSERT INTO key_labels (key_index, label, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(key_index) DO UPDATE SET
-                    label      = excluded.label,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (key_index, label),
-            )
-            conn.commit()
-
-    def get_key_label(self, device_id: str, key_index: int) -> str | None:
-        """Return the last persisted display label for a key slot, or None."""
-        with self._lock:
-            row = (
-                self._get_conn(device_id)
-                .execute(
-                    "SELECT label FROM key_labels WHERE key_index = ?",
-                    (key_index,),
-                )
-                .fetchone()
-            )
-        return row["label"] if row else None
-
-    def get_all_key_labels(self, device_id: str) -> list[tuple[int, str]]:
-        """Return all persisted (key_index, label) pairs for a device."""
-        with self._lock:
-            rows = self._get_conn(device_id).execute("SELECT key_index, label FROM key_labels").fetchall()
-        return [(row["key_index"], row["label"]) for row in rows]
-
-    def delete_key_label(self, device_id: str, key_index: int) -> None:
-        """Remove the persisted label for a key slot."""
-        with self._lock:
-            conn = self._get_conn(device_id)
-            conn.execute("DELETE FROM key_labels WHERE key_index = ?", (key_index,))
+            for table in ("page_key_images", "page_key_labels"):
+                conn.execute(f"DELETE FROM {table} WHERE page_id = ?", (page_id,))
             conn.commit()
 
     # ------------------------------------------------------------------
     # Bulk delete
     # ------------------------------------------------------------------
-
-    def delete_key_state(self, device_id: str, key_index: int) -> None:
-        """Remove both the persisted image and label for a key slot."""
-        self.delete_key_image(device_id, key_index)
-        self.delete_key_label(device_id, key_index)
 
     def delete_all_key_state_for_device(self, device_id: str) -> None:
         """Delete the per-device database file, wiping all state for that device."""
@@ -294,6 +252,41 @@ class DeviceStateStore(Manager):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _upsert(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, table: str, column: str, device_id: str, page_id: str, key_index: int, value: bytes | str
+    ) -> None:
+        with self._lock:
+            conn = self._get_conn(device_id)
+            conn.execute(
+                f"""
+                INSERT INTO {table} (page_id, key_index, {column}, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(page_id, key_index) DO UPDATE SET
+                    {column}   = excluded.{column},
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (page_id, key_index, value),
+            )
+            conn.commit()
+
+    def _select_one(self, table: str, column: str, device_id: str, page_id: str, key_index: int) -> Any:
+        with self._lock:
+            row = (
+                self._get_conn(device_id)
+                .execute(f"SELECT {column} FROM {table} WHERE page_id = ? AND key_index = ?", (page_id, key_index))
+                .fetchone()
+            )
+        return row[column] if row else None
+
+    def _select_all(self, table: str, column: str, device_id: str, page_id: str) -> list[tuple[int, Any]]:
+        with self._lock:
+            rows = (
+                self._get_conn(device_id)
+                .execute(f"SELECT key_index, {column} FROM {table} WHERE page_id = ? ORDER BY key_index", (page_id,))
+                .fetchall()
+            )
+        return [(row["key_index"], row[column]) for row in rows]
 
     @staticmethod
     def _row_to_hw_info(device_id: str, row: sqlite3.Row) -> DeviceHardwareInfo:
@@ -317,3 +310,19 @@ class DeviceStateStore(Manager):
             serial=row["serial"],
             path=row["path"],
         )
+
+
+def _migrate_to_pages(conn: sqlite3.Connection, device_id: str) -> None:
+    """Move key images and labels stored before pages existed onto the device's first page."""
+    existing = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+    for legacy, table, column in _LEGACY_TABLES:
+        if legacy not in existing:
+            continue
+        conn.execute(
+            f"""
+            INSERT OR IGNORE INTO {table} (page_id, key_index, {column}, updated_at)
+            SELECT ?, key_index, {column}, updated_at FROM {legacy}
+            """,
+            (initial_page_id(device_id),),
+        )
+        conn.execute(f"DROP TABLE {legacy}")

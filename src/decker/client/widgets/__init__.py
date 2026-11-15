@@ -1,1 +1,1 @@
-"""Dashboard UI widgets: sidebar, page pill bar, button grid, device switcher, config panel."""
+"""Dashboard UI widgets: sidebar, page tab bar, button grid, settings dialog, config panel."""

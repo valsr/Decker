@@ -55,3 +55,21 @@ class KeyState:
     action_uuid: str | None = None
     context_id: str | None = None
     settings: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PageInfo:
+    """One page of key assignments on a device."""
+
+    page_id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class DevicePages:
+    """A device's pages in display order, its default page, and the page currently on the hardware."""
+
+    device_id: str
+    pages: list[PageInfo]
+    default_page_id: str
+    active_page_id: str
