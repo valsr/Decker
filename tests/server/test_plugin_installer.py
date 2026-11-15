@@ -293,6 +293,47 @@ def test_failed_upgrade_restores_previous_version(env, tmp_path, monkeypatch):
     assert _wait_for(lambda: len(_lines(log1, "will_appear")) == 2)
 
 
+def test_upgrade_reactivates_only_keys_on_the_page_active_after_the_swap(env, tmp_path, monkeypatch):
+    log1, log2 = tmp_path / "v1.log", tmp_path / "v2.log"
+    env.install(_package(log1))
+    other_page = env.page_store.add_page(DEVICE, "Other").page_id
+    env.assign(key=0, context="shown")
+    env.assign(key=1, page=other_page, context="hidden")
+    assert _wait_for(lambda: _lines(log1, "will_appear"))
+    original_add = env.manager.add_plugin
+
+    def _add(plugin):
+        env.page_controller._active[DEVICE] = other_page  # pylint: disable=protected-access
+        original_add(plugin)
+
+    monkeypatch.setattr(env.manager, "add_plugin", _add)
+
+    finished = env.install(_package(log2, _manifest("2.0.0")))
+
+    assert_that(finished["ok"]).is_true()
+    assert_that([t.context_id for t in env.manager.live_targets("com.example.tool")]).is_equal_to(["hidden"])
+    assert _wait_for(lambda: _lines(log2, "will_appear"))
+    assert_that([m["context"] for m in _lines(log2, "will_appear")]).is_equal_to(["hidden"])
+
+
+@pytest.mark.parametrize("entry", ["missing.py", "../escape.py"])
+def test_upgrade_with_unlaunchable_runtime_keeps_previous_version(env, tmp_path, entry):
+    log1, log2 = tmp_path / "v1.log", tmp_path / "v2.log"
+    env.install(_package(log1))
+    env.assign()
+    assert _wait_for(lambda: _lines(log1, "will_appear"))
+    manifest = _manifest("2.0.0", runtime={"type": "executable", "entry": entry})
+
+    finished = env.install(_package(log2, manifest))
+
+    assert_that(finished["ok"]).is_false()
+    installed = {p.manifest.id: p for p in env.manager.plugins()}["com.example.tool"]
+    assert_that(installed.manifest.version).is_equal_to("1.0.0")
+    assert_that(env.manager.live_targets("com.example.tool")).is_length(1)
+    assert_that(_lines(log1, "will_disappear")).is_empty()
+    assert_that([p.name for p in env.plugins_dir.iterdir()]).is_equal_to(["com.example.tool"])
+
+
 def test_uninstall_clears_keys_on_all_pages_and_removes_folder(env, tmp_path):
     env.install(_package(tmp_path / "v1.log"))
     other_page = env.page_store.add_page(DEVICE, "Other").page_id

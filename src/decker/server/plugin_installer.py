@@ -16,7 +16,7 @@ from decker.plugin.environment import EnvironmentBuildError, build_environment
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import PluginManifest
 from decker.plugin.package import PackageError, extract, read_manifest
-from decker.plugin.target import ActionTarget
+from decker.plugin.runtime.launcher import launch_command
 from decker.server.page_controller import PAGES_CHANGED_EVENT
 
 if TYPE_CHECKING:
@@ -47,7 +47,6 @@ class _Swap:
     old: Path
     existing: InstalledPlugin | None
     preexisting: bool
-    targets: list[tuple[ActionTarget, dict[str, Any]]]
 
 
 class PluginInstaller:
@@ -125,10 +124,25 @@ class PluginInstaller:
             if manifest.runtime is not None and manifest.runtime.type == "python":
                 progress("Building the plugin environment")
                 build_environment(staging, manifest.runtime, progress)
+            self._check_launchable(manifest, staging)
             previous = self._swap_in(job_id, manifest, staging, existing)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
         return _Outcome(manifest.id, manifest.version, previous)
+
+    @staticmethod
+    def _check_launchable(manifest: PluginManifest, staging: Path) -> None:
+        runtime = manifest.runtime
+        if runtime is None:
+            return
+        try:
+            launch_command(staging, runtime, bundled=False)
+        except ValueError as exc:
+            raise PluginInstallError(str(exc)) from exc
+        if not (staging / runtime.entry).is_file():
+            raise PluginInstallError(f"runtime entry '{runtime.entry}' is missing from the package")
+        if runtime.type == "python" and not (staging / ".venv" / "bin" / "python").exists():
+            raise PluginInstallError("the plugin environment has no Python interpreter")
 
     @staticmethod
     def _make_entry_executable(manifest: PluginManifest, staging: Path) -> None:
@@ -162,7 +176,6 @@ class PluginInstaller:
             old=self._plugins_dir / f".old-{job_id}",
             existing=existing,
             preexisting=final.exists(),
-            targets=[(t, self._appearance(t)) for t in targets],
         )
         for target in targets:
             plugins.deactivate_action(target)
@@ -173,21 +186,25 @@ class PluginInstaller:
                 swap.final.rename(swap.old)
             staging.rename(swap.final)
             plugins.add_plugin(InstalledPlugin(manifest, swap.final, False))
-            self._reactivate(swap.targets)
+            self._reactivate(manifest.id)
         except Exception:
             self._roll_back(swap)
             raise
         shutil.rmtree(swap.old, ignore_errors=True)
         return existing.manifest.version if existing is not None else None
 
-    def _reactivate(self, targets: list[tuple[ActionTarget, dict[str, Any]]]) -> None:
-        for target, appearance in targets:
-            self._context.plugin_manager.activate_action(target, appearance)
+    def _reactivate(self, plugin_id: str) -> None:
+        # Recomputed from current state: a page switch may have landed since the old targets were deactivated.
+        ctx = self._context
+        for device_id, page_id, _key_index, assignment in ctx.key_assignment_store.assignments_for_plugin(plugin_id):
+            if ctx.page_controller.active_page_id(device_id) == page_id:
+                ctx.plugin_manager.store_settings(assignment.target, assignment.settings)
+                ctx.plugin_manager.activate_action(assignment.target, assignment.appearance)
 
     def _roll_back(self, swap: _Swap) -> None:
         plugins = self._context.plugin_manager
         try:
-            for target, _appearance in swap.targets:
+            for target in plugins.live_targets(swap.plugin_id):
                 plugins.deactivate_action(target)
             plugins.remove_plugin(swap.plugin_id)
             if swap.old.exists():
@@ -197,15 +214,9 @@ class PluginInstaller:
                 shutil.rmtree(swap.final, ignore_errors=True)
             if swap.existing is not None:
                 plugins.add_plugin(swap.existing)
-                self._reactivate(swap.targets)
+                self._reactivate(swap.plugin_id)
         except Exception:  # pylint: disable=broad-except
             logging.exception("Could not fully restore the previous plugin version")
-
-    def _appearance(self, target: ActionTarget) -> dict[str, Any]:
-        store = self._context.key_assignment_store
-        page_id = self._context.page_controller.active_page_id(target.device_id)
-        assignment = store.get(target.device_id, page_id, target.key_index)
-        return dict(assignment.appearance) if assignment is not None else {}
 
     # ------------------------------------------------------------------
     # Helpers
