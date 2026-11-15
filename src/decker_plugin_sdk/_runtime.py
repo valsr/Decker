@@ -95,10 +95,13 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
         self._queues: dict[str, deque[dict[str, Any]]] = {}
         self._contexts: dict[str, tuple[DeckerPlugin, ActionContext]] = {}
         self._global_settings: dict[str, Any] = {}
+        self._stopping = False
 
     def send(self, event: str, context: str | None = None, payload: dict[str, Any] | None = None) -> None:
         line = encode_line(event, context, payload)
         with self._write_lock:
+            if self._stopping:
+                return
             try:
                 self._stdout.write(line)
                 self._stdout.flush()
@@ -120,6 +123,7 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
                 if not self._handle_line(line):
                     return 0
         finally:
+            self._stopping = True
             self._pool.shutdown(wait=False, cancel_futures=True)
 
     def _handle_line(self, line: bytes) -> bool:
@@ -171,7 +175,7 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
         while True:
             with self._state_lock:
                 queue = self._queues[key]
-                if not queue:
+                if self._stopping or not queue:
                     del self._queues[key]
                     return
                 item = queue.popleft()

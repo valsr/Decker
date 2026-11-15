@@ -214,3 +214,61 @@ def test_module_entry_point_runs_plugin_file() -> None:
         proc.stdin.write(b'{"event":"shutdown"}\n')
         proc.stdin.flush()
         assert_that(proc.wait(10)).is_equal_to(0)
+
+
+def _spawn() -> subprocess.Popen:
+    return subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-m", "decker_plugin_sdk", str(FIXTURE)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=Path(__file__).parents[2],
+    )
+
+
+def _feed(proc: subprocess.Popen, *messages: dict) -> None:
+    assert proc.stdin
+    for message in messages:
+        proc.stdin.write(json.dumps(message).encode() + b"\n")
+    proc.stdin.flush()
+
+
+def _appear(context: str, **settings: Any) -> dict:
+    return {
+        "event": "will_appear",
+        "context": context,
+        "payload": {
+            "action": "test.echo.echo",
+            "device": "d",
+            "key": {"index": 0, "column": 0, "row": 0},
+            "settings": settings,
+            "state": 0,
+        },
+    }
+
+
+def test_shutdown_stops_promptly_with_blocked_handler() -> None:
+    with _spawn() as proc:
+        assert proc.stdout
+        _feed(proc, {"event": "hello", "payload": {}})
+        assert_that(json.loads(proc.stdout.readline())["event"]).is_equal_to("ready")
+        _feed(
+            proc, _appear("c1", mode="block"), {"event": "press", "context": "c1"}, {"event": "press", "context": "c1"}
+        )
+        _feed(proc, {"event": "shutdown"})
+        assert_that(proc.wait(2)).is_equal_to(0)
+        assert_that(proc.stdout.read()).is_equal_to(b"")  # queued press never ran or wrote
+
+
+def test_stray_fd1_writes_do_not_corrupt_protocol() -> None:
+    with _spawn() as proc:
+        assert proc.stdout and proc.stderr
+        _feed(proc, {"event": "hello", "payload": {}})
+        assert_that(json.loads(proc.stdout.readline())["event"]).is_equal_to("ready")
+        _feed(proc, _appear("c1", mode="junk"), {"event": "press", "context": "c1"})
+        assert_that(json.loads(proc.stdout.readline())["payload"]["title"]).is_equal_to("pressed")
+        _feed(proc, {"event": "shutdown"})
+        assert_that(proc.wait(5)).is_equal_to(0)
+        assert_that(proc.stdout.read()).is_equal_to(b"")
+        err = proc.stderr.read()
+        assert_that(err).contains(b"junk-from-child").contains(b"junk-from-fd1").contains(b"junk-from-print")
