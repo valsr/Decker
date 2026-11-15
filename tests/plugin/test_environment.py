@@ -94,3 +94,14 @@ def test_failed_install_raises_with_output(tmp_path: Path) -> None:
     assert_that(message).contains("line30").contains("line11").does_not_contain("line10\n")
     assert_that(seen).is_length(30)
     assert_that(environment.EnvironmentBuildError).is_not_none()
+
+
+def test_venv_is_built_relocatable(tmp_path: Path) -> None:
+    fake = tmp_path / "fakeuv"
+    argv_log = tmp_path / "argv.log"
+    fake.write_text(f'#!/bin/sh\necho "$@" >> {argv_log}\n')
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    build_environment(tmp_path, _runtime(), lambda _: None, uv=str(fake))
+
+    assert_that(argv_log.read_text()).starts_with("venv --relocatable ")

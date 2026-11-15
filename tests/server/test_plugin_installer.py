@@ -307,7 +307,7 @@ def test_uninstall_clears_keys_on_all_pages_and_removes_folder(env, tmp_path):
     assert_that(env.key_store.assignments_for_plugin("com.example.tool")).is_empty()
     assert_that((env.plugins_dir / "com.example.tool").exists()).is_false()
     assert_that(env.manager.plugins()).extracting("manifest").extracting("id").does_not_contain("com.example.tool")
-    env.dm.clear_key_state.assert_called_once_with(DEVICE, 0)  # type: ignore[attr-defined]
+    env.dm.clear_key_state.assert_called_once_with(DEVICE, 0)
     env.state_store.delete_key_state.assert_called_once_with(DEVICE, other_page, 1)
     assert_that(env.bus.of("plugins_changed")).is_length(1)
     assert_that(env.bus.of("pages_changed")).is_equal_to([{"device_id": DEVICE}])
@@ -375,7 +375,7 @@ class TestServiceRules:
         service = DeckerService()
         sock = SimpleNamespace(getpeername=lambda: (host, 55555))
         conn = SimpleNamespace(_channel=SimpleNamespace(stream=SimpleNamespace(sock=sock)))
-        env.context.event_bus = MagicMock()  # type: ignore[assignment]
+        env.context.event_bus = MagicMock()
         service.on_connect(conn)
         return service
 
