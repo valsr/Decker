@@ -4,6 +4,7 @@ import os
 import signal
 import stat
 import sys
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -506,6 +507,74 @@ class TestPluginRequests:
         env.manager._on_plugin_message(
             "com.decker.rec", Message("log", None, {"level": "warning", "message": "hi"})
         )  # pylint: disable=protected-access
+
+
+class TestThreadSafety:
+    def test_add_remove_while_listing(self, env):
+        rec = next(p for p in env.manager.plugins() if p.manifest.id == "com.decker.rec")
+        errors: list[BaseException] = []
+        stop = threading.Event()
+
+        def churn() -> None:
+            try:
+                while not stop.is_set():
+                    env.manager.remove_plugin("com.decker.rec")
+                    env.manager.add_plugin(rec)
+            except BaseException as exc:  # pylint: disable=broad-except
+                errors.append(exc)
+
+        def read() -> None:
+            try:
+                while not stop.is_set():
+                    env.manager.list_actions()
+                    env.manager.plugins()
+                    env.manager.load_failures()
+            except BaseException as exc:  # pylint: disable=broad-except
+                errors.append(exc)
+
+        threads = [threading.Thread(target=churn), threading.Thread(target=read)]
+        for thread in threads:
+            thread.start()
+        time.sleep(0.5)
+        stop.set()
+        for thread in threads:
+            thread.join(5)
+
+        assert_that(errors).is_empty()
+
+    def test_no_sink_call_after_deactivate_returns(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(lambda: env.label() == "0")
+        calls: list[float] = []
+        original = env.manager._sink.set_image  # pylint: disable=protected-access
+
+        def recording(device_id, key_index, image):
+            calls.append(time.monotonic())
+            original(device_id, key_index, image)
+
+        env.manager._sink.set_image = recording  # pylint: disable=protected-access
+        payload = {"image": base64.b64encode(b"img").decode()}
+        done = threading.Event()
+
+        def burst() -> None:
+            while not done.is_set():
+                env.manager._on_plugin_message(  # pylint: disable=protected-access
+                    _COUNTER, Message("set_image", "ctx-1", payload)
+                )
+
+        threads = [threading.Thread(target=burst) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+        time.sleep(0.1)
+        env.manager.deactivate_action(COUNTER_TARGET)
+        returned = time.monotonic()
+        time.sleep(0.1)
+        done.set()
+        for thread in threads:
+            thread.join(5)
+
+        assert_that(calls).is_not_empty()
+        assert_that([c for c in calls if c > returned]).is_empty()
 
 
 def test_plugins_dir_loader_failure_is_reported(tmp_path):
