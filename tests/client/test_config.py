@@ -38,3 +38,13 @@ class TestTheme:
     def test_set_theme_rejects_unknown_name(self, isolated_config):  # pylint: disable=unused-argument
         with pytest.raises(ValueError):
             client_config.set_theme("neon")
+
+
+class TestCloseToTray:
+    def test_defaults_to_enabled(self, isolated_config):  # pylint: disable=unused-argument
+        assert_that(client_config.get_close_to_tray()).is_true()
+
+    def test_set_and_get(self, isolated_config):  # pylint: disable=unused-argument
+        client_config.set_close_to_tray(False)
+
+        assert_that(client_config.get_close_to_tray()).is_false()

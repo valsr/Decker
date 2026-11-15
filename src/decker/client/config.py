@@ -4,6 +4,7 @@ from decker.common import config
 
 CONFIG_SERVER_HOST = "client.server_host"
 CONFIG_SERVER_PORT = "client.server_port"
+CONFIG_CLOSE_TO_TRAY = "client.close_to_tray"
 
 
 def get_server_host() -> str:
@@ -55,3 +56,13 @@ def set_theme(theme: str, custom_style_sheet: str = "") -> None:
     config.set(CONFIG_THEME, theme)
     if theme == THEME_CUSTOM:
         config.set(CONFIG_STYLE_SHEET, custom_style_sheet)
+
+
+def get_close_to_tray() -> bool:
+    """Whether closing the main window hides it to the tray instead of quitting (default True)."""
+    return bool(config.get_as_or_default(CONFIG_CLOSE_TO_TRAY, bool, True))
+
+
+def set_close_to_tray(enabled: bool) -> None:
+    """Persist the close-to-tray preference."""
+    config.set(CONFIG_CLOSE_TO_TRAY, enabled)

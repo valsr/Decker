@@ -45,11 +45,11 @@ def _select_theme(dlg: SettingsDialog, theme: str) -> None:
 
 
 class TestLayout:
-    def test_is_non_modal_with_server_ui_plugins_tabs(self, dialog):
+    def test_is_non_modal_with_general_server_ui_plugins_tabs(self, dialog):
         tabs = [dialog._tabs.tabText(i) for i in range(dialog._tabs.count())]
 
         assert_that(dialog.isModal()).is_false()
-        assert_that(tabs).is_equal_to(["Server", "UI", "Plugins"])
+        assert_that(tabs).is_equal_to(["General", "Server", "UI", "Plugins"])
 
     def test_bottom_buttons_are_apply_and_close(self, dialog):
         buttons = [dialog._buttons.standardButton(b) for b in dialog._buttons.buttons()]
@@ -128,7 +128,7 @@ class TestApplyServer:
     @pytest.mark.parametrize("port", ["abc", "", "0", "65536", "-1"])
     def test_invalid_port_saves_nothing(self, dialog, manager, port):
         dialog.open_dialog()
-        dialog._tabs.setCurrentIndex(1)
+        dialog._tabs.setCurrentWidget(dialog._ui_tab)
         dialog._port_input.setText(port)
         _select_theme(dialog, "light")
 
@@ -137,7 +137,7 @@ class TestApplyServer:
         assert_that(client_config.get_theme()).is_equal_to("dark")
         manager.request_reconnect.assert_not_called()
         assert_that(dialog._message_label.text()).contains("65535")
-        assert_that(dialog._tabs.currentIndex()).is_equal_to(0)
+        assert_that(dialog._tabs.currentWidget()).is_same_as(dialog._server_tab)
 
     def test_empty_host_is_rejected(self, dialog):
         dialog.open_dialog()
@@ -195,7 +195,7 @@ class TestApplyTheme:
         assert_that(dialog.apply()).is_false()
 
         assert_that(client_config.get_theme()).is_equal_to("dark")
-        assert_that(dialog._tabs.currentIndex()).is_equal_to(1)
+        assert_that(dialog._tabs.currentWidget()).is_same_as(dialog._ui_tab)
 
     def test_browse_fills_path(self, dialog, monkeypatch):
         monkeypatch.setattr(
@@ -249,3 +249,27 @@ class TestLiveUpdates:
         dialog.set_failed_plugins({"b": "e2", "a": "e1"})
 
         assert_that([dialog._failed_list.item(i).text() for i in range(2)]).is_equal_to(["a: e1", "b: e2"])
+
+
+class TestGeneralTab:
+    def test_close_to_tray_is_on_by_default(self, dialog):
+        dialog.open_dialog()
+
+        assert_that(dialog._close_to_tray_check.isChecked()).is_true()
+
+    def test_apply_saves_close_to_tray(self, dialog):
+        dialog.open_dialog()
+        dialog._close_to_tray_check.setChecked(False)
+
+        assert_that(dialog.apply()).is_true()
+
+        assert_that(client_config.get_close_to_tray()).is_false()
+
+    def test_unapplied_change_is_discarded(self, dialog):
+        dialog.open_dialog()
+        dialog._close_to_tray_check.setChecked(False)
+        dialog.reject()
+
+        dialog.open_dialog()
+
+        assert_that(dialog._close_to_tray_check.isChecked()).is_true()

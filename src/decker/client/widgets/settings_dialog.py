@@ -1,10 +1,11 @@
-"""Non-modal settings dialog with Server, UI and Plugins tabs, applied with an Apply button."""
+"""Non-modal settings dialog with General, Server, UI and Plugins tabs, applied with an Apply button."""
 
 from typing import Any
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -66,9 +67,15 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
             QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Close
         )
 
+        self._close_to_tray_check: QCheckBox = QCheckBox("Close to tray")
+
         self._tabs: QTabWidget = QTabWidget()
-        self._tabs.addTab(self._build_server_tab(), "Server")
-        self._tabs.addTab(self._build_ui_tab(), "UI")
+        self._general_tab = self._build_general_tab()
+        self._server_tab = self._build_server_tab()
+        self._ui_tab = self._build_ui_tab()
+        self._tabs.addTab(self._general_tab, "General")
+        self._tabs.addTab(self._server_tab, "Server")
+        self._tabs.addTab(self._ui_tab, "UI")
         self._tabs.addTab(self._build_plugins_tab(), "Plugins")
 
         self._buttons.rejected.connect(self.reject)
@@ -102,20 +109,21 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         host = self._host_input.text().strip()
         port = _parse_port(self._port_input.text())
         if not host or port is None:
-            return self._fail(0, "Enter a host and a port between 1 and 65535.")
+            return self._fail(self._server_tab, "Enter a host and a port between 1 and 65535.")
         theme = self._selected_theme()
         custom_path = self._custom_path_input.text().strip()
         if theme == client_config.THEME_CUSTOM and not custom_path:
-            return self._fail(1, "Choose a stylesheet file for the custom theme.")
+            return self._fail(self._ui_tab, "Choose a stylesheet file for the custom theme.")
         colors: ThemeColors | None = None
         if theme == client_config.THEME_CUSTOM:
             stylesheet = read_custom_stylesheet(custom_path)
             if stylesheet is None:
-                return self._fail(1, f"Cannot read stylesheet: {custom_path}")
+                return self._fail(self._ui_tab, f"Cannot read stylesheet: {custom_path}")
         else:
             stylesheet, colors = resolve_theme(theme)
 
         self._apply_server(host, port)
+        client_config.set_close_to_tray(self._close_to_tray_check.isChecked())
         client_config.set_theme(theme, custom_path)
         app = QApplication.instance()
         if isinstance(app, QApplication):
@@ -138,6 +146,20 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         """Stop live status updates while hidden."""
         self._status_timer.stop()
         super().hideEvent(a0)
+
+    def _build_general_tab(self) -> QWidget:
+        self._close_to_tray_check.setToolTip(
+            "Closing the window keeps Decker running in the system tray. Use Quit in the tray menu to exit."
+        )
+        hint = QLabel("When off, closing the window quits Decker.")
+        hint.setProperty("role", "muted")
+        hint.setWordWrap(True)
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.addWidget(self._close_to_tray_check)
+        layout.addWidget(hint)
+        layout.addStretch()
+        return tab
 
     def _build_server_tab(self) -> QWidget:
         tab = QWidget()
@@ -175,6 +197,7 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         return tab
 
     def _load_from_config(self) -> None:
+        self._close_to_tray_check.setChecked(client_config.get_close_to_tray())
         self._host_input.setText(client_config.get_server_host())
         self._port_input.setText(str(client_config.get_server_port()))
         index = self._theme_combo.findData(client_config.get_theme())
@@ -220,8 +243,8 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._failed_plugins[event.plugin_uuid] = event.error
         self._refresh_failed_plugins()
 
-    def _fail(self, tab_index: int, message: str) -> bool:
-        self._tabs.setCurrentIndex(tab_index)
+    def _fail(self, tab: QWidget, message: str) -> bool:
+        self._tabs.setCurrentWidget(tab)
         self._show_message(message, "error")
         return False
 

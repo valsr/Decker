@@ -36,6 +36,8 @@ def main() -> None:
 
     decker.common.logging.configure(level=logging.WARNING)
     app = QApplication(sys.argv)
+    # The window can be hidden to the tray, and the settings dialog is a separate window: only Quit exits.
+    app.setQuitOnLastWindowClosed(False)
     apply_theme(app, *resolve_theme())
 
     connection_manager = ConnectionManager()

@@ -4,8 +4,15 @@ from typing import Any
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QLabel, QMainWindow, QStackedWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QStackedWidget,
+    QSystemTrayIcon,
+)
 
+from decker.client import config as client_config
 from decker.client.assets import ICON_PATH
 from decker.client.connection_manager import ConnectionManager
 from decker.client.context import AppContext
@@ -42,7 +49,7 @@ _INITIAL_VIEW_RECHECK_MS = 50
 _TOAST_DURATION_MS = 4000
 
 
-class MainWindow(QMainWindow):
+class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
     """Owns the QStackedWidget of registered views and routes AppEvents from the EventManager."""
 
     def __init__(self, connection_manager: ConnectionManager, ui_state_store: UiStateStore | None = None) -> None:
@@ -50,6 +57,7 @@ class MainWindow(QMainWindow):
         self._connection_manager: ConnectionManager = connection_manager
         self._ui_state_store: UiStateStore = ui_state_store or UiStateStore()
         self._geometry_restored: bool = False
+        self._quitting: bool = False
         self._views: dict[ViewName, BaseView] = {}
         self._active: ViewName | None = None
         self._last_view: ViewName | None = None
@@ -114,13 +122,27 @@ class MainWindow(QMainWindow):
         self.switch_to(ViewName.CONNECTING)
         self._connection_manager.start()
 
+    def quit_app(self) -> None:
+        """Shut down for real: persist state, stop the connection manager and exit the application."""
+        self._quitting = True
+        self.close()
+
     def closeEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
-        """Persist window geometry and view state, then stop the connection manager."""
+        """Hide to the tray when close-to-tray is on; otherwise persist state, stop and quit."""
         self._save_geometry()
         for view in self._views.values():
             view.save_state()
+        if not self._quitting and _should_close_to_tray():
+            if a0 is not None:
+                a0.ignore()
+            self.hide()
+            return
+        self._settings_dialog.close()
         self._connection_manager.stop()
         super().closeEvent(a0)
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def resizeEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
         """Keep the connecting overlay sized to fill the central widget."""
@@ -223,3 +245,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._stack)
         self._toast.setObjectName("toast")
         self._toast.hide()
+
+
+def _should_close_to_tray() -> bool:
+    # Without a system tray there is no way back to a hidden window, so closing must quit.
+    return client_config.get_close_to_tray() and QSystemTrayIcon.isSystemTrayAvailable()
