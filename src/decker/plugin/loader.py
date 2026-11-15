@@ -39,7 +39,7 @@ class PluginLoader:  # pylint: disable=too-few-public-methods
         if not self._plugins_dir.exists():
             return result
         for entry in sorted(self._plugins_dir.iterdir()):
-            if not entry.is_dir():
+            if not entry.is_dir() or entry.name.startswith("."):
                 continue
             try:
                 manifest = PluginManifest.load(entry / "manifest.json")

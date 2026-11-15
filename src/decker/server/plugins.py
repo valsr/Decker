@@ -147,6 +147,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._device_manager: Any = None
         self._event_bus: Any = None
         self._icon_cache: dict[tuple[Path, str | None], str] = {}
+        self._hellos: dict[str, dict[str, Any]] = {}
         self._sink: _StreamDeckHardwareSink = _StreamDeckHardwareSink(None, self._set_key_label)
         self.settings_persister: Callable[[ActionTarget, dict[str, Any]], None] | None = None
         if policy is None:
@@ -211,8 +212,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             "protocol": 1,
             "decker_version": _decker_version(),
             "plugin_id": manifest.id,
-            "global_settings": {},
+            "global_settings": self.global_settings(manifest.id),
         }
+        with self._lock:
+            self._hellos[manifest.id] = hello
         if not plugin.bundled and self._sdk_path is None:
             with self._lock:
                 self._failures.append(PluginLoadFailedEvent(manifest.id, "plugin SDK is not staged"))
@@ -230,12 +233,41 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._supervisor.unregister(plugin_id)
         with self._lock:
             self._plugins.pop(plugin_id, None)
+            self._hellos.pop(plugin_id, None)
+            self._icon_cache.clear()
             self._drop_failure(plugin_id)
 
     def plugins(self) -> list[InstalledPlugin]:
         """Return every known plugin."""
         with self._lock:
             return list(self._plugins.values())
+
+    def global_settings(self, plugin_id: str) -> dict[str, Any]:
+        """Return the plugin-wide settings validated against the manifest schema, defaults filled in."""
+        with self._lock:
+            plugin = self._plugins.get(plugin_id)
+        stored = self._settings_store.get_global_settings(plugin_id)
+        return apply_schema(plugin.manifest.global_settings, stored) if plugin is not None else stored
+
+    def update_global_settings(self, plugin_id: str, raw: dict[str, Any], notify: bool = True) -> dict[str, Any] | None:
+        """Validate and persist plugin-wide settings, telling the running plugin; None for an unknown plugin."""
+        with self._lock:
+            plugin = self._plugins.get(plugin_id)
+        if plugin is None:
+            return None
+        settings = apply_schema(plugin.manifest.global_settings, raw)
+        self._settings_store.set_global_settings(plugin_id, settings)
+        with self._lock:
+            hello = self._hellos.get(plugin_id)
+            if hello is not None:
+                hello["global_settings"] = settings
+        if notify:
+            self._supervisor.send(plugin_id, Message("global_settings_changed", None, {"settings": settings}))
+        return settings
+
+    def delete_plugin_settings(self, plugin_id: str) -> None:
+        """Forget every persisted setting of a plugin (used on uninstall)."""
+        self._settings_store.delete_plugin(plugin_id)
 
     def live_targets(self, plugin_id: str) -> list[ActionTarget]:
         """Return the action instances currently active for a plugin."""
@@ -458,7 +490,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         elif event == "open_url":
             self._on_open_url(plugin_id, message.payload)
         elif event == "set_global_settings":
-            logging.debug("[%s] global settings are not stored yet", plugin_id)
+            self._on_set_global_settings(plugin_id, message.payload)
         else:
             self._route_context_message(plugin_id, message)
 
@@ -531,6 +563,13 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self.store_settings(live.target, settings)
         if self.settings_persister is not None:
             self.settings_persister(live.target, settings)
+
+    def _on_set_global_settings(self, plugin_id: str, payload: dict[str, Any]) -> None:
+        raw = payload.get("settings")
+        if not isinstance(raw, dict):
+            logging.warning("[%s] set_global_settings without a settings object dropped", plugin_id)
+            return
+        self.update_global_settings(plugin_id, raw, notify=False)
 
     def _on_set_gestures(self, live: _Live, payload: dict[str, Any]) -> None:
         gestures = _gestures_from(payload.get("gestures"))

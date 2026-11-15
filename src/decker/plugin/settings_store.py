@@ -16,6 +16,13 @@ CREATE TABLE IF NOT EXISTS settings (
     PRIMARY KEY (plugin_uuid, action_uuid, context_id)
 )
 """
+_GLOBAL_SCHEMA = """
+CREATE TABLE IF NOT EXISTS global_settings (
+    plugin_id  TEXT PRIMARY KEY,
+    settings   TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+"""
 
 
 class PluginSettingsStore:
@@ -26,6 +33,7 @@ class PluginSettingsStore:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.execute(_SCHEMA)
+        self._conn.execute(_GLOBAL_SCHEMA)
         self._conn.commit()
 
     def get_settings(self, plugin_uuid: str, action_uuid: str, context_id: str) -> dict:
@@ -49,6 +57,28 @@ class PluginSettingsStore:
             """,
             (plugin_uuid, action_uuid, context_id, json.dumps(settings)),
         )
+        self._conn.commit()
+
+    def get_global_settings(self, plugin_id: str) -> dict:
+        """Return the plugin-wide settings, or {} if none are stored."""
+        row = self._conn.execute("SELECT settings FROM global_settings WHERE plugin_id = ?", (plugin_id,)).fetchone()
+        return json.loads(row[0]) if row is not None else {}
+
+    def set_global_settings(self, plugin_id: str, settings: dict) -> None:
+        """Persist (overwrite) the plugin-wide settings."""
+        self._conn.execute(
+            """
+            INSERT INTO global_settings (plugin_id, settings, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(plugin_id) DO UPDATE SET settings = excluded.settings, updated_at = CURRENT_TIMESTAMP
+            """,
+            (plugin_id, json.dumps(settings)),
+        )
+        self._conn.commit()
+
+    def delete_plugin(self, plugin_id: str) -> None:
+        """Remove every stored setting (per-context and plugin-wide) for a plugin."""
+        self._conn.execute("DELETE FROM settings WHERE plugin_uuid = ?", (plugin_id,))
+        self._conn.execute("DELETE FROM global_settings WHERE plugin_id = ?", (plugin_id,))
         self._conn.commit()
 
     def close(self) -> None:

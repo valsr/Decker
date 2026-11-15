@@ -2,6 +2,7 @@
 
 import base64
 import inspect
+import ipaddress
 import json
 import logging
 import threading
@@ -13,15 +14,40 @@ from typing import TYPE_CHECKING, Any
 from rpyc.core.service import Service
 from rpyc.utils import exposed
 
+from decker.common import config
 from decker.common.appearance_schema import APPEARANCE_KEYS
 from decker.common.model import DeviceHardwareInfo, DevicePages, KeyState, PageInfo
 from decker.common.utils import api_response
+from decker.plugin.icons import read_icon
+from decker.plugin.loader import InstalledPlugin
+from decker.plugin.settings_schema import schema_to_json
 from decker.plugin.target import ActionTarget
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
 
 _LONG_PRESS_HOLD_S = 0.6
+_REMOTE_INSTALL_DENIED = "Installing plugins is only allowed from the server's own machine"
+
+
+def _peer_host(conn: Any) -> str | None:
+    try:
+        host = conn._channel.stream.sock.getpeername()[0]  # pylint: disable=protected-access
+    except Exception:  # pylint: disable=broad-except
+        return None
+    return host if isinstance(host, str) else None
+
+
+def _is_loopback(host: str | None) -> bool:
+    if host is None:
+        return False
+    try:
+        address = ipaddress.ip_address(host.split("%", maxsplit=1)[0])
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return address.is_loopback
 
 
 class DeckerStatusEnum(StrEnum):
@@ -53,10 +79,12 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         """Initialize the Decker service."""
         super().__init__()
         self._last_heartbeat: float = time.time()
+        self._peer_host: str | None = None
 
     def on_connect(self, conn: Any) -> None:
         """Handle client connection — register for server-push events."""
         logging.info("Client connected to Decker service")
+        self._peer_host = _peer_host(conn)
         if self._context is not None:
             self._context.event_bus.register(conn)
 
@@ -122,6 +150,50 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         if self._context is None:
             return []
         return self._context.plugin_manager.list_actions()
+
+    @exposed
+    @api_response
+    def plugins_list(self) -> list:
+        """List installed plugins with their metadata, action and icon pack counts, and global settings."""
+        if self._context is None:
+            return []
+        manager = self._context.plugin_manager
+        return [self._plugin_info(plugin, manager.global_settings(plugin.manifest.id)) for plugin in manager.plugins()]
+
+    @exposed
+    def plugin_install_allowed(self) -> bool:
+        """Report whether this client may install and uninstall plugins."""
+        return self._install_allowed()
+
+    @exposed
+    def plugin_install(self, filename: str, data: bytes) -> str:
+        """Install or upgrade a plugin from .deckerplugin bytes in the background; returns the job id."""
+        installer = self._installer()
+        return installer.install(filename, bytes(data))
+
+    @exposed
+    def plugin_uninstall(self, plugin_id: str) -> bool:
+        """Uninstall a plugin, removing its keys from every device and page."""
+        installer = self._installer()
+        installer.uninstall(plugin_id)
+        return True
+
+    @exposed
+    def plugin_usage(self, plugin_id: str) -> int:
+        """Return how many keys across all devices and pages use the plugin's actions."""
+        if self._context is None or self._context.plugin_installer is None:
+            return 0
+        return self._context.plugin_installer.usage(plugin_id)
+
+    @exposed
+    def plugin_update_global_settings(self, plugin_id: str, settings_json: str) -> bool:
+        """Validate, store and send plugin-wide settings. Returns False for an unknown plugin."""
+        if self._context is None:
+            return False
+        raw = json.loads(settings_json)
+        if not isinstance(raw, dict):
+            return False
+        return self._context.plugin_manager.update_global_settings(plugin_id, raw) is not None
 
     @exposed
     def key_assign(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -380,6 +452,36 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _install_allowed(self) -> bool:
+        return _is_loopback(self._peer_host) or config.get_as_or_default(
+            "server.allow_remote_plugin_install", bool, False
+        )
+
+    def _installer(self) -> Any:
+        if not self._install_allowed():
+            raise PermissionError(_REMOTE_INSTALL_DENIED)
+        if self._context is None or self._context.plugin_installer is None:
+            raise RuntimeError("plugin installer is not available")
+        return self._context.plugin_installer
+
+    @staticmethod
+    def _plugin_info(plugin: InstalledPlugin, global_settings: dict[str, Any]) -> dict[str, Any]:
+        manifest = plugin.manifest
+        icon = read_icon(plugin.plugin_dir, manifest.icon)
+        return {
+            "id": manifest.id,
+            "name": manifest.name,
+            "version": manifest.version,
+            "author": manifest.author,
+            "description": manifest.description,
+            "bundled": plugin.bundled,
+            "actions": len(manifest.actions),
+            "icon_packs": len(manifest.icon_packs),
+            "icon_b64": base64.b64encode(icon).decode("ascii") if icon else "",
+            "global_settings_schema": schema_to_json(manifest.global_settings),
+            "global_settings": global_settings,
+        }
 
     def _is_active_page(self, device_id: str, page_id: str) -> bool:
         return self._context is not None and self._context.page_controller.active_page_id(device_id) == page_id

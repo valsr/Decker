@@ -161,6 +161,16 @@ class KeyAssignmentStore(Manager):
             ).fetchall()
         return [_to_assignment(device_id, row) for row in rows]
 
+    def assignments_for_plugin(self, plugin_id: str) -> list[tuple[str, str, int, KeyAssignment]]:
+        """Return every assignment of a plugin's actions as (device_id, page_id, key_index, assignment)."""
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT device_id, page_id, {_COLUMNS} FROM {_TABLE} WHERE plugin_uuid = ? "
+                "ORDER BY device_id, page_id, key_index",
+                (plugin_id,),
+            ).fetchall()
+        return [(row[0], row[1], *_to_assignment(row[0], row[2:])) for row in rows]
+
     def delete_page(self, device_id: str, page_id: str) -> None:
         """Remove every assignment on a page."""
         with self._lock:
