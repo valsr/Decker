@@ -1,5 +1,6 @@
 """Fixture plugin used by the SDK tests."""
 
+import os
 import threading
 import time
 
@@ -13,6 +14,10 @@ SEEN: list[str] = []
 class Echo(DeckerPlugin):
     def on_press(self, ctx: ActionContext) -> None:
         mode = ctx.settings.get("mode")
+        if mode == "junk":
+            os.system("echo junk-from-child")
+            os.write(1, b"junk-from-fd1\n")
+            print("junk-from-print")
         if mode == "block":
             BLOCK.wait(5)
         elif mode == "boom":
