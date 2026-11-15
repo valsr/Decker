@@ -80,3 +80,40 @@ class TestLoad:
         path.write_text("[1, 2, 3]")
         with pytest.raises(ManifestValidationError):
             PluginManifest.load(path)
+
+
+class TestIcons:
+    def _manifest(self, **overrides):
+        data = {
+            "UUID": "com.decker.x",
+            "Name": "X",
+            "Version": "1",
+            "Author": "A",
+            "Actions": [{"UUID": "com.decker.x.a", "Name": "A"}],
+        }
+        data.update(overrides)
+        return PluginManifest.from_dict(data)
+
+    def test_action_icon_defaults_to_none(self):
+        assert_that(self._manifest().actions[0].icon).is_none()
+
+    def test_action_icon_is_parsed(self):
+        manifest = self._manifest(Actions=[{"UUID": "com.decker.x.a", "Name": "A", "Icon": "imgs/a"}])
+
+        assert_that(manifest.actions[0].icon).is_equal_to("imgs/a")
+
+    def test_plugin_icon_is_the_fallback_for_actions_without_one(self):
+        manifest = self._manifest(
+            Icon="imgs/plugin",
+            Actions=[
+                {"UUID": "com.decker.x.a", "Name": "A"},
+                {"UUID": "com.decker.x.b", "Name": "B", "Icon": "imgs/b"},
+            ],
+        )
+
+        assert_that([a.icon for a in manifest.actions]).is_equal_to(["imgs/plugin", "imgs/b"])
+
+    def test_non_string_or_blank_icons_are_ignored(self):
+        manifest = self._manifest(Icon=7, Actions=[{"UUID": "com.decker.x.a", "Name": "A", "Icon": "  "}])
+
+        assert_that(manifest.actions[0].icon).is_none()

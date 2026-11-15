@@ -135,6 +135,29 @@ QListView::item:selected {
     color: $accent_text;
 }
 
+/* Plugin action grid (sidebar): icon tiles with the name underneath */
+QListWidget#action-list {
+    padding: 4px;
+}
+
+QListWidget#action-list::item {
+    border: 1px solid transparent;
+    border-radius: 6px;
+    margin: 2px;
+    padding: 4px 2px;
+}
+
+QListWidget#action-list::item:hover {
+    background-color: $hover;
+    border-color: $border;
+}
+
+QListWidget#action-list::item:selected {
+    background-color: $accent;
+    border-color: $accent_line;
+    color: $accent_text;
+}
+
 /* ── Menus ── */
 QMenu {
     background-color: $surface;

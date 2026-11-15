@@ -6,7 +6,8 @@
   "Actions": [
     {
       "UUID": "com.decker.counter.counter",
-      "Name": "Counter"
+      "Name": "Counter",
+      "Icon": "icons/counter"
     }
   ]
 }

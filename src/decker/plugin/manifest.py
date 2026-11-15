@@ -20,6 +20,7 @@ class PluginAction:
 
     uuid: str
     name: str
+    icon: str | None = None  # image path relative to the plugin directory, extension optional (Elgato style)
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,8 @@ class PluginManifest:
         if not isinstance(actions_data, list) or not actions_data:
             raise ManifestValidationError("manifest Actions must be a non-empty list")
 
-        actions = tuple(cls._parse_action(entry) for entry in actions_data)
+        plugin_icon = _optional_str(data.get("Icon"))
+        actions = tuple(cls._parse_action(entry, plugin_icon) for entry in actions_data)
 
         code_path = data.get("CodePath")
         return cls(
@@ -62,13 +64,15 @@ class PluginManifest:
         )
 
     @staticmethod
-    def _parse_action(entry: Any) -> PluginAction:
+    def _parse_action(entry: Any, default_icon: str | None = None) -> PluginAction:
         if not isinstance(entry, dict) or "UUID" not in entry or "Name" not in entry:
             raise ManifestValidationError(f"invalid action entry: {entry!r}")
         action_uuid = entry["UUID"]
         if not isinstance(action_uuid, str) or not _UUID_PATTERN.match(action_uuid):
             raise ManifestValidationError(f"action UUID {action_uuid!r} is not a valid reverse-domain identifier")
-        return PluginAction(uuid=action_uuid, name=str(entry["Name"]))
+        return PluginAction(
+            uuid=action_uuid, name=str(entry["Name"]), icon=_optional_str(entry.get("Icon")) or default_icon
+        )
 
     @classmethod
     def load(cls, manifest_path: str | Path) -> "PluginManifest":
@@ -85,3 +89,7 @@ class PluginManifest:
         if not isinstance(data, dict):
             raise ManifestValidationError(f"{path} must contain a JSON object")
         return cls.from_dict(data)
+
+
+def _optional_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None

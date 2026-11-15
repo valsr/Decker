@@ -1,0 +1,60 @@
+from pathlib import Path
+
+from assertpy import assert_that
+
+from decker.plugin.icons import MAX_ICON_BYTES, read_icon, resolve_icon
+
+
+class TestResolveIcon:
+    def test_unset_icon(self, tmp_path):
+        assert_that(resolve_icon(tmp_path, None)).is_none()
+        assert_that(resolve_icon(tmp_path, "")).is_none()
+
+    def test_exact_path_with_extension(self, tmp_path):
+        (tmp_path / "icon.png").write_bytes(b"png")
+
+        assert_that(resolve_icon(tmp_path, "icon.png")).is_equal_to((tmp_path / "icon.png").resolve())
+
+    def test_elgato_style_path_without_extension_prefers_svg_then_2x(self, tmp_path):
+        (tmp_path / "imgs").mkdir()
+        for name in ("a.png", "a@2x.png", "b.png", "b@2x.png", "b.svg"):
+            (tmp_path / "imgs" / name).write_bytes(b"x")
+
+        assert_that(resolve_icon(tmp_path, "imgs/a")).is_equal_to((tmp_path / "imgs" / "a@2x.png").resolve())
+        assert_that(resolve_icon(tmp_path, "imgs/b")).is_equal_to((tmp_path / "imgs" / "b.svg").resolve())
+
+    def test_missing_file(self, tmp_path):
+        assert_that(resolve_icon(tmp_path, "nope")).is_none()
+
+    def test_rejects_paths_outside_plugin_dir(self, tmp_path):
+        plugin_dir = tmp_path / "plugin"
+        plugin_dir.mkdir()
+        (tmp_path / "secret.png").write_bytes(b"x")
+
+        assert_that(resolve_icon(plugin_dir, "../secret.png")).is_none()
+        assert_that(resolve_icon(plugin_dir, str(tmp_path / "secret"))).is_none()
+
+
+class TestReadIcon:
+    def test_reads_bytes(self, tmp_path):
+        (tmp_path / "icon.png").write_bytes(b"png-bytes")
+
+        assert_that(read_icon(tmp_path, "icon")).is_equal_to(b"png-bytes")
+
+    def test_missing_icon(self, tmp_path):
+        assert_that(read_icon(tmp_path, "icon")).is_none()
+
+    def test_oversized_icon_is_skipped(self, tmp_path):
+        (tmp_path / "big.png").write_bytes(b"x" * (MAX_ICON_BYTES + 1))
+
+        assert_that(read_icon(tmp_path, "big")).is_none()
+
+    def test_unreadable_icon_is_skipped(self, tmp_path, monkeypatch):
+        (tmp_path / "icon.png").write_bytes(b"png")
+
+        def _fail(_self):
+            raise PermissionError("denied")
+
+        monkeypatch.setattr(Path, "read_bytes", _fail)
+
+        assert_that(read_icon(tmp_path, "icon")).is_none()

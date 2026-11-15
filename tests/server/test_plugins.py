@@ -1,3 +1,4 @@
+import base64
 import json
 import time
 from unittest.mock import MagicMock
@@ -6,6 +7,7 @@ import pytest
 from assertpy import assert_that
 
 from decker.plugin.context import ActionTarget
+from decker.plugin.gestures import Gesture
 from decker.server.plugins import PluginManager
 
 _MANIFEST = {
@@ -30,6 +32,9 @@ class ShowAction(DeckerPlugin):
 
     def on_will_disappear(self, ctx):
         ctx.set_state(3)
+
+    def on_press(self, ctx):
+        ctx.set_state(4)
 """
 
 _TARGET = ActionTarget(
@@ -143,8 +148,37 @@ class TestPluginManagerLifecycle:
                 "plugin_name": "Test",
                 "action_uuid": "com.decker.test.show",
                 "action_name": "Show",
+                "icon_b64": "",
             }
         )
+
+    def test_bundled_counter_action_has_its_icon(self, manager):
+        counter = next(a for a in manager.list_actions() if a["action_uuid"] == "com.decker.counter.counter")
+
+        assert base64.b64decode(counter["icon_b64"]).startswith(b"\x89PNG")
+
+    def test_action_icons_are_read_once(self, manager, monkeypatch):
+        manager.list_actions()
+        monkeypatch.setattr("decker.server.plugins.read_icon", MagicMock(side_effect=AssertionError("re-read")))
+
+        assert_that(manager.list_actions()).is_not_empty()
+
+    def test_elgato_action_icon_is_included(self, elgato_manager, plugins_dir):
+        icon_dir = plugins_dir / "com.elgato.cpu-monitor.sdPlugin" / "imgs"
+        icon_dir.mkdir()
+        (icon_dir / "show.png").write_bytes(b"\x89PNGdata")
+        manifest = dict(
+            _ELGATO_MANIFEST, Actions=[{"UUID": "com.elgato.cpu-monitor.show", "Name": "Show", "Icon": "imgs/show"}]
+        )
+        (plugins_dir / "com.elgato.cpu-monitor.sdPlugin" / "manifest.json").write_text(json.dumps(manifest))
+        rescanned = PluginManager(plugins_dir)
+        for discovered in rescanned._user_loader.scan().elgato:  # pylint: disable=protected-access
+            rescanned._elgato_plugins[discovered.manifest.uuid] = discovered  # pylint: disable=protected-access
+
+        show = next(a for a in rescanned.list_actions() if a["plugin_uuid"] == "com.elgato.cpu-monitor")
+
+        assert_that(base64.b64decode(show["icon_b64"])).is_equal_to(b"\x89PNGdata")
+        rescanned.destroy()
 
     def test_activate_action_dispatches_on_will_appear(self, manager):
         manager.activate_action(_TARGET)
@@ -158,6 +192,55 @@ class TestPluginManagerLifecycle:
         manager.dispatch_key_down(_TARGET)
         assert _wait_for(lambda: manager._sink.set_state.called)  # pylint: disable=protected-access
         manager._sink.set_state.assert_called_with("dev-1", 0, 2)  # pylint: disable=protected-access
+
+    def test_press_reaches_on_press_without_waiting(self, manager):
+        manager.activate_action(_TARGET)
+        manager.dispatch_key_down(_TARGET)
+        manager._sink.reset_mock()  # pylint: disable=protected-access
+
+        manager.dispatch_key_up(_TARGET)
+
+        manager._sink.set_state.assert_called_with("dev-1", 0, 4)  # pylint: disable=protected-access
+
+    def test_broken_gestures_falls_back_to_press_only(self, manager):
+        manager.activate_action(_TARGET)
+        instance = manager._registry.get(  # pylint: disable=protected-access
+            _TARGET.plugin_uuid, _TARGET.action_uuid, _TARGET.context_id
+        )
+        instance.gestures = MagicMock(side_effect=RuntimeError("boom"))
+
+        gestures = manager._registered_gestures(_TARGET)  # pylint: disable=protected-access
+
+        assert_that(gestures).is_equal_to(frozenset({Gesture.PRESS}))
+
+    def test_registered_gestures_for_unknown_target_is_empty(self, manager):
+        assert_that(manager._registered_gestures(_UNKNOWN_TARGET)).is_empty()  # pylint: disable=protected-access
+
+    def test_deactivate_drops_the_gesture_recognizer(self, manager):
+        manager.activate_action(_TARGET)
+        assert_that(manager._recognizers).contains_key(_TARGET.context_id)  # pylint: disable=protected-access
+
+        manager.deactivate_action(_TARGET)
+
+        assert_that(manager._recognizers).does_not_contain_key(_TARGET.context_id)  # pylint: disable=protected-access
+
+    def test_counter_gestures_follow_double_step_setting(self, manager):
+        target = ActionTarget(
+            plugin_uuid="com.decker.counter",
+            action_uuid="com.decker.counter.counter",
+            context_id="ctr",
+            device_id="dev-1",
+            key_index=1,
+        )
+        manager.activate_action(target)
+
+        assert_that(manager._registered_gestures(target)).does_not_contain(
+            Gesture.DOUBLE_PRESS
+        )  # pylint: disable=protected-access
+        manager.store_settings(target, {"double_step": 5})
+        assert_that(manager._registered_gestures(target)).contains(
+            Gesture.DOUBLE_PRESS
+        )  # pylint: disable=protected-access
 
     def test_key_down_without_activation_is_noop(self, manager):
         manager.dispatch_key_down(_UNKNOWN_TARGET)

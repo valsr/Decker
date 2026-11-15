@@ -20,6 +20,7 @@ class LoadedNativePlugin:
 
     manifest: PluginManifest
     action_classes: dict[str, type[DeckerPlugin]]
+    plugin_dir: Path
 
 
 def load_native_plugin(plugin_dir: Path) -> LoadedNativePlugin:
@@ -42,7 +43,7 @@ def load_native_plugin(plugin_dir: Path) -> LoadedNativePlugin:
         missing_str = ", ".join(sorted(missing))
         raise NativePluginLoadError(f"plugin.py does not implement action(s): {missing_str}")
 
-    return LoadedNativePlugin(manifest=manifest, action_classes=action_classes)
+    return LoadedNativePlugin(manifest=manifest, action_classes=action_classes, plugin_dir=plugin_dir)
 
 
 def _import_plugin_module(plugin_dir: Path, plugin_uuid: str) -> ModuleType:
