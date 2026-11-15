@@ -311,6 +311,10 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
                 }
             ]
             EventManager.get().push(KeyDisplayStatesUpdatedEvent(device_id=device_id, states=states))
+        elif event_type == "plugin_failed":
+            EventManager.get().push(
+                PluginLoadFailedEvent(plugin_uuid=str(data.get("plugin_id", "")), error=str(data.get("error", "")))
+            )
         elif event_type == "pages_changed":
             if data.get("device_id") == _active_device_id():
                 self.request_device_refresh()

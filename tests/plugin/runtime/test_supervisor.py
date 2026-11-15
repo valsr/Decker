@@ -110,6 +110,18 @@ def test_messages_queued_until_ready() -> None:
     assert_that(rig.messages).is_equal_to([("a.b", "ready")])
 
 
+def test_is_ready_tracks_ready_and_crash() -> None:
+    rig = Rig()
+    assert_that(rig.sup.is_ready("a.b")).is_false()
+    rig.sup.acquire("a.b")
+    assert_that(rig.sup.is_ready("a.b")).is_false()
+    rig.last.emit("ready")
+    assert_that(rig.sup.is_ready("a.b")).is_true()
+    rig.last.crash()
+    assert_that(rig.sup.is_ready("a.b")).is_false()
+    assert_that(rig.sup.is_ready("unknown")).is_false()
+
+
 def test_second_acquire_does_not_start_second_process() -> None:
     rig = Rig()
     rig.sup.acquire("a.b")

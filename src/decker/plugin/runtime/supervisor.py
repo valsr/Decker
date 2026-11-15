@@ -130,6 +130,12 @@ class PluginSupervisor:
             entry = self._entries.get(plugin_id)
             return entry is not None and entry.failed
 
+    def is_ready(self, plugin_id: str) -> bool:
+        """True while the plugin process is running and has sent `ready`."""
+        with self._lock:
+            entry = self._entries.get(plugin_id)
+            return entry is not None and entry.process is not None and entry.ready
+
     def reset_failure(self, plugin_id: str) -> None:
         """Clear the failed state and start the plugin again if it is still in use."""
         failure: str | None = None

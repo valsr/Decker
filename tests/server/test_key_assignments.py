@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 from assertpy import assert_that
 
-from decker.plugin.context import ActionTarget
+from decker.plugin.target import ActionTarget
 from decker.server.key_assignments import KeyAssignment, KeyAssignmentStore
 from decker.server.pages import initial_page_id
 
