@@ -131,7 +131,7 @@ def _coerce_float(value: Any) -> Any:
         return _MISSING
     try:
         result = float(value.strip() if isinstance(value, str) else value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return _MISSING
     return result if math.isfinite(result) else _MISSING
 

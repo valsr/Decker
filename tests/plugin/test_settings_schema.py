@@ -148,3 +148,13 @@ def test_schema_to_json_round_trips(counter_schema: tuple[Any, ...]) -> None:
         assert_that(parse_settings_schema(dumped, "x")).is_equal_to(schema)
     assert_that(schema_to_json(counter_schema)[1]).is_equal_to(COUNTER[1])
     assert_that(schema_to_json(counter_schema)[0]).is_equal_to({"section": "Counting"})
+
+
+def test_huge_int_for_float_falls_back_to_default() -> None:
+    schema = parse_settings_schema([{"key": "f", "type": "float", "default": 1.5}], "x")
+    assert_that(apply_schema(schema, {"f": 10**400})["f"]).is_equal_to(1.5)
+
+
+def test_huge_int_float_default_rejected() -> None:
+    with pytest.raises(ValueError, match="here"):
+        parse_settings_schema([{"key": "f", "type": "float", "default": 10**400}], "here")
