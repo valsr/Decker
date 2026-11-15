@@ -95,7 +95,7 @@ def build_environment(
     """Create ``<plugin_dir>/.venv`` and install the declared requirements into it."""
     venv = plugin_dir / ".venv"
     python = runtime.python if runtime.python is not None else sys.executable
-    _run([uv, "venv", str(venv), "--python", python], progress)
+    _run([uv, "venv", "--relocatable", str(venv), "--python", python], progress)
     if runtime.requirements:
         _run(
             [uv, "pip", "install", "--python", str(venv / "bin" / "python"), *extra_args, *runtime.requirements],
