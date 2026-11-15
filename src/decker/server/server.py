@@ -5,6 +5,7 @@ import logging
 import multiprocessing
 import signal
 import sys
+from importlib import metadata
 from typing import Any
 
 from rpyc.utils.server import ThreadPoolServer
@@ -20,9 +21,17 @@ from decker.server.event_bus import EventBus
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.page_controller import PageController
 from decker.server.pages import PageStore
+from decker.server.plugin_installer import PluginInstaller
 from decker.server.plugins import PluginManager
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
+
+
+def _decker_version() -> str:
+    try:
+        return metadata.version("decker")
+    except metadata.PackageNotFoundError:
+        return "0"
 
 
 class ServerProcess:
@@ -240,6 +249,7 @@ class ServerProcess:
             else:
                 state_store.delete_all_key_state()
 
+        ctx.plugin_installer = PluginInstaller(decker_paths.plugins(), ctx, _decker_version())
         self._restore_devices(device_id_filter=matched_device_id)
 
         server = ThreadPoolServer(

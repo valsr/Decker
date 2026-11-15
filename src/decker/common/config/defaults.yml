@@ -7,6 +7,8 @@ server:
   health_check_interval: 5.0
   max_failed_heartbeats: 2
   startup_wait: 5.0
+  # Plugin install/uninstall is normally limited to clients on the server's own machine.
+  allow_remote_plugin_install: false
 
 client:
   server_host: localhost

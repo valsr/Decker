@@ -11,6 +11,7 @@ from decker.server.event_bus import EventBus
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.page_controller import PageController
 from decker.server.pages import PageStore
+from decker.server.plugin_installer import PluginInstaller
 from decker.server.plugins import PluginManager
 
 
@@ -27,3 +28,4 @@ class ServerContext:
     page_controller: PageController
     event_bus: EventBus
     server: ThreadPoolServer | None = None
+    plugin_installer: PluginInstaller | None = None
