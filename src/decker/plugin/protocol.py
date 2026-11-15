@@ -73,7 +73,7 @@ def decode(line: bytes) -> Message:
         raise ProtocolError(f"line exceeds {MAX_LINE_BYTES} bytes")
     try:
         data = json.loads(line.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise ProtocolError(f"invalid message: {exc}") from exc
     if not isinstance(data, dict):
         raise ProtocolError("message must be a JSON object")
