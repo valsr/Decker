@@ -39,6 +39,7 @@ class TestLoadNativePlugin:
         loaded = load_native_plugin(plugin_dir)
         assert_that(loaded.manifest.uuid).is_equal_to("com.decker.test")
         assert_that(loaded.action_classes).contains_key("com.decker.test.show")
+        assert_that(loaded.plugin_dir).is_equal_to(plugin_dir)
 
     def test_invalid_manifest_raises(self, tmp_path):
         plugin_dir = _write_plugin(tmp_path, manifest={"Name": "Missing fields"})

@@ -20,6 +20,8 @@ from decker.plugin.elgato.process import (
 )
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.executor import PluginExecutor
+from decker.plugin.gestures import Gesture, GestureRecognizer
+from decker.plugin.icons import read_icon
 from decker.plugin.loader import DiscoveredElgatoPlugin, PluginLoader
 from decker.plugin.manifest import PluginManifest
 from decker.plugin.native_loader import LoadedNativePlugin
@@ -98,6 +100,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
         self._elgato_processes: dict[str, ElgatoPluginProcess] = {}
         self._elgato_live_contexts: dict[str, set[str]] = {}
         self._device_manager: Any = None
+        self._icon_cache: dict[tuple[Path, str | None], str] = {}
+        self._recognizers: dict[str, GestureRecognizer] = {}
         self._sink: _StreamDeckHardwareSink = _StreamDeckHardwareSink(None, self._set_key_label)
 
     def create(self, context: "ServerContext") -> None:
@@ -139,12 +143,15 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
         return list(self._failures)
 
     def list_actions(self) -> list[dict[str, str]]:
-        """Return every action declared across all loaded plugin manifests."""
+        """Return every action declared across all loaded plugin manifests.
+
+        Each entry carries icon_b64: the action's icon image, base64-encoded, or "" if it has none.
+        """
         actions: list[dict[str, str]] = []
-        for loaded in self._native_plugins.values():
-            actions.extend(self._manifest_actions(loaded.manifest))
-        for discovered in self._elgato_plugins.values():
-            actions.extend(self._manifest_actions(discovered.manifest))
+        for manifest, plugin_dir in [(p.manifest, p.plugin_dir) for p in self._native_plugins.values()] + [
+            (p.manifest, p.plugin_dir) for p in self._elgato_plugins.values()
+        ]:
+            actions.extend(self._manifest_actions(manifest, plugin_dir))
         return actions
 
     def get_key_display_states(self, device_id: str) -> list[dict[str, Any]]:
@@ -166,6 +173,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
             return
         instance = loaded.action_classes[target.action_uuid]()
         self._registry.register(target.plugin_uuid, target.action_uuid, target.context_id, instance)
+        self._recognizers[target.context_id] = GestureRecognizer(self._gesture_dispatcher(target))
         ctx = ActionContext(target, self._sink, self._settings_store)
         self._executor.dispatch(target.plugin_uuid, instance.on_will_appear, ctx)
 
@@ -174,6 +182,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
         instance = self._registry.get(target.plugin_uuid, target.action_uuid, target.context_id)
         if instance is None:
             return
+        recognizer = self._recognizers.pop(target.context_id, None)
+        if recognizer is not None:
+            recognizer.cancel()
         ctx = ActionContext(target, self._sink, self._settings_store)
         self._executor.dispatch(target.plugin_uuid, instance.on_will_disappear, ctx)
         self._registry.unregister(target.plugin_uuid, target.action_uuid, target.context_id)
@@ -214,12 +225,18 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
             self._elgato_processes.pop(plugin_uuid).stop()
 
     def dispatch_key_down(self, target: ActionTarget) -> None:
-        """Dispatch on_key_down to the live action instance for this target."""
+        """Dispatch on_key_down, then feed the press to the action's gesture recognizer."""
         self._dispatch(target, "on_key_down")
+        recognizer = self._recognizers.get(target.context_id)
+        if recognizer is not None:
+            recognizer.key_down(self._registered_gestures(target))
 
     def dispatch_key_up(self, target: ActionTarget) -> None:
-        """Dispatch on_key_up to the live action instance for this target."""
+        """Dispatch on_key_up, then feed the release to the action's gesture recognizer."""
         self._dispatch(target, "on_key_up")
+        recognizer = self._recognizers.get(target.context_id)
+        if recognizer is not None:
+            recognizer.key_up()
 
     def dispatch_settings_changed(self, target: ActionTarget) -> None:
         """Dispatch on_settings_changed to the live action instance for this target."""
@@ -252,6 +269,23 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
         if state is not None:
             state.update_key_label(key_index, label)
 
+    def _gesture_dispatcher(self, target: ActionTarget) -> Callable[[Gesture], None]:
+        def _emit(gesture: Gesture) -> None:
+            self._dispatch(target, f"on_{gesture.value}")
+
+        return _emit
+
+    def _registered_gestures(self, target: ActionTarget) -> frozenset[Gesture]:
+        instance = self._registry.get(target.plugin_uuid, target.action_uuid, target.context_id)
+        if instance is None:
+            return frozenset()
+        settings = self._settings_store.get_settings(target.plugin_uuid, target.action_uuid, target.context_id)
+        try:
+            return frozenset(Gesture(g) for g in instance.gestures(settings))
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.error("Plugin %s gestures() failed, using press only: %s", target.plugin_uuid, exc)
+            return frozenset({Gesture.PRESS})
+
     def _dispatch(self, target: ActionTarget, handler_name: str) -> None:
         instance = self._registry.get(target.plugin_uuid, target.action_uuid, target.context_id)
         if instance is None:
@@ -262,14 +296,21 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes
         ctx = ActionContext(target, self._sink, self._settings_store)
         self._executor.dispatch(target.plugin_uuid, getattr(instance, handler_name), ctx)
 
-    @staticmethod
-    def _manifest_actions(manifest: PluginManifest) -> list[dict[str, str]]:
+    def _manifest_actions(self, manifest: PluginManifest, plugin_dir: Path) -> list[dict[str, str]]:
         return [
             {
                 "plugin_uuid": manifest.uuid,
                 "plugin_name": manifest.name,
                 "action_uuid": plugin_action.uuid,
                 "action_name": plugin_action.name,
+                "icon_b64": self._icon_b64(plugin_dir, plugin_action.icon),
             }
             for plugin_action in manifest.actions
         ]
+
+    def _icon_b64(self, plugin_dir: Path, icon: str | None) -> str:
+        key = (plugin_dir, icon)
+        if key not in self._icon_cache:
+            data = read_icon(plugin_dir, icon)
+            self._icon_cache[key] = base64.b64encode(data).decode("ascii") if data else ""
+        return self._icon_cache[key]

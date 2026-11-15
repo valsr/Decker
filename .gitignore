@@ -48,3 +48,7 @@ report.xml
 # Generated spell dictionaries (run: poe update-dictionary)
 /spell.types.dic
 /spell.dic
+
+# Elgato plugins use for testing
+
+/official_plugins
