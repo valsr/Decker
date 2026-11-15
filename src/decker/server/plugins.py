@@ -159,14 +159,19 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self.settings_persister = self._make_settings_persister(context)
         bundled = self._bundled_loader.scan()
         user = self._user_loader.scan()
-        self._failures = bundled.failures + user.failures
+        with self._lock:
+            self._failures = bundled.failures + user.failures
         for plugin in bundled.plugins + user.plugins:
-            if plugin.manifest.id in self._plugins:
-                self._failures.append(PluginLoadFailedEvent(plugin.manifest.id, "duplicate plugin id"))
-                continue
-            self.add_plugin(plugin)
+            with self._lock:
+                duplicate = plugin.manifest.id in self._plugins
+                if duplicate:
+                    self._failures.append(PluginLoadFailedEvent(plugin.manifest.id, "duplicate plugin id"))
+            if not duplicate:
+                self.add_plugin(plugin)
         self._supervisor.start()
-        logging.info("PluginManager started: %d loaded, %d failed to load", len(self._plugins), len(self._failures))
+        logging.info(
+            "PluginManager started: %d loaded, %d failed to load", len(self.plugins()), len(self.load_failures())
+        )
 
     def destroy(self) -> None:
         """Stop every plugin process and release resources."""
@@ -181,13 +186,15 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def add_plugin(self, plugin: InstalledPlugin) -> None:
         """Make a plugin's actions available; its process starts when the first action appears."""
         manifest = plugin.manifest
-        self._plugins[manifest.id] = plugin
+        with self._lock:
+            self._plugins[manifest.id] = plugin
         if manifest.runtime is None or not manifest.actions:
             return
         try:
             command = launch_command(plugin.plugin_dir, manifest.runtime, plugin.bundled)
         except ValueError as exc:
-            self._failures.append(PluginLoadFailedEvent(manifest.id, str(exc)))
+            with self._lock:
+                self._failures.append(PluginLoadFailedEvent(manifest.id, str(exc)))
             return
         hello = {
             "protocol": 1,
@@ -205,12 +212,14 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         for recognizer in recognizers:
             recognizer.cancel()
         self._supervisor.unregister(plugin_id)
-        self._plugins.pop(plugin_id, None)
-        self._failures = [f for f in self._failures if f.plugin_uuid != plugin_id]
+        with self._lock:
+            self._plugins.pop(plugin_id, None)
+            self._drop_failure(plugin_id)
 
     def plugins(self) -> list[InstalledPlugin]:
         """Return every known plugin."""
-        return list(self._plugins.values())
+        with self._lock:
+            return list(self._plugins.values())
 
     def live_targets(self, plugin_id: str) -> list[ActionTarget]:
         """Return the action instances currently active for a plugin."""
@@ -219,7 +228,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def load_failures(self) -> list[PluginLoadFailedEvent]:
         """Return the plugins that failed to load or run."""
-        return list(self._failures)
+        with self._lock:
+            return list(self._failures)
 
     def list_actions(self) -> list[dict[str, Any]]:
         """Return every action declared across all plugin manifests.
@@ -228,7 +238,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         its settings schema in the manifest JSON shape.
         """
         actions: list[dict[str, Any]] = []
-        for plugin in self._plugins.values():
+        for plugin in self.plugins():
             manifest = plugin.manifest
             actions.extend(
                 {
@@ -263,7 +273,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def activate_action(self, target: ActionTarget) -> None:
         """Tell the action's plugin that an instance appeared, starting the plugin if needed."""
         spec = self._action_spec(target.plugin_uuid, target.action_uuid)
-        plugin = self._plugins.get(target.plugin_uuid)
+        with self._lock:
+            plugin = self._plugins.get(target.plugin_uuid)
         if spec is None or plugin is None or plugin.manifest.runtime is None:
             logging.warning("Cannot activate unknown action %s/%s", target.plugin_uuid, target.action_uuid)
             return
@@ -319,7 +330,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Send the instance its new settings; re-saving settings retries a failed plugin."""
         plugin_id = target.plugin_uuid
         if self._supervisor.is_failed(plugin_id):
-            self._failures = [f for f in self._failures if f.plugin_uuid != plugin_id]
+            with self._lock:
+                self._drop_failure(plugin_id)
             self._supervisor.reset_failure(plugin_id)
         live = self._live.get(target.context_id)
         if live is None:
@@ -398,10 +410,21 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._route_context_message(plugin_id, message)
 
     def _route_context_message(self, plugin_id: str, message: Message) -> None:
-        live = self._live.get(message.context or "")
-        if live is None or live.target.plugin_uuid != plugin_id:
-            logging.debug("[%s] dropped %s for inactive context %s", plugin_id, message.event, message.context)
-            return
+        # The lock spans the liveness check and the sink call, so once deactivate_action returns no
+        # further hardware effect for that context can happen. Sink calls are short local writes.
+        with self._lock:
+            live = self._live.get(message.context or "")
+            if live is None or live.target.plugin_uuid != plugin_id:
+                logging.debug("[%s] dropped %s for inactive context %s", plugin_id, message.event, message.context)
+                return
+            if self._apply_sink_event(live, message):
+                return
+        if message.event == "set_settings":
+            self._on_set_settings(live, message.payload)
+        elif message.event == "set_gestures":
+            self._on_set_gestures(live, message.payload)
+
+    def _apply_sink_event(self, live: _Live, message: Message) -> bool:
         target, payload = live.target, message.payload
         if message.event == "set_image":
             self._on_set_image(live, payload)
@@ -414,10 +437,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._sink.show_alert(target.device_id, target.key_index)
         elif message.event == "show_ok":
             self._sink.show_ok(target.device_id, target.key_index)
-        elif message.event == "set_settings":
-            self._on_set_settings(live, payload)
-        elif message.event == "set_gestures":
-            self._on_set_gestures(live, payload)
+        else:
+            return False
+        return True
 
     def _on_ready(self, plugin_id: str) -> None:
         with self._lock:
@@ -475,8 +497,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def _on_plugin_failed(self, plugin_id: str, reason: str) -> None:
         logging.error("Plugin %s failed: %s", plugin_id, reason)
         event = PluginLoadFailedEvent(plugin_uuid=plugin_id, error=reason)
-        self._failures = [f for f in self._failures if f.plugin_uuid != plugin_id] + [event]
         with self._lock:
+            self._drop_failure(plugin_id)
+            self._failures.append(event)
             lives = [live for live in self._live.values() if live.target.plugin_uuid == plugin_id]
         for live in lives:
             self._mark_failed(live)
@@ -484,8 +507,14 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def _mark_failed(self, live: _Live) -> None:
         target = live.target
-        self._sink.clear_image(target.device_id, target.key_index)
-        self._sink.set_title(target.device_id, target.key_index, _FAILED_LABEL)
+        with self._lock:
+            if self._live.get(target.context_id) is not live:
+                return
+            self._sink.clear_image(target.device_id, target.key_index)
+            self._sink.set_title(target.device_id, target.key_index, _FAILED_LABEL)
+
+    def _drop_failure(self, plugin_id: str) -> None:
+        self._failures = [f for f in self._failures if f.plugin_uuid != plugin_id]
 
     def _push(self, event_type: str, payload: dict[str, Any]) -> None:
         if self._event_bus is not None:
@@ -496,7 +525,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     # ------------------------------------------------------------------
 
     def _action_spec(self, plugin_id: str, action_id: str) -> ActionSpec | None:
-        plugin = self._plugins.get(plugin_id)
+        with self._lock:
+            plugin = self._plugins.get(plugin_id)
         if plugin is None:
             return None
         return next((a for a in plugin.manifest.actions if a.id == action_id), None)
