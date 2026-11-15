@@ -17,6 +17,7 @@ from decker.client.events import (
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     KeyEvent,
+    OpenUrlRequestedEvent,
     PagesUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
@@ -426,6 +427,14 @@ class TestOnServerEvent:
         assert_that(events).is_length(1)
         assert_that(events[0].plugin_uuid).is_equal_to("com.decker.x")
         assert_that(events[0].error).is_equal_to("crashed")
+
+    def test_open_url_event_parsed(self):
+        payload = json.dumps({"plugin_id": "com.decker.x", "url": "https://example.com"})
+        self.manager._on_server_event("open_url", payload)  # pylint: disable=protected-access
+        events = [e for e in EventManager.get().drain() if isinstance(e, OpenUrlRequestedEvent)]
+        assert_that(events).is_length(1)
+        assert_that(events[0].plugin_id).is_equal_to("com.decker.x")
+        assert_that(events[0].url).is_equal_to("https://example.com")
 
     def test_unknown_event_type_is_silently_ignored(self):
         self.manager._on_server_event("some_future_event", "{}")  # pylint: disable=protected-access

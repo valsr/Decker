@@ -2,12 +2,13 @@
 
 from typing import Any
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QStackedWidget,
     QSystemTrayIcon,
 )
@@ -22,6 +23,7 @@ from decker.client.events import (
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     KeyEvent,
+    OpenUrlRequestedEvent,
     PagesUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
@@ -193,6 +195,7 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         em.subscribe(ServerDisconnectedEvent, self._on_server_disconnected)
         em.subscribe(ServerConnectedEvent, self._on_server_connected)
         em.subscribe(PluginLoadFailedEvent, self._on_plugin_load_failed)
+        em.subscribe(OpenUrlRequestedEvent, self._on_open_url_requested)
         for event_type in (
             DeviceListUpdatedEvent,
             ActionListUpdatedEvent,
@@ -215,6 +218,14 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
 
     def _on_plugin_load_failed(self, event: PluginLoadFailedEvent) -> bool:
         self._show_toast(f"Plugin '{event.plugin_uuid}' failed to load: {event.error}")
+        return True
+
+    def _on_open_url_requested(self, event: OpenUrlRequestedEvent) -> bool:
+        if QUrl(event.url).scheme().lower() not in ("http", "https"):
+            return True
+        answer = QMessageBox.question(self, "Open link", f"{event.plugin_id} wants to open {event.url}")
+        if answer == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(event.url))
         return True
 
     def _forward_to_active_view(self, event: Any) -> bool | None:
