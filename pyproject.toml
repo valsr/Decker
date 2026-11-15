@@ -101,6 +101,7 @@ ignore_errors = true
 [tool.pytest.ini_options]
 timeout = 300
 testpaths = ["tests"]
+markers = ["slow: tests that shell out to uv and build environments"]
 
 
 [tool.coverage.run]

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from decker.asset.renderer import AssetRenderer
 from decker.common import config
 from decker.common.manager import Manager
+from decker.plugin.environment import stage_sdk
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.gestures import Gesture, GestureRecognizer
 from decker.plugin.icons import read_icon
@@ -142,6 +143,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._plugins: dict[str, InstalledPlugin] = {}
         self._live: dict[str, _Live] = {}
         self._lock = threading.RLock()
+        self._sdk_path: Path | None = None
         self._device_manager: Any = None
         self._event_bus: Any = None
         self._icon_cache: dict[tuple[Path, str | None], str] = {}
@@ -162,6 +164,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             on_state_changed=self._make_state_changed_cb(context),
         )
         self.settings_persister = self._make_settings_persister(context)
+        try:
+            self._sdk_path = stage_sdk()
+        except OSError:
+            logging.exception("Could not stage the plugin SDK; installed plugins will not be able to start")
         bundled = self._bundled_loader.scan()
         user = self._user_loader.scan()
         with self._lock:
@@ -207,7 +213,12 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             "plugin_id": manifest.id,
             "global_settings": {},
         }
-        self._supervisor.register(manifest.id, command, plugin.plugin_dir, launch_env(None), hello)
+        if not plugin.bundled and self._sdk_path is None:
+            with self._lock:
+                self._failures.append(PluginLoadFailedEvent(manifest.id, "plugin SDK is not staged"))
+            return
+        env = launch_env(None if plugin.bundled else self._sdk_path)
+        self._supervisor.register(manifest.id, command, plugin.plugin_dir, env, hello)
 
     def remove_plugin(self, plugin_id: str) -> None:
         """Stop a plugin, drop its live instances and forget it."""
