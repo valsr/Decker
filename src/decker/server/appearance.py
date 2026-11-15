@@ -72,9 +72,12 @@ def compose_key_image(
     """Compose background, plugin image and title into a size x size PNG."""
     img = Image.new("RGBA", (size, size), appearance["background"])
     if plugin_image:
-        layer = _RENDERER.render_bytes(plugin_image, size, size)
-        if layer is not None:
-            img.alpha_composite(layer)
+        try:
+            layer = _RENDERER.render_bytes(plugin_image, size, size)
+            if layer is not None:
+                img.alpha_composite(layer)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logging.debug("skipping unreadable plugin image: %s", exc)
     title = appearance["title"] or plugin_title
     if appearance["show_title"] and title:
         _draw_title(ImageDraw.Draw(img), title, appearance, size)
