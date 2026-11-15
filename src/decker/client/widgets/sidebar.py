@@ -1,6 +1,7 @@
 """Collapsible sidebar: searchable grid of plugin actions (icon + name), dragged onto keys by their icon."""
 
 import json
+from typing import Any
 
 from PyQt6.QtCore import QByteArray, QMimeData, QPoint, QSize, Qt
 from PyQt6.QtGui import QDrag, QIcon
@@ -29,7 +30,7 @@ class _DraggableActionList(QListWidget):
 
     def build_drag(self, item: QListWidgetItem) -> QDrag:
         """Create the drag for item: the action (without its icon bytes) as MIME data, its icon as the image."""
-        action: dict[str, str] = item.data(Qt.ItemDataRole.UserRole) or {}
+        action: dict[str, Any] = item.data(Qt.ItemDataRole.UserRole) or {}
         payload = {field: action[field] for field in _DRAG_FIELDS if field in action}
         mime = QMimeData()
         mime.setData(_MIME_TYPE, QByteArray(json.dumps(payload).encode()))
@@ -52,7 +53,7 @@ class SidebarWidget(QFrame):
 
     def __init__(self) -> None:
         super().__init__()
-        self._actions: list[dict[str, str]] = []
+        self._actions: list[dict[str, Any]] = []
         self._icons: dict[tuple[str, str], QIcon] = {}
 
         self._search = QLineEdit()
@@ -77,7 +78,7 @@ class SidebarWidget(QFrame):
         layout.addWidget(self._search)
         layout.addWidget(self._action_list, 1)
 
-    def set_actions(self, actions: list[dict[str, str]]) -> None:
+    def set_actions(self, actions: list[dict[str, Any]]) -> None:
         """Replace the full action list and reapply the current search filter."""
         self._actions = actions
         self._icons = {}
@@ -97,7 +98,7 @@ class SidebarWidget(QFrame):
             item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
             self._action_list.addItem(item)
 
-    def _icon_for(self, action: dict[str, str]) -> QIcon:
+    def _icon_for(self, action: dict[str, Any]) -> QIcon:
         key = (action.get("plugin_uuid", ""), action.get("action_uuid", ""))
         if key not in self._icons:
             pixmap = action_pixmap(action, _ICON_SOURCE_SIZE)
