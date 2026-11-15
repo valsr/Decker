@@ -311,3 +311,57 @@ def test_repeated_never_ready_marks_failed() -> None:
         rig.advance(6.0)
     assert_that(rig.sup.is_failed("a.b")).is_true()
     assert_that(rig.failures).is_length(1)
+
+
+class BrokenStart(FakeProcess):
+    error: Exception = OSError("no such interpreter")
+
+    def start(self) -> None:
+        raise self.error
+
+
+def _broken_rig(error: Exception, **policy: Any) -> Rig:
+    rig = Rig(**policy)
+
+    def factory(_pid: str, _cmd: list[str], _cwd: Path, _env: dict[str, str], on_message: Any, on_exit: Any):
+        proc = BrokenStart(on_message, on_exit)
+        proc.error = error
+        rig.procs.append(proc)
+        return proc
+
+    rig.sup._factory = factory  # pylint: disable=protected-access
+    return rig
+
+
+def test_start_failures_count_as_crashes_and_mark_failed() -> None:
+    rig = _broken_rig(OSError("no such interpreter"), max_crashes=3)
+    rig.sup.acquire("a.b")
+    assert_that(rig.procs).is_length(1)
+    rig.advance(0.6)
+    assert_that(rig.procs).is_length(2)
+    rig.advance(2.1)
+    assert_that(rig.procs).is_length(3)
+    assert_that(rig.sup.is_failed("a.b")).is_true()
+    assert_that(rig.failures).is_length(1)
+    assert_that(rig.failures[0][1]).contains("failed to start")
+    rig.advance(60.0)
+    assert_that(rig.procs).is_length(3)
+
+
+def test_non_oserror_start_failure_does_not_raise() -> None:
+    rig = _broken_rig(ValueError("embedded null byte"), max_crashes=2)
+    rig.sup.acquire("a.b")
+    rig.advance(0.6)
+    assert_that(rig.sup.is_failed("a.b")).is_true()
+    assert_that(rig.failures).is_length(1)
+
+
+def test_stale_queue_not_delivered_after_crash() -> None:
+    rig = Rig()
+    rig.sup.acquire("a.b")
+    rig.sup.send("a.b", Message("key_down", "c1"))
+    rig.last.crash()
+    rig.advance(1.0)
+    assert_that(rig.procs).is_length(2)
+    rig.last.emit("ready")
+    assert_that(rig.last.events()).is_equal_to(["hello"])
