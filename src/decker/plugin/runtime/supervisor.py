@@ -91,6 +91,7 @@ class PluginSupervisor:
 
     def acquire(self, plugin_id: str) -> None:
         """Count one more live context; starts the process on first use."""
+        failure: str | None = None
         with self._lock:
             entry = self._entries.get(plugin_id)
             if entry is None:
@@ -98,7 +99,8 @@ class PluginSupervisor:
             entry.refs += 1
             entry.idle_deadline = None
             if entry.process is None and entry.restart_at is None and not entry.failed and not self._closed:
-                self._start_locked(plugin_id, entry)
+                failure = self._start_locked(plugin_id, entry)
+        self._notify_failed(plugin_id, failure)
 
     def release(self, plugin_id: str) -> None:
         """Drop one context; the process stops after the idle grace if none remain."""
@@ -130,6 +132,7 @@ class PluginSupervisor:
 
     def reset_failure(self, plugin_id: str) -> None:
         """Clear the failed state and start the plugin again if it is still in use."""
+        failure: str | None = None
         with self._lock:
             entry = self._entries.get(plugin_id)
             if entry is None or not entry.failed:
@@ -137,7 +140,8 @@ class PluginSupervisor:
             entry.failed = False
             entry.crashes.clear()
             if entry.refs > 0 and entry.process is None:
-                self._start_locked(plugin_id, entry)
+                failure = self._start_locked(plugin_id, entry)
+        self._notify_failed(plugin_id, failure)
 
     def start(self) -> None:
         """Start the 1 s watchdog thread."""
@@ -165,11 +169,16 @@ class PluginSupervisor:
         """Run idle, restart, memory and ping checks as of `now`."""
         to_stop: list[PluginProcess] = []
         to_kill: list[PluginProcess] = []
+        failures: list[tuple[str, str]] = []
         with self._lock:
             if self._closed:
                 return
             for plugin_id, entry in self._entries.items():
-                self._tick_entry(plugin_id, entry, now, to_stop, to_kill)
+                failure = self._tick_entry(plugin_id, entry, now, to_stop, to_kill)
+                if failure is not None:
+                    failures.append((plugin_id, failure))
+        for plugin_id, failure in failures:
+            self._notify_failed(plugin_id, failure)
         self._stop_processes(to_stop)
         for process in to_kill:
             process.stop(timeout=_KILL_TIMEOUT_S)
@@ -183,24 +192,25 @@ class PluginSupervisor:
 
     def _tick_entry(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self, plugin_id: str, entry: _Entry, now: float, to_stop: list[PluginProcess], to_kill: list[PluginProcess]
-    ) -> None:
+    ) -> str | None:
         if entry.process is None:
             if entry.restart_at is not None and now >= entry.restart_at and entry.refs > 0 and not entry.failed:
-                self._start_locked(plugin_id, entry)
-            return
+                return self._start_locked(plugin_id, entry)
+            return None
         if entry.refs == 0:
             if entry.idle_deadline is not None and now >= entry.idle_deadline:
                 process = self._detach(entry)
                 if process is not None:
                     to_stop.append(process)
-            return
+            return None
         if entry.killing:
-            return
+            return None
         reason = self._watchdog_reason(entry, now)
         if reason is not None:
             logger.warning("[%s] killing plugin: %s", plugin_id, reason)
             entry.killing = True
             to_kill.append(entry.process)
+        return None
 
     def _watchdog_reason(self, entry: _Entry, now: float) -> str | None:
         assert entry.process is not None
@@ -220,31 +230,35 @@ class PluginSupervisor:
             entry.process.send(Message("ping"))
         return None
 
-    def _start_locked(self, plugin_id: str, entry: _Entry) -> None:
+    def _start_locked(self, plugin_id: str, entry: _Entry) -> str | None:
         entry.generation += 1
         generation = entry.generation
         entry.ready = False
         entry.killing = False
         entry.restart_at = None
-        entry.started_at = self._clock()
         entry.ping_sent_at = None
-        process = self._factory(
-            plugin_id,
-            entry.command,
-            entry.cwd,
-            entry.env,
-            lambda message: self._handle_message(plugin_id, generation, message),
-            lambda code: self._handle_exit(plugin_id, generation, code),
-        )
-        entry.process = process
+        entry.started_at = self._clock()
         try:
+            process = self._factory(
+                plugin_id,
+                entry.command,
+                entry.cwd,
+                entry.env,
+                lambda message: self._handle_message(plugin_id, generation, message),
+                lambda code: self._handle_exit(plugin_id, generation, code),
+            )
             process.start()
-        except OSError as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.error("[%s] failed to start: %s", plugin_id, exc)
-            entry.process = None
-            entry.restart_at = self._clock() + self._policy.backoff_s[0]
-            return
+            entry.generation += 1
+            return self._record_crash(entry, f"failed to start: {exc}")
+        entry.process = process
         process.send(Message("hello", payload=entry.hello))
+        return None
+
+    def _notify_failed(self, plugin_id: str, reason: str | None) -> None:
+        if reason is not None:
+            self._on_failed(plugin_id, reason)
 
     @staticmethod
     def _detach(entry: _Entry) -> PluginProcess | None:
@@ -295,19 +309,18 @@ class PluginSupervisor:
             entry.ready = False
             if entry.refs == 0:
                 return
-            failure = self._record_crash(entry, returncode)
-        if failure is not None:
-            self._on_failed(plugin_id, failure)
+            failure = self._record_crash(entry, f"exit code {returncode}")
+        self._notify_failed(plugin_id, failure)
 
-    def _record_crash(self, entry: _Entry, returncode: int) -> str | None:
+    def _record_crash(self, entry: _Entry, detail: str) -> str | None:
         now = self._clock()
         policy = self._policy
         entry.crashes = [t for t in entry.crashes if now - t < policy.crash_window_s]
         entry.crashes.append(now)
+        entry.queue.clear()
         if len(entry.crashes) >= policy.max_crashes:
             entry.failed = True
-            entry.queue.clear()
-            return f"crashed {len(entry.crashes)} times within {policy.crash_window_s:g}s (exit code {returncode})"
+            return f"crashed {len(entry.crashes)} times within {policy.crash_window_s:g}s ({detail})"
         index = min(len(entry.crashes) - 1, len(policy.backoff_s) - 1)
         entry.restart_at = now + policy.backoff_s[index]
         return None
