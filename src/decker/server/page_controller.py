@@ -43,7 +43,14 @@ class PageController(Manager):
         return self._context
 
     def active_page_id(self, device_id: str) -> str:
-        """The page shown on the device; its default page until another is activated."""
+        """The page shown on the device; its default page until another is activated.
+
+        Lock-free once a page is recorded: hardware/plugin paths call this while holding their own
+        locks, so taking the controller lock here would invert the lock order against page switches.
+        """
+        recorded = self._active.get(device_id)
+        if recorded is not None and self._ctx.page_store.get(device_id, recorded) is not None:
+            return recorded
         with self._lock:
             page_id = self._active.get(device_id)
             if page_id is None or self._ctx.page_store.get(device_id, page_id) is None:
