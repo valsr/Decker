@@ -5,6 +5,7 @@ description = "A server to handle Elgato's StreamDeck hardware"
 authors = ["valsr <valsr@valsr.com>"]
 license = "MIT"
 readme = "README.md"
+packages = [{ include = "decker", from = "src" }, { include = "decker_plugin_sdk", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.14"

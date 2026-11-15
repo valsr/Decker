@@ -1,0 +1,83 @@
+"""The per-key context object handed to plugin handlers."""
+
+import base64
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+Sender = Callable[[str, str | None, dict[str, Any]], None]
+
+MAX_LINE_BYTES = 8 * 1024 * 1024
+
+
+def encode_line(event: str, context: str | None = None, payload: dict[str, Any] | None = None) -> bytes:
+    """Serialise one protocol message to a compact UTF-8 JSON line."""
+    data: dict[str, Any] = {"event": event}
+    if context is not None:
+        data["context"] = context
+    if payload:
+        data["payload"] = payload
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+
+
+@dataclass
+class ActionContext:
+    """One key instance of an action: its identity, current settings and the calls that act on it."""
+
+    context: str
+    action: str
+    device: str
+    key_index: int
+    column: int
+    row: int
+    settings: dict[str, Any] = field(default_factory=dict)
+    global_settings: dict[str, Any] = field(default_factory=dict)
+    state: int = 0
+    _send: Sender = field(default=lambda event, context, payload: None, repr=False, compare=False)
+
+    def _emit(self, event: str, payload: dict[str, Any] | None = None) -> None:
+        self._send(event, self.context, payload or {})
+
+    def set_image(self, data: bytes, format: str = "png") -> None:  # pylint: disable=redefined-builtin
+        """Show an image (png, jpeg or svg bytes) on the key."""
+        self._emit("set_image", {"image": base64.b64encode(data).decode("ascii"), "format": format})
+
+    def clear_image(self) -> None:
+        """Remove any plugin-provided image from the key."""
+        self._emit("set_image", {"image": None})
+
+    def set_title(self, title: str) -> None:
+        """Set the key title."""
+        self._emit("set_title", {"title": title})
+
+    def set_state(self, state: int) -> None:
+        """Switch the key to another manifest state."""
+        self.state = state
+        self._emit("set_state", {"state": state})
+
+    def show_alert(self) -> None:
+        """Flash the key to signal a failure."""
+        self._emit("show_alert")
+
+    def show_ok(self) -> None:
+        """Flash the key to signal success."""
+        self._emit("show_ok")
+
+    def set_settings(self, settings: dict[str, Any]) -> None:
+        """Replace this key's settings."""
+        self.settings = dict(settings)
+        self._emit("set_settings", {"settings": settings})
+
+    def set_global_settings(self, settings: dict[str, Any]) -> None:
+        """Replace the plugin's global settings."""
+        self.global_settings = dict(settings)
+        self._emit("set_global_settings", {"settings": settings})
+
+    def open_url(self, url: str) -> None:
+        """Ask the server to open an http(s) URL."""
+        self._emit("open_url", {"url": url})
+
+    def log(self, message: str, level: str = "info") -> None:
+        """Send a log line to the server."""
+        self._emit("log", {"level": level, "message": message})
