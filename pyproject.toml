@@ -21,7 +21,7 @@ cairosvg = "^2.7"
 pillow = "^12.2.0"
 
 [tool.poetry.group.dev.dependencies]
-black = "^26"
+black = "^26.5.1"
 mypy = "^2.1.0"
 pytest = "^8.3.4"
 pytest-timeout = "^2.3.1"
