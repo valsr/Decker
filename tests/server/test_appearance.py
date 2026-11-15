@@ -124,3 +124,19 @@ def test_unknown_appearance_key_in_manifest_rejected() -> None:
     data["contributes"]["actions"][0]["appearance"] = {"bogus": 1}  # type: ignore[index]
     with pytest.raises(ManifestValidationError, match="com.example.p.a.*bogus"):
         PluginManifest.from_dict(data)
+
+
+def test_truncated_png_plugin_image_skipped() -> None:
+    truncated = _png("#ff0000", 256)[:60]
+    img = _open(compose_key_image(_appearance(background="#112233"), truncated, ""))
+    assert_that(img.getpixel((72, 72))).is_equal_to((0x11, 0x22, 0x33))
+
+
+def test_renderer_failure_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("cairo failure")
+
+    monkeypatch.setattr("decker.server.appearance._RENDERER.render_bytes", boom)
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
+    img = _open(compose_key_image(_appearance(background="#112233"), svg, ""))
+    assert_that(img.getpixel((72, 72))).is_equal_to((0x11, 0x22, 0x33))
