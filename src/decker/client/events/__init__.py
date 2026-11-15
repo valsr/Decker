@@ -47,6 +47,14 @@ class PluginLoadFailedEvent:
 
 
 @dataclass(frozen=True)
+class OpenUrlRequestedEvent:
+    """A plugin asked the client to open a URL in the user's browser."""
+
+    plugin_id: str
+    url: str
+
+
+@dataclass(frozen=True)
 class ActionListUpdatedEvent:
     """The set of plugin actions known to the server has changed."""
 
@@ -88,6 +96,7 @@ AppEvent = (
     | DeviceListUpdatedEvent
     | KeyEvent
     | PluginLoadFailedEvent
+    | OpenUrlRequestedEvent
     | ActionListUpdatedEvent
     | KeyDisplayStatesUpdatedEvent
     | PagesUpdatedEvent

@@ -5,10 +5,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from assertpy import assert_that
 from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtWidgets import QMessageBox
 
 from decker.client.context import AppContext
 from decker.client.events import (
     DeviceListUpdatedEvent,
+    OpenUrlRequestedEvent,
     PagesUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
@@ -132,6 +134,31 @@ class TestDispatch:
             "boom"
         )  # pylint: disable=protected-access
         window._views[ViewName.DASHBOARD].handle_event.assert_not_called()  # pylint: disable=protected-access
+
+    def test_open_url_opens_only_after_confirmation(self, window):  # pylint: disable=redefined-outer-name
+        event = OpenUrlRequestedEvent(plugin_id="com.decker.x", url="https://example.com")
+        with (
+            patch("decker.client.window.QDesktopServices.openUrl") as open_url,
+            patch("decker.client.window.QMessageBox.question", return_value=QMessageBox.StandardButton.No) as ask,
+        ):
+            window.dispatch(event)
+            assert_that(ask.call_args.args[1:]).is_equal_to(
+                ("Open link", "com.decker.x wants to open https://example.com")
+            )
+            open_url.assert_not_called()
+            ask.return_value = QMessageBox.StandardButton.Yes
+            window.dispatch(event)
+            open_url.assert_called_once()
+            assert_that(open_url.call_args.args[0].toString()).is_equal_to("https://example.com")
+
+    def test_open_url_rejects_file_scheme(self, window):  # pylint: disable=redefined-outer-name
+        with (
+            patch("decker.client.window.QDesktopServices.openUrl") as open_url,
+            patch("decker.client.window.QMessageBox.question") as ask,
+        ):
+            window.dispatch(OpenUrlRequestedEvent(plugin_id="com.decker.x", url="file:///etc/passwd"))
+            ask.assert_not_called()
+            open_url.assert_not_called()
 
     def test_unknown_event_forwarded_to_active_view(self, window):  # pylint: disable=redefined-outer-name
         window.switch_to(ViewName.DASHBOARD)

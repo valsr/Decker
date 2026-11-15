@@ -19,6 +19,7 @@ from decker.client.events import (
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     KeyEvent,
+    OpenUrlRequestedEvent,
     PagesUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
@@ -314,6 +315,10 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         elif event_type == "plugin_failed":
             EventManager.get().push(
                 PluginLoadFailedEvent(plugin_uuid=str(data.get("plugin_id", "")), error=str(data.get("error", "")))
+            )
+        elif event_type == "open_url":
+            EventManager.get().push(
+                OpenUrlRequestedEvent(plugin_id=str(data.get("plugin_id", "")), url=str(data.get("url", "")))
             )
         elif event_type == "pages_changed":
             if data.get("device_id") == _active_device_id():
