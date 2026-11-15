@@ -46,6 +46,7 @@ class _Entry:  # pylint: disable=too-many-instance-attributes
     idle_deadline: float | None = None
     restart_at: float | None = None
     last_ping: float = 0.0
+    started_at: float = 0.0
     ping_sent_at: float | None = None
     crashes: list[float] = field(default_factory=list)
     queue: deque[Message] = field(default_factory=lambda: deque(maxlen=_MAX_QUEUED))
@@ -207,6 +208,8 @@ class PluginSupervisor:
         if rss is not None and rss > self._policy.memory_limit:
             return f"memory {rss} exceeds limit {self._policy.memory_limit}"
         if not entry.ready:
+            if now - entry.started_at > self._policy.ping_timeout_s:
+                return "no ready received"
             return None
         if entry.ping_sent_at is not None:
             if now - entry.ping_sent_at > self._policy.ping_timeout_s:
@@ -223,6 +226,7 @@ class PluginSupervisor:
         entry.ready = False
         entry.killing = False
         entry.restart_at = None
+        entry.started_at = self._clock()
         entry.ping_sent_at = None
         process = self._factory(
             plugin_id,

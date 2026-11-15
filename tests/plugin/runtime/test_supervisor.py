@@ -133,6 +133,7 @@ def test_release_stops_after_idle_grace() -> None:
 def test_reacquire_within_grace_keeps_process() -> None:
     rig = Rig(idle_grace_s=10.0)
     rig.sup.acquire("a.b")
+    rig.last.emit("ready")
     rig.sup.release("a.b")
     rig.advance(5.0)
     rig.sup.acquire("a.b")
@@ -289,3 +290,24 @@ def test_server_stop_leaves_no_orphans() -> None:
     sup.stop_all()
     for pid in pids:
         assert_that(_pid_gone(pid)).is_true()
+
+
+def test_never_ready_is_killed_and_restarted() -> None:
+    rig = Rig(ping_timeout_s=10.0)
+    rig.sup.acquire("a.b")
+    rig.advance(9.0)
+    assert_that(rig.last.stops).is_equal_to(0)
+    rig.advance(2.0)
+    assert_that(rig.procs[0].stops).is_equal_to(1)
+    rig.advance(1.0)
+    assert_that(rig.procs).is_length(2)
+
+
+def test_repeated_never_ready_marks_failed() -> None:
+    rig = Rig(ping_timeout_s=10.0, max_crashes=3)
+    rig.sup.acquire("a.b")
+    for _ in range(3):
+        rig.advance(11.0)
+        rig.advance(6.0)
+    assert_that(rig.sup.is_failed("a.b")).is_true()
+    assert_that(rig.failures).is_length(1)
