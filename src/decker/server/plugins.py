@@ -371,15 +371,20 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
         Callers hold self._lock so no sink call can follow deactivate_action.
         """
-        spec = live.action
-        state = spec.states[live.state] if 0 <= live.state < len(spec.states) else None
-        image = live.plugin_image
-        if image is None and state is not None and state.image:
-            plugin = self._plugins.get(live.target.plugin_uuid)
-            image = read_icon(plugin.plugin_dir, state.image) if plugin is not None else None
-        title = live.plugin_title or (state.title if state is not None and state.title else "")
-        appearance = resolve_appearance(spec.appearance, live.appearance)
-        self._sink.set_image(live.target.device_id, live.target.key_index, compose_key_image(appearance, image, title))
+        try:
+            spec = live.action
+            state = spec.states[live.state] if 0 <= live.state < len(spec.states) else None
+            image = live.plugin_image
+            if image is None and state is not None and state.image:
+                plugin = self._plugins.get(live.target.plugin_uuid)
+                image = read_icon(plugin.plugin_dir, state.image) if plugin is not None else None
+            title = live.plugin_title or (state.title if state is not None and state.title else "")
+            appearance = resolve_appearance(spec.appearance, live.appearance)
+            self._sink.set_image(
+                live.target.device_id, live.target.key_index, compose_key_image(appearance, image, title)
+            )
+        except Exception:  # pylint: disable=broad-except
+            logging.warning("Could not compose key image for context %s", live.target.context_id, exc_info=True)
 
     def _send_context(self, live: _Live, event: str, payload: dict[str, Any] | None = None) -> None:
         self._supervisor.send(live.target.plugin_uuid, Message(event, live.target.context_id, payload or {}))

@@ -527,6 +527,37 @@ class TestAppearanceComposition:
         assert_that(defaults["title"]).is_equal_to("")
 
 
+class TestComposeFailureIsContained:
+    def _failing_first_key(self, env):
+        original = env.manager._sink.set_image  # pylint: disable=protected-access
+
+        def flaky(device_id, key_index, image):
+            if key_index == 0:
+                raise OSError("sink broke")
+            original(device_id, key_index, image)
+
+        env.manager._sink.set_image = flaky  # pylint: disable=protected-access
+
+    def test_failing_key_does_not_stop_the_rest_of_the_page(self, env):
+        self._failing_first_key(env)
+        first, second = REC_TARGET, _target("com.decker.rec", _REC_ACTION, "ctx-2", key=1)
+
+        env.manager.activate_action(first)
+        env.manager.activate_action(second)
+
+        assert_that(env.manager._live).contains_key("ctx-1", "ctx-2")  # pylint: disable=protected-access
+        assert _wait_for(lambda: {m["context"] for m in env.received("will_appear")} == {"ctx-1", "ctx-2"})
+        assert_that(env.image(1)).is_not_none()
+
+    def test_set_appearance_with_raising_sink_does_not_raise(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        self._failing_first_key(env)
+
+        env.manager.set_appearance(COUNTER_TARGET, {"background": "#ff0000"})
+
+        assert_that(env.manager._live).contains_key("ctx-1")  # pylint: disable=protected-access
+
+
 class TestFailure:
     def test_failed_plugin_keys_marked_and_failure_reported(self, env):
         (env.rec_dir / "crash").write_text("")
