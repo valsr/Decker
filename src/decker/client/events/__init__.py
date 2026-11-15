@@ -58,7 +58,7 @@ class OpenUrlRequestedEvent:
 class ActionListUpdatedEvent:
     """The set of plugin actions known to the server has changed."""
 
-    actions: list[dict[str, str]]
+    actions: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)

@@ -56,6 +56,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._selected_key: int | None = None
         self._key_slots: dict[int, dict[str, Any]] = {}  # key_index → assignment metadata
         self._active_device_id: str | None = None
+        self._actions: list[dict[str, Any]] = []  # action list from the server (with settings schemas)
 
         # UI sub-components
         self._sidebar = SidebarWidget()  # Panel with plugins and other menu items
@@ -98,11 +99,13 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     def on_deactivate(self) -> None:
         pass
 
-    def handle_event(self, event: AppEvent) -> bool | None:
+    def handle_event(self, event: AppEvent) -> bool | None:  # pylint: disable=useless-return
         if isinstance(event, DeviceListUpdatedEvent):
             self._on_devices_updated(event.devices)
         elif isinstance(event, ActionListUpdatedEvent):
+            self._actions = event.actions
             self._sidebar.set_actions(event.actions)
+            self._refresh_config_panel()
         elif isinstance(event, KeyDisplayStatesUpdatedEvent):
             self._on_display_states_updated(event.device_id, event.states)
         elif isinstance(event, PagesUpdatedEvent):
@@ -297,14 +300,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
 
     def _on_key_selected(self, index: int) -> None:
         self._selected_key = index
-        slot = self._key_slots.get(index)
-        if slot is not None:
-            self._config_panel.show_counter_config(
-                slot.get("settings", {}),
-                self._make_save_callback(index),
-            )
-        else:
-            self._config_panel.show_placeholder()
+        self._refresh_config_panel()
         # Simulate a short press so the counter increments.
         device_id = AppContext.get().active_device_id
         if device_id and index in self._key_slots:
@@ -330,7 +326,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if not plugin_uuid or not action_uuid:
             return
         context_id = uuid.uuid4().hex
-        settings: dict[str, Any] = {"step": 1, "max": 0}
+        settings: dict[str, Any] = {}
         cm = AppContext.get().connection_manager
         if cm is None:
             return
@@ -366,13 +362,31 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             if not image_b64:
                 self._grid.set_key_label(key_index, str(state.get("label", "")))
             self._sync_slot(key_index, state)
-        # Refresh config panel if the selected key's state just changed.
-        if self._selected_key is not None and self._selected_key in self._key_slots:
-            slot = self._key_slots[self._selected_key]
-            self._config_panel.show_counter_config(
-                slot.get("settings", {}),
-                self._make_save_callback(self._selected_key),
-            )
+        self._refresh_config_panel()
+
+    def _refresh_config_panel(self) -> None:
+        index = self._selected_key
+        if index is None:
+            return
+        slot = self._key_slots.get(index)
+        if slot is None:
+            self._config_panel.show_placeholder()
+            return
+        action = next(
+            (
+                a
+                for a in self._actions
+                if a.get("plugin_uuid") == slot.get("plugin_uuid") and a.get("action_uuid") == slot.get("action_uuid")
+            ),
+            None,
+        )
+        self._config_panel.show_action_config(
+            list((action or {}).get("settings_schema") or []),
+            slot.get("settings", {}),
+            slot.get("appearance", {}),
+            slot.get("appearance_defaults", {}),
+            self._make_save_callback(index),
+        )
 
     def _sync_slot(self, key_index: int, state: dict[str, Any]) -> None:
         """Keep slot metadata in sync with a full key state; partial (image/label) updates carry none."""
@@ -386,23 +400,34 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             "action_uuid": str(state.get("action_uuid", "")),
             "context_id": str(state.get("context_id", "")),
             "settings": dict(state.get("settings") or {}),
+            "appearance": dict(state.get("appearance") or {}),
+            "appearance_defaults": dict(state.get("appearance_defaults") or {}),
         }
 
-    def _make_save_callback(self, key_index: int) -> "Callable[[dict[str, Any]], None]":
-        def _cb(settings: dict[str, Any]) -> None:
+    def _make_save_callback(self, key_index: int) -> "Callable[[dict[str, Any], dict[str, Any]], None]":
+        def _cb(settings: dict[str, Any], appearance: dict[str, Any]) -> None:
             self._save_key_settings(key_index, settings)
+            self._save_key_appearance(key_index, appearance)
 
         return _cb
 
     def _save_key_settings(self, key_index: int, settings: dict[str, Any]) -> None:
+        if self._key_call("key_update_settings", key_index, settings) and key_index in self._key_slots:
+            self._key_slots[key_index]["settings"] = settings
+
+    def _save_key_appearance(self, key_index: int, appearance: dict[str, Any]) -> None:
+        if self._key_call("key_update_appearance", key_index, appearance) and key_index in self._key_slots:
+            slot = self._key_slots[key_index]
+            slot["appearance"] = {**slot.get("appearance_defaults", {}), **appearance}
+
+    def _key_call(self, method: str, key_index: int, payload: dict[str, Any]) -> bool:
         device_id = AppContext.get().active_device_id
         page_id = self._active_page_id
         cm = AppContext.get().connection_manager
         if not device_id or not page_id or cm is None:
-            return
-        cm.call("key_update_settings", device_id, page_id, key_index, json.dumps(settings))
-        if key_index in self._key_slots:
-            self._key_slots[key_index]["settings"] = settings
+            return False
+        cm.call(method, device_id, page_id, key_index, json.dumps(payload))
+        return True
 
     # ------------------------------------------------------------------
     # Other widget callbacks

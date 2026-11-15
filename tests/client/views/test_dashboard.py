@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
@@ -414,6 +415,59 @@ class TestKeyInteractions:
         }  # pylint: disable=protected-access
         view._save_key_settings(2, {"step": 5, "max": 10})  # pylint: disable=protected-access
         mock_cm.call.assert_called_once_with("key_update_settings", "dev1", "p1", 2, json.dumps({"step": 5, "max": 10}))
+
+    def test_selecting_key_shows_schema_form_for_its_action(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        AppContext.get().connection_manager = MagicMock()
+        schema: list[dict[str, Any]] = [
+            {"key": "step", "type": "int", "label": "Step", "default": 1, "min": 1, "max": 9}
+        ]
+        view.handle_event(
+            ActionListUpdatedEvent(
+                actions=[
+                    {"plugin_uuid": "com.p", "action_uuid": "com.p.a", "action_name": "A", "settings_schema": schema}
+                ]
+            )
+        )
+        view._key_slots[3] = {  # pylint: disable=protected-access
+            "plugin_uuid": "com.p",
+            "action_uuid": "com.p.a",
+            "context_id": "c",
+            "settings": {"step": 4},
+        }
+
+        view._on_key_selected(3)  # pylint: disable=protected-access
+
+        panel = view._config_panel  # pylint: disable=protected-access
+        assert_that(panel.currentIndex()).is_equal_to(1)
+        assert_that(panel._settings_form.values()).is_equal_to({"step": 4})  # pylint: disable=protected-access
+
+    def test_save_calls_key_update_settings_and_key_update_appearance(  # pylint: disable=unused-argument
+        self, qapp, tmp_path
+    ):
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        mock_cm = MagicMock()
+        AppContext.get().connection_manager = mock_cm
+        view._key_slots[2] = {  # pylint: disable=protected-access
+            "plugin_uuid": "p",
+            "action_uuid": "a",
+            "context_id": "c",
+            "settings": {},
+            "appearance": {"background": "#000000"},
+            "appearance_defaults": {"background": "#000000"},
+        }
+
+        view._make_save_callback(2)({"step": 2}, {"background": "#ff0000"})  # pylint: disable=protected-access
+
+        calls = [c.args for c in mock_cm.call.call_args_list]
+        assert_that(calls).is_equal_to(
+            [
+                ("key_update_settings", "dev1", "p1", 2, json.dumps({"step": 2})),
+                ("key_update_appearance", "dev1", "p1", 2, json.dumps({"background": "#ff0000"})),
+            ]
+        )
 
 
 class TestPages:  # pylint: disable=protected-access
