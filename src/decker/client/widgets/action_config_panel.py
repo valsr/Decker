@@ -54,7 +54,12 @@ class ActionConfigPanel(QStackedWidget):
         """Populate and show the forms; identical values re-sent while shown leave edits in progress alone."""
         self._save_cb = save_cb
         self._appearance_defaults = dict(appearance_defaults)
-        loaded = (settings_schema, dict(settings), dict(appearance), dict(appearance_defaults))
+        loaded = (
+            settings_schema,
+            dict(settings),
+            _resolved(appearance, appearance_defaults),
+            dict(appearance_defaults),
+        )
         if self.currentIndex() == _PAGE_FORM and loaded == self._loaded:
             return
         self._loaded = loaded
@@ -87,9 +92,21 @@ class ActionConfigPanel(QStackedWidget):
         if self._save_cb is None:
             return
         settings = self._settings_form.values()
+        form_appearance = self._appearance_form.values()
         appearance = {
-            key: value
-            for key, value in self._appearance_form.values().items()
-            if value != self._appearance_defaults.get(key)
+            key: value for key, value in form_appearance.items() if value != self._appearance_defaults.get(key)
         }
+        # Record the saved state so the server's echo is recognised as identical and keeps later edits.
+        if self._loaded is not None:
+            self._loaded = (
+                self._loaded[0],
+                settings,
+                _resolved(form_appearance, self._appearance_defaults),
+                self._loaded[3],
+            )
         self._save_cb(settings, appearance)
+
+
+def _resolved(appearance: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    """Appearance with defaults applied; None means "unset" and is dropped so shapes compare equal."""
+    return {k: v for k, v in {**defaults, **appearance}.items() if v is not None}

@@ -91,3 +91,16 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         _show(panel, {"step": 1})
 
         assert_that(panel._appearance_form.values()["title"]).is_equal_to("")
+
+    def test_echo_of_saved_state_keeps_later_edits(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        _show(panel, {"step": 1})
+        panel._settings_form._fields["step"].set(7)
+        panel._appearance_form._fields["background"].set("#8a1c1c")
+        panel._on_save()
+        panel._appearance_form._fields["title"].set("second edit")
+
+        saved_appearance = {**_DEFAULTS, "background": "#8a1c1c"}
+        _show(panel, panel._settings_form.values(), saved_appearance)
+
+        assert_that(panel._appearance_form.values()["title"]).is_equal_to("second edit")
