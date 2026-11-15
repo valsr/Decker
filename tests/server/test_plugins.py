@@ -577,6 +577,58 @@ class TestThreadSafety:
         assert_that([c for c in calls if c > returned]).is_empty()
 
 
+def test_page_switch_and_plugin_messages_do_not_deadlock(tmp_path):
+    from decker.server.page_controller import (
+        PageController,  # pylint: disable=import-outside-toplevel
+    )
+
+    controller = PageController()
+    dm = FakeDeviceManager()
+    original = dm.set_image_bytes
+
+    def resolving_set_image(device_id: str, key_index: int, image: bytes) -> None:
+        controller.active_page_id(device_id)  # what the real DeviceManager does while persisting
+        original(device_id, key_index, image)
+
+    dm.set_image_bytes = resolving_set_image  # type: ignore[method-assign,assignment]
+    dm.show_page = lambda _device, _page: True  # type: ignore[attr-defined]
+    manager = PluginManager(tmp_path, _FAST, PluginSettingsStore(tmp_path / "db.sqlite"))
+    bus = FakeBus()
+    manager.create(SimpleNamespace(device_manager=dm, event_bus=bus))  # type: ignore[arg-type]
+    page_store = MagicMock()
+    page_store.default_page_id.return_value = "p1"
+    keys = MagicMock()
+    keys.all_for_page.return_value = [(0, SimpleNamespace(target=COUNTER_TARGET, settings={}))]
+    controller.create(
+        SimpleNamespace(page_store=page_store, key_assignment_store=keys, device_manager=dm, plugin_manager=manager, event_bus=bus)  # type: ignore[arg-type]
+    )
+    done = threading.Event()
+    payload = {"image": base64.b64encode(b"img").decode()}
+
+    def switcher() -> None:
+        for i in range(300):
+            controller.activate("dev-1", "p2" if i % 2 == 0 else "p1")
+        done.set()
+
+    def router() -> None:
+        while not done.is_set():
+            manager._on_plugin_message(
+                _COUNTER, Message("set_image", "ctx-1", payload)
+            )  # pylint: disable=protected-access
+
+    controller.restore("dev-1")
+    threads = [threading.Thread(target=switcher, daemon=True), threading.Thread(target=router, daemon=True)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(20)
+    alive = [t.is_alive() for t in threads]
+    done.set()
+    if not any(alive):
+        manager.destroy()
+    assert_that(alive).is_equal_to([False, False])
+
+
 def test_plugins_dir_loader_failure_is_reported(tmp_path):
     broken = tmp_path / "bad"
     broken.mkdir()

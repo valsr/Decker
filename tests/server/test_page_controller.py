@@ -1,4 +1,5 @@
 import json
+import threading
 from typing import cast
 from unittest.mock import MagicMock, call
 
@@ -56,6 +57,20 @@ class TestActivePage:
         context.page_store.set_default_page(DEV, page.page_id)
 
         assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(page.page_id)
+
+    def test_recorded_active_page_is_read_without_the_lock(self, context):
+        controller = context.page_controller
+        expected = controller.active_page_id(DEV)
+        result: list[str] = []
+
+        with controller._lock:  # pylint: disable=protected-access
+            thread = threading.Thread(target=lambda: result.append(controller.active_page_id(DEV)))
+            thread.start()
+            thread.join(2)
+            finished = not thread.is_alive()
+
+        assert_that(finished).is_true()
+        assert_that(result).is_equal_to([expected])
 
     def test_device_pages_snapshot(self, context):
         page = context.page_controller.add_page(DEV, "Media")
