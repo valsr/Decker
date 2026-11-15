@@ -1,6 +1,7 @@
 """Server-side wrapper around one plugin child process."""
 
 import logging
+import queue
 import subprocess
 import threading
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from decker.plugin.protocol import (
 logger = logging.getLogger(__name__)
 
 _DISCARD_CHUNK = 64 * 1024
+_SEND_QUEUE_SIZE = 256
 
 
 class PluginProcess:
@@ -39,7 +41,7 @@ class PluginProcess:
         self._on_message = on_message
         self._on_exit = on_exit
         self._proc: subprocess.Popen[bytes] | None = None
-        self._write_lock = threading.Lock()
+        self._outbox: queue.Queue[bytes] = queue.Queue(maxsize=_SEND_QUEUE_SIZE)
         self._threads: list[threading.Thread] = []
 
     @property
@@ -69,23 +71,21 @@ class PluginProcess:
             threading.Thread(target=self._read_stdout, args=(proc.stdout,), daemon=True),
             threading.Thread(target=self._read_stderr, args=(proc.stderr,), daemon=True),
         ]
+        writer = threading.Thread(target=self._write_loop, args=(proc,), daemon=True)
+        readers.append(writer)
         for reader in readers:
             reader.start()
         self._threads = readers
         threading.Thread(target=self._watch, args=(proc, readers), daemon=True).start()
 
     def send(self, message: Message) -> None:
-        """Write a message to the child; a no-op if it is not running."""
-        proc = self._proc
-        if proc is None or proc.stdin is None or proc.poll() is not None:
+        """Queue a message for the child without blocking; dropped if not running or the queue is full."""
+        if not self.is_running:
             return
-        data = encode(message)
         try:
-            with self._write_lock:
-                proc.stdin.write(data)
-                proc.stdin.flush()
-        except (BrokenPipeError, ValueError, OSError) as exc:
-            logger.debug("[%s] could not send %s: %s", self._plugin_id, message.event, exc)
+            self._outbox.put_nowait(encode(message))
+        except queue.Full:
+            logger.warning("[%s] send queue full, dropping %s", self._plugin_id, message.event)
 
     def stop(self, timeout: float = 3.0) -> None:
         """Ask the child to shut down, then terminate, then kill it."""
@@ -93,7 +93,6 @@ class PluginProcess:
         if proc is None or proc.poll() is not None:
             return
         self.send(Message("shutdown"))
-        self._close_stdin(proc)
         try:
             proc.wait(timeout=timeout)
             return
@@ -121,13 +120,24 @@ class PluginProcess:
             return None
         return None
 
-    def _close_stdin(self, proc: subprocess.Popen[bytes]) -> None:
+    def _write_loop(self, proc: subprocess.Popen[bytes]) -> None:
+        stdin = proc.stdin
+        assert stdin is not None
         try:
-            with self._write_lock:
-                if proc.stdin is not None:
-                    proc.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
+            while proc.poll() is None:
+                try:
+                    data = self._outbox.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                stdin.write(data)
+                stdin.flush()
+        except (BrokenPipeError, ValueError, OSError) as exc:
+            logger.debug("[%s] stdin write stopped: %s", self._plugin_id, exc)
+        finally:
+            try:
+                stdin.close()
+            except (BrokenPipeError, ValueError, OSError):
+                pass
 
     def _read_stdout(self, stream: IO[bytes]) -> None:
         while True:

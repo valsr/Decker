@@ -99,6 +99,7 @@ def test_stop_is_graceful_for_cooperative_plugin(make: Callable[[str], Harness])
     h = make("echo_ready.py")
     h.proc.start()
     h.proc.stop(timeout=3.0)
+    assert_that(wait_for(lambda: len(h.exits) == 1)).is_true()
     assert_that(h.exits).is_equal_to([0])
 
 
@@ -137,3 +138,18 @@ def test_concurrent_send_does_not_interleave(make: Callable[[str], Harness]) -> 
     for t in threads:
         t.join()
     assert_that(h.proc.is_running).is_true()
+
+
+def test_stop_returns_when_plugin_never_reads_stdin(make: Callable[[str], Harness]) -> None:
+    h = make("never_reads.py")
+    h.proc.start()
+    big = {"blob": "x" * 200_000}
+    for _ in range(100):
+        began = time.monotonic()
+        h.proc.send(Message("ping", payload=big))
+        assert_that(time.monotonic() - began).is_less_than(0.5)
+    began = time.monotonic()
+    h.proc.stop(timeout=0.5)
+    assert_that(time.monotonic() - began).is_less_than(5.0)
+    assert_that(h.proc.is_running).is_false()
+    assert_that(wait_for(lambda: len(h.exits) == 1)).is_true()
