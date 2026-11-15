@@ -50,6 +50,11 @@ def plugins() -> Path:
     return home() / "plugins"
 
 
+def sdk() -> Path:
+    """Return the staged plugin SDK root directory."""
+    return home() / "sdk"
+
+
 def assets() -> Path:
     """Return the assets root directory."""
     return home() / "assets"
