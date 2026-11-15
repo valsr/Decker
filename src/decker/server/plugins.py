@@ -14,8 +14,8 @@ from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.executor import PluginExecutor
 from decker.plugin.gestures import Gesture, GestureRecognizer
 from decker.plugin.icons import read_icon
+from decker.plugin.legacy_manifest import PluginManifest
 from decker.plugin.loader import PluginLoader
-from decker.plugin.manifest import PluginManifest
 from decker.plugin.native_loader import LoadedNativePlugin
 from decker.plugin.registry import ActionRegistry
 from decker.plugin.settings_store import PluginSettingsStore

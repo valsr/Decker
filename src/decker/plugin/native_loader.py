@@ -7,7 +7,7 @@ from pathlib import Path
 from types import ModuleType
 
 from decker.plugin.base import DeckerPlugin
-from decker.plugin.manifest import ManifestValidationError, PluginManifest
+from decker.plugin.legacy_manifest import ManifestValidationError, PluginManifest
 
 
 class NativePluginLoadError(Exception):
