@@ -138,9 +138,10 @@ def test_contribution_id_must_be_prefixed_by_plugin_id() -> None:
         PluginManifest.from_dict(data)
 
 
-def test_invalid_gesture_rejected() -> None:
-    with pytest.raises(ManifestValidationError, match="gestures"):
-        PluginManifest.from_dict(_with_action(gestures=["swipe"]))
+@pytest.mark.parametrize("gestures", [["swipe"], [["press"]], [{}], [], "press"])
+def test_invalid_gesture_rejected(gestures: Any) -> None:
+    with pytest.raises(ManifestValidationError, match="com.decker.counter.counter gestures"):
+        PluginManifest.from_dict(_with_action(gestures=gestures))
 
 
 @pytest.mark.parametrize("req", ["foo @ https://x/y.whl", "git+https://x"])

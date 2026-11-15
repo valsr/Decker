@@ -206,7 +206,11 @@ def _parse_action(entry: Any, plugin_id: str) -> ActionSpec:
         raise ManifestValidationError(f"invalid action entry: {entry!r}")
     action_id = _parse_contribution_id(entry["id"], plugin_id, "action id")
     gestures = entry.get("gestures", ["press"])
-    if not isinstance(gestures, list) or not gestures or not set(gestures) <= VALID_GESTURES:
+    if (
+        not isinstance(gestures, list)
+        or not gestures
+        or not all(isinstance(g, str) and g in VALID_GESTURES for g in gestures)
+    ):
         raise ManifestValidationError(
             f"action {action_id} gestures must be a non-empty subset of {sorted(VALID_GESTURES)}"
         )
