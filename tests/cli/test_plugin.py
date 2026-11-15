@@ -13,8 +13,6 @@ _NATIVE_MANIFEST = {
     "Actions": [{"UUID": "com.decker.test.show", "Name": "Show"}],
 }
 
-_ELGATO_MANIFEST = {**_NATIVE_MANIFEST, "UUID": "com.elgato.cpu-monitor", "CodePath": "app.js"}
-
 
 def _make_source_plugin(tmp_path, manifest=_NATIVE_MANIFEST, name="source"):
     source_dir = tmp_path / name
@@ -36,11 +34,6 @@ class TestInstall:
         dest = plugin_cli.install(source)
         assert_that(dest).is_equal_to(_isolated_plugins_dir / "com.decker.test")
         assert_that((dest / "manifest.json").exists()).is_true()
-
-    def test_installs_elgato_plugin_with_sdplugin_suffix(self, tmp_path, _isolated_plugins_dir):
-        source = _make_source_plugin(tmp_path, manifest=_ELGATO_MANIFEST, name="elgato-source")
-        dest = plugin_cli.install(source)
-        assert_that(dest).is_equal_to(_isolated_plugins_dir / "com.elgato.cpu-monitor.sdPlugin")
 
     def test_missing_manifest_raises(self, tmp_path):
         source = tmp_path / "no-manifest"
@@ -69,7 +62,7 @@ class TestListInstalled:
     def test_lists_installed_native_plugin(self, tmp_path):
         plugin_cli.install(_make_source_plugin(tmp_path))
         result = plugin_cli.list_installed()
-        assert_that(result).is_equal_to([{"uuid": "com.decker.test", "type": "native", "status": "ok"}])
+        assert_that(result).is_equal_to([{"uuid": "com.decker.test", "status": "ok"}])
 
     def test_lists_invalid_plugin_with_status(self, tmp_path, _isolated_plugins_dir):
         broken_dir = _isolated_plugins_dir / "broken"
@@ -85,12 +78,6 @@ class TestRemove:
     def test_removes_native_plugin(self, tmp_path, _isolated_plugins_dir):
         dest = plugin_cli.install(_make_source_plugin(tmp_path))
         plugin_cli.remove("com.decker.test")
-        assert_that(dest.exists()).is_false()
-
-    def test_removes_elgato_plugin(self, tmp_path, _isolated_plugins_dir):
-        source = _make_source_plugin(tmp_path, manifest=_ELGATO_MANIFEST, name="elgato-source")
-        dest = plugin_cli.install(source)
-        plugin_cli.remove("com.elgato.cpu-monitor")
         assert_that(dest.exists()).is_false()
 
     def test_remove_unknown_uuid_raises(self):
