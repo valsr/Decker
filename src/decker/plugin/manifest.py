@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from packaging.requirements import InvalidRequirement, Requirement
 
+from decker.common.appearance_schema import APPEARANCE_KEYS
 from decker.plugin.settings_schema import SettingEntry, parse_settings_schema
 
 SUPPORTED_FORMAT = 1
@@ -217,6 +218,9 @@ def _parse_action(entry: Any, plugin_id: str) -> ActionSpec:
     appearance = entry.get("appearance", {})
     if not isinstance(appearance, dict):
         raise ManifestValidationError(f"action {action_id} appearance must be an object")
+    for key in appearance:
+        if key not in APPEARANCE_KEYS:
+            raise ManifestValidationError(f"action {action_id} has unknown appearance key {key!r}")
     states = tuple(_parse_state(s, action_id) for s in _as_list(entry.get("states", []), "states"))
     return ActionSpec(
         id=action_id,
