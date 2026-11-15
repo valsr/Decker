@@ -6,7 +6,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,6 +27,7 @@ from decker.plugin.runtime.supervisor import PluginSupervisor, SupervisorPolicy
 from decker.plugin.settings_schema import apply_schema, schema_to_json
 from decker.plugin.settings_store import PluginSettingsStore
 from decker.plugin.target import ActionTarget
+from decker.server.appearance import compose_key_image, resolve_appearance
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
@@ -106,6 +107,10 @@ class _Live:
     recognizer: GestureRecognizer
     gestures: frozenset[Gesture]
     settings: dict[str, Any]
+    appearance: dict[str, Any] = field(default_factory=dict)
+    plugin_image: bytes | None = None
+    plugin_title: str = ""
+    state: int = 0
 
 
 def _gestures_from(names: Any) -> frozenset[Gesture]:
@@ -270,7 +275,22 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         spec = self._action_spec(target.plugin_uuid, target.action_uuid)
         return apply_schema(spec.settings, settings) if spec is not None else dict(settings)
 
-    def activate_action(self, target: ActionTarget) -> None:
+    def appearance_for(self, target: ActionTarget, stored: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return (resolved appearance, appearance defaults) for an action's stored appearance."""
+        spec = self._action_spec(target.plugin_uuid, target.action_uuid)
+        defaults = spec.appearance if spec is not None else {}
+        return resolve_appearance(defaults, stored), resolve_appearance(defaults, {})
+
+    def set_appearance(self, target: ActionTarget, stored: dict[str, Any]) -> None:
+        """Apply a new stored appearance to a live instance and redraw its key without asking the plugin."""
+        with self._lock:
+            live = self._live.get(target.context_id)
+            if live is None:
+                return
+            live.appearance = dict(stored)
+            self._recompose(live)
+
+    def activate_action(self, target: ActionTarget, appearance: dict[str, Any] | None = None) -> None:
         """Tell the action's plugin that an instance appeared, starting the plugin if needed."""
         spec = self._action_spec(target.plugin_uuid, target.action_uuid)
         with self._lock:
@@ -289,9 +309,11 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             recognizer=GestureRecognizer(self._gesture_emitter(target.context_id)),
             gestures=_gestures_from(sorted(spec.gestures)),
             settings=apply_schema(spec.settings, stored),
+            appearance=dict(appearance or {}),
         )
         with self._lock:
             self._live[target.context_id] = live
+            self._recompose(live)
         self._supervisor.acquire(target.plugin_uuid)
         if self._supervisor.is_failed(target.plugin_uuid):
             self._mark_failed(live)
@@ -343,6 +365,21 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     # ------------------------------------------------------------------
     # Server -> plugin helpers
     # ------------------------------------------------------------------
+
+    def _recompose(self, live: _Live) -> None:
+        """Compose the key image from appearance, plugin image/title and state, and send it to the sink.
+
+        Callers hold self._lock so no sink call can follow deactivate_action.
+        """
+        spec = live.action
+        state = spec.states[live.state] if 0 <= live.state < len(spec.states) else None
+        image = live.plugin_image
+        if image is None and state is not None and state.image:
+            plugin = self._plugins.get(live.target.plugin_uuid)
+            image = read_icon(plugin.plugin_dir, state.image) if plugin is not None else None
+        title = live.plugin_title or (state.title if state is not None and state.title else "")
+        appearance = resolve_appearance(spec.appearance, live.appearance)
+        self._sink.set_image(live.target.device_id, live.target.key_index, compose_key_image(appearance, image, title))
 
     def _send_context(self, live: _Live, event: str, payload: dict[str, Any] | None = None) -> None:
         self._supervisor.send(live.target.plugin_uuid, Message(event, live.target.context_id, payload or {}))
@@ -429,10 +466,14 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if message.event == "set_image":
             self._on_set_image(live, payload)
         elif message.event == "set_title":
-            self._sink.set_title(target.device_id, target.key_index, str(payload.get("title", "")))
+            live.plugin_title = str(payload.get("title", ""))
+            self._sink.set_title(target.device_id, target.key_index, live.plugin_title)
+            self._recompose(live)
         elif message.event == "set_state":
             state = payload.get("state")
-            self._sink.set_state(target.device_id, target.key_index, state if isinstance(state, int) else 0)
+            live.state = state if isinstance(state, int) else 0
+            self._sink.set_state(target.device_id, target.key_index, live.state)
+            self._recompose(live)
         elif message.event == "show_alert":
             self._sink.show_alert(target.device_id, target.key_index)
         elif message.event == "show_ok":
@@ -453,14 +494,16 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         target = live.target
         image = payload.get("image")
         if image is None:
-            self._sink.clear_image(target.device_id, target.key_index)
+            live.plugin_image = None
+            self._recompose(live)
             return
         try:
             data = base64.b64decode(str(image), validate=True)
         except (binascii.Error, ValueError):
             logging.warning("[%s] set_image with invalid base64 dropped", target.plugin_uuid)
             return
-        self._sink.set_image(target.device_id, target.key_index, data)
+        live.plugin_image = data
+        self._recompose(live)
 
     def _on_set_settings(self, live: _Live, payload: dict[str, Any]) -> None:
         raw = payload.get("settings")
@@ -546,14 +589,38 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                 return
             per_key = device_state.get_key_state(key_index)
             image_b64 = base64.b64encode(per_key.image).decode("ascii") if per_key.image else None
+            appearance, defaults = self._key_appearance(device_id, key_index)
             context.event_bus.push(
                 "key_state_changed",
                 json.dumps(
-                    {"device_id": device_id, "key_index": key_index, "image_b64": image_b64, "label": per_key.label}
+                    {
+                        "device_id": device_id,
+                        "key_index": key_index,
+                        "image_b64": image_b64,
+                        "label": per_key.label,
+                        "appearance": appearance,
+                        "appearance_defaults": defaults,
+                    }
                 ),
             )
 
         return _on_state_changed
+
+    def _key_appearance(self, device_id: str, key_index: int) -> tuple[dict[str, Any], dict[str, Any]]:
+        with self._lock:
+            live = next(
+                (
+                    item
+                    for item in self._live.values()
+                    if item.target.device_id == device_id and item.target.key_index == key_index
+                ),
+                None,
+            )
+            if live is None:
+                return {}, {}
+            return resolve_appearance(live.action.appearance, live.appearance), resolve_appearance(
+                live.action.appearance, {}
+            )
 
     def _set_key_label(self, device_id: str, key_index: int, label: str) -> None:
         if self._device_manager is None:

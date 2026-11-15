@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import os
 import signal
@@ -6,19 +7,23 @@ import stat
 import sys
 import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from assertpy import assert_that
+from PIL import Image
 
 from decker.common.model import DeviceHardwareInfo, KeyInfo
 from decker.plugin.gestures import Gesture
 from decker.plugin.loader import PluginLoader
+from decker.plugin.manifest import StateSpec
 from decker.plugin.protocol import Message
 from decker.plugin.runtime.supervisor import SupervisorPolicy
 from decker.plugin.settings_store import PluginSettingsStore
 from decker.plugin.target import ActionTarget
+from decker.server.appearance import compose_key_image, resolve_appearance
 from decker.server.devices.state import DeviceState
 from decker.server.plugins import PluginManager
 
@@ -122,6 +127,23 @@ class FakeBus:
         return [p for t, p in self.events if t == event_type]
 
 
+_BARE_COUNTER = compose_key_image(resolve_appearance({"background": "#1f618d"}, {}), None, "")
+
+
+def _pixel(png: bytes | None, x: int, y: int) -> tuple[int, ...]:
+    assert png is not None
+    return Image.open(io.BytesIO(png)).convert("RGB").getpixel((x, y))  # type: ignore[return-value]
+
+
+def _png(color: str) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+_RED_PNG = _png("#ff0000")
+
+
 def _wait_for(predicate, timeout=8.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -168,6 +190,10 @@ class Env:
     def image(self, key: int = 0) -> bytes | None:
         return self.dm.state.get_key_state(key).image
 
+    def counter_drawn(self) -> bool:
+        """True once the counter plugin's own image has been composed over the bare background."""
+        return self.image() not in (None, _BARE_COUNTER)
+
     def process_pid(self, plugin_id: str) -> int:
         entry = self.manager._supervisor._entries[plugin_id]  # pylint: disable=protected-access
         assert entry.process is not None and entry.process.pid is not None
@@ -205,7 +231,7 @@ class TestListing:
         assert base64.b64decode(counter["icon_b64"]).startswith(b"\x89PNG")
         assert_that(counter["tooltip"]).is_equal_to("Press to count, long press to reset")
         keys = [e.get("key") for e in counter["settings_schema"]]
-        assert_that(keys).contains("step", "double_step", "title_outline")
+        assert_that(keys).contains("step", "double_step", "max")
         json.dumps(counter["settings_schema"])
 
     def test_action_icons_are_read_once(self, env, monkeypatch):
@@ -313,50 +339,52 @@ class TestWillAppear:
 class TestCounterEndToEnd:
     def test_press_reaches_plugin_and_image_reaches_sink(self, env):
         env.manager.activate_action(COUNTER_TARGET)
-        assert _wait_for(lambda: env.image() is not None and env.label() == "0")
+        assert _wait_for(env.counter_drawn)
         first = env.image()
 
         env.manager.dispatch_key_down(COUNTER_TARGET)
         env.manager.dispatch_key_up(COUNTER_TARGET)
 
-        assert _wait_for(lambda: env.label() == "1")
-        assert_that(env.image()).is_not_equal_to(first)
+        assert _wait_for(lambda: env.image() != first)
         assert env.image().startswith(b"\x89PNG")
         assert_that(env.dm.hardware_images[-1][0]).is_equal_to(0)
 
     def test_set_gestures_changes_recognizer_registration(self, env):
         env.manager.store_settings(COUNTER_TARGET, {"double_step": 5})
         env.manager.activate_action(COUNTER_TARGET)
-        assert _wait_for(lambda: env.label() == "0")
+        assert _wait_for(env.counter_drawn)
         live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
         assert _wait_for(lambda: Gesture.DOUBLE_PRESS in live.gestures)
+        first = env.image()
 
         env.manager.dispatch_key_down(COUNTER_TARGET)
         env.manager.dispatch_key_up(COUNTER_TARGET)
         time.sleep(0.15)
-        assert_that(env.label()).is_equal_to("0")  # press is held back by the double-press window
+        assert_that(env.image()).is_equal_to(first)  # press is held back by the double-press window
 
-        assert _wait_for(lambda: env.label() == "1")
+        assert _wait_for(lambda: env.image() != first)
 
     def test_press_is_immediate_without_double_step(self, env):
         env.manager.activate_action(COUNTER_TARGET)
-        assert _wait_for(lambda: env.label() == "0")
+        assert _wait_for(env.counter_drawn)
         live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
         assert_that(live.gestures).does_not_contain(Gesture.DOUBLE_PRESS)
 
     def test_settings_changed_is_applied_and_redraws(self, env):
         env.manager.activate_action(COUNTER_TARGET)
-        assert _wait_for(lambda: env.image() is not None)
+        assert _wait_for(env.counter_drawn)
         first = env.image()
 
-        env.manager.store_settings(COUNTER_TARGET, {"background": "#ff0000", "title_outline": ""})
+        env.manager.store_settings(COUNTER_TARGET, {"step": 5})
         env.manager.dispatch_settings_changed(COUNTER_TARGET)
+        env.manager.dispatch_key_down(COUNTER_TARGET)
+        env.manager.dispatch_key_up(COUNTER_TARGET)
 
         assert _wait_for(lambda: env.image() != first)
 
     def test_set_image_for_disappeared_context_is_dropped(self, env):
         env.manager.activate_action(COUNTER_TARGET)
-        assert _wait_for(lambda: env.label() == "0")
+        assert _wait_for(env.counter_drawn)
         env.manager.deactivate_action(COUNTER_TARGET)
         sent_before = list(env.dm.hardware_images)
         image_before = env.image()
@@ -371,7 +399,7 @@ class TestCounterEndToEnd:
 
     def test_set_image_from_another_plugin_is_dropped(self, env):
         env.manager.activate_action(COUNTER_TARGET)
-        assert _wait_for(lambda: env.label() == "0")
+        assert _wait_for(env.counter_drawn)
         sent_before = list(env.dm.hardware_images)
 
         env.manager._on_plugin_message(  # pylint: disable=protected-access
@@ -380,20 +408,19 @@ class TestCounterEndToEnd:
 
         assert_that(env.dm.hardware_images).is_equal_to(sent_before)
 
-    def test_null_image_clears_the_key(self, env):
+    def test_null_image_falls_back_to_the_bare_composition(self, env):
         env.manager.activate_action(COUNTER_TARGET)
-        assert _wait_for(lambda: env.image() is not None)
+        assert _wait_for(env.counter_drawn)
 
-        env.manager._on_plugin_message(
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
             _COUNTER, Message("set_image", "ctx-1", {"image": None})
-        )  # pylint: disable=protected-access
+        )
 
-        assert_that(env.image()).is_none()
-        assert_that(env.dm.cleared).contains(0)
+        assert_that(env.image()).is_equal_to(_BARE_COUNTER)
 
     def test_invalid_base64_image_is_dropped(self, env):
         env.manager.activate_action(COUNTER_TARGET)
-        assert _wait_for(lambda: env.label() == "0")
+        assert _wait_for(env.counter_drawn)
         sent_before = list(env.dm.hardware_images)
 
         env.manager._on_plugin_message(  # pylint: disable=protected-access
@@ -401,6 +428,103 @@ class TestCounterEndToEnd:
         )
 
         assert_that(env.dm.hardware_images).is_equal_to(sent_before)
+
+
+class TestAppearanceComposition:
+    def test_counter_key_is_blue_by_default(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(env.counter_drawn)
+
+        assert_that(_pixel(env.image(), 2, 2)).is_equal_to((31, 97, 141))
+
+    def test_counter_no_longer_sets_title(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(env.counter_drawn)
+        env.manager.dispatch_key_down(COUNTER_TARGET)
+        env.manager.dispatch_key_up(COUNTER_TARGET)
+        assert _wait_for(lambda: len(env.dm.hardware_images) >= 3)
+
+        assert_that(env.label()).is_equal_to("")
+
+    def test_appearance_change_recomposes_key_without_plugin_round_trip(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(env.counter_drawn)
+        sent = len(env.dm.hardware_images)
+        received = len(env.received())
+
+        env.manager.set_appearance(COUNTER_TARGET, {"background": "#ff0000"})
+
+        assert_that(len(env.dm.hardware_images)).is_equal_to(sent + 1)
+        assert_that(_pixel(env.image(), 2, 2)).is_equal_to((255, 0, 0))
+        assert_that(len(env.received())).is_equal_to(received)
+
+    def test_initial_appearance_is_applied_on_activation(self, env):
+        env.manager.activate_action(COUNTER_TARGET, {"background": "#00ff00"})
+
+        assert_that(_pixel(env.dm.hardware_images[0][1], 2, 2)).is_equal_to((0, 255, 0))
+
+    def test_set_appearance_for_inactive_context_is_ignored(self, env):
+        env.manager.set_appearance(COUNTER_TARGET, {"background": "#ff0000"})
+
+        assert_that(env.dm.hardware_images).is_empty()
+
+    def test_plugin_title_is_composed_under_appearance_title(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(env.counter_drawn)
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            _COUNTER, Message("set_title", "ctx-1", {"title": "WWWW"})
+        )
+
+        assert_that(env.label()).is_equal_to("WWWW")
+        assert_that(env.image()).is_not_equal_to(_BARE_COUNTER)
+
+    def test_state_image_used_until_plugin_sets_image(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(env.counter_drawn)
+        live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
+        live.action = replace(live.action, states=(StateSpec(image="icons/counter", title="S"),))
+        live.plugin_image = None
+        env.manager.set_appearance(COUNTER_TARGET, {})
+        with_state = env.image()
+        assert_that(with_state).is_not_equal_to(_BARE_COUNTER)
+
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            _COUNTER, Message("set_image", "ctx-1", {"image": base64.b64encode(_RED_PNG).decode()})
+        )
+
+        assert_that(env.image()).is_not_equal_to(with_state)
+
+    def test_set_state_selects_the_state_image(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(env.counter_drawn)
+        live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
+        live.action = replace(live.action, states=(StateSpec(), StateSpec(title="Two")))
+        live.plugin_image = None
+        env.manager.set_appearance(COUNTER_TARGET, {})
+        before = env.image()
+
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            _COUNTER, Message("set_state", "ctx-1", {"state": 1})
+        )
+
+        assert_that(env.image()).is_not_equal_to(before)
+
+    def test_key_state_changed_event_carries_appearance(self, env):
+        env.manager.activate_action(COUNTER_TARGET, {"title": "Hi"})
+
+        event = env.bus.of("key_state_changed")[-1]
+
+        assert_that(event["appearance"]["title"]).is_equal_to("Hi")
+        assert_that(event["appearance"]["background"]).is_equal_to("#1f618d")
+        assert_that(event["appearance_defaults"]["title"]).is_equal_to("")
+        assert_that(event["appearance_defaults"]["background"]).is_equal_to("#1f618d")
+
+    def test_appearance_for_merges_manifest_defaults(self, env):
+        resolved, defaults = env.manager.appearance_for(COUNTER_TARGET, {"title": "x"})
+
+        assert_that(resolved["background"]).is_equal_to("#1f618d")
+        assert_that(resolved["title"]).is_equal_to("x")
+        assert_that(defaults["title"]).is_equal_to("")
 
 
 class TestFailure:
@@ -544,7 +668,7 @@ class TestThreadSafety:
 
     def test_no_sink_call_after_deactivate_returns(self, env):
         env.manager.activate_action(COUNTER_TARGET)
-        assert _wait_for(lambda: env.label() == "0")
+        assert _wait_for(env.counter_drawn)
         calls: list[float] = []
         original = env.manager._sink.set_image  # pylint: disable=protected-access
 
@@ -598,7 +722,7 @@ def test_page_switch_and_plugin_messages_do_not_deadlock(tmp_path):
     page_store = MagicMock()
     page_store.default_page_id.return_value = "p1"
     keys = MagicMock()
-    keys.all_for_page.return_value = [(0, SimpleNamespace(target=COUNTER_TARGET, settings={}))]
+    keys.all_for_page.return_value = [(0, SimpleNamespace(target=COUNTER_TARGET, settings={}, appearance={}))]
     controller.create(
         SimpleNamespace(page_store=page_store, key_assignment_store=keys, device_manager=dm, plugin_manager=manager, event_bus=bus)  # type: ignore[arg-type]
     )

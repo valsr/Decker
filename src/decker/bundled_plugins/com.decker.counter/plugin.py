@@ -5,14 +5,9 @@ Settings (always complete: the server fills defaults from the manifest schema):
     double_step       int or empty, added on double press; empty means no double press, so presses
                       register immediately (default empty)
     max               int, wraps to 0 when reached; 0 = no limit (default 0)
-    background        "#rrggbb" key background (default "#1f618d")
-    title             text drawn on the key (default "")
-    title_position    "top" | "middle" | "bottom" (default "bottom")
-    title_font        font family name (default "DejaVu Sans")
-    title_size        font size in px on a 72 px key (default 12)
-    title_color       "#rrggbb" (default "#ffffff")
-    title_outline     "#rrggbb" outline colour, None for none (default None)
-    title_outline_width  outline width in px on a 72 px key (default 1)
+
+Appearance (background, title) is drawn by Decker; the plugin only renders the count on a transparent
+background.
 """
 
 import functools
@@ -30,7 +25,6 @@ _SCALE = 2  # render at 2x so the image stays sharp when scaled to larger keys
 _COUNT_SIZE = 28
 _COUNT_COLOR = "#ffffff"
 _FALLBACK_FONT = "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
-_TITLE_MARGIN = 4
 
 
 @functools.lru_cache(maxsize=32)
@@ -57,43 +51,21 @@ def _font(family: str, size: int, bold: bool = False) -> ImageFont.FreeTypeFont 
     return ImageFont.load_default(size)
 
 
-def render(count: int, settings: dict[str, Any]) -> bytes:
-    """Render the key image: background, the count in the middle, and the optional title."""
+def render(count: int) -> bytes:
+    """Render the count, centred, on a transparent background."""
     size = _KEY_SIZE * _SCALE
-    img = Image.new("RGB", (size, size), settings["background"])
-    draw = ImageDraw.Draw(img)
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     centre = size // 2
-    draw.text(
+    ImageDraw.Draw(img).text(
         (centre, centre),
         str(count),
         fill=_COUNT_COLOR,
         font=_font("DejaVu Sans", _COUNT_SIZE * _SCALE, True),
         anchor="mm",
     )
-    title = str(settings["title"] or "")
-    if title:
-        _draw_title(draw, title, settings, size)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
-
-
-def _draw_title(draw: ImageDraw.ImageDraw, title: str, settings: dict[str, Any], size: int) -> None:
-    margin = _TITLE_MARGIN * _SCALE
-    anchor, y = {"top": ("mt", margin), "middle": ("mm", size // 2), "bottom": ("mb", size - margin)}[
-        settings["title_position"]
-    ]
-    outline_color = settings["title_outline"] or None
-    outline_width = settings["title_outline_width"] * _SCALE if outline_color else 0
-    draw.text(
-        (size // 2, y),
-        title,
-        fill=settings["title_color"],
-        font=_font(settings["title_font"] or "DejaVu Sans", settings["title_size"] * _SCALE),
-        anchor=anchor,
-        stroke_width=outline_width,
-        stroke_fill=outline_color,
-    )
 
 
 @action("com.decker.counter.counter")
@@ -135,5 +107,4 @@ class CounterAction(DeckerPlugin):
             self._count = 0
 
     def _push(self, ctx: ActionContext) -> None:
-        ctx.set_image(render(self._count, ctx.settings))
-        ctx.set_title(str(self._count))
+        ctx.set_image(render(self._count))

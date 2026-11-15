@@ -3,7 +3,7 @@
 import json
 import sqlite3
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,10 +25,25 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     action_uuid TEXT NOT NULL,
     context_id  TEXT NOT NULL,
     settings    TEXT NOT NULL DEFAULT '{{}}',
+    appearance  TEXT NOT NULL DEFAULT '{{}}',
     PRIMARY KEY (device_id, page_id, key_index)
 )
 """
-_COLUMNS = "key_index, plugin_uuid, action_uuid, context_id, settings"
+_META_SCHEMA = "CREATE TABLE IF NOT EXISTS key_assignment_meta (name TEXT PRIMARY KEY)"
+_LEGACY_COLUMNS = "key_index, plugin_uuid, action_uuid, context_id, settings"
+_COLUMNS = f"{_LEGACY_COLUMNS}, appearance"
+_COUNTER_PLUGIN = "com.decker.counter"
+_COUNTER_APPEARANCE_MIGRATION = "counter_appearance"
+_COUNTER_APPEARANCE_KEYS = (
+    "background",
+    "title",
+    "title_position",
+    "title_font",
+    "title_size",
+    "title_color",
+    "title_outline",
+    "title_outline_width",
+)
 
 
 @dataclass(frozen=True)
@@ -37,6 +52,7 @@ class KeyAssignment:
 
     target: ActionTarget
     settings: dict[str, Any]
+    appearance: dict[str, Any] = field(default_factory=dict)
 
 
 class KeyAssignmentStore(Manager):
@@ -53,6 +69,9 @@ class KeyAssignmentStore(Manager):
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._migrate_to_pages()
         self._db.execute(_SCHEMA)
+        self._db.execute(_META_SCHEMA)
+        self._add_appearance_column()
+        self._migrate_counter_appearance()
         self._db.commit()
 
     def destroy(self) -> None:
@@ -80,7 +99,8 @@ class KeyAssignmentStore(Manager):
                     plugin_uuid = excluded.plugin_uuid,
                     action_uuid = excluded.action_uuid,
                     context_id  = excluded.context_id,
-                    settings    = excluded.settings
+                    settings    = excluded.settings,
+                    appearance  = '{{}}'
                 """,
                 (
                     device_id,
@@ -122,6 +142,16 @@ class KeyAssignmentStore(Manager):
             self._db.commit()
         return cursor.rowcount > 0
 
+    def update_appearance(self, device_id: str, page_id: str, key_index: int, appearance: dict[str, Any]) -> bool:
+        """Overwrite the key's appearance. Returns False if slot is unassigned."""
+        with self._lock:
+            cursor = self._db.execute(
+                f"UPDATE {_TABLE} SET appearance = ? WHERE device_id = ? AND page_id = ? AND key_index = ?",
+                (json.dumps(appearance), device_id, page_id, key_index),
+            )
+            self._db.commit()
+        return cursor.rowcount > 0
+
     def all_for_page(self, device_id: str, page_id: str) -> list[tuple[int, KeyAssignment]]:
         """Return all assignments on one page as (key_index, assignment) pairs, in key order."""
         with self._lock:
@@ -141,19 +171,52 @@ class KeyAssignmentStore(Manager):
         columns = [row[1] for row in self._db.execute(f"PRAGMA table_info({_TABLE})").fetchall()]
         if not columns or "page_id" in columns:
             return
-        rows = self._db.execute(f"SELECT device_id, {_COLUMNS} FROM {_TABLE}").fetchall()
+        rows = self._db.execute(f"SELECT device_id, {_LEGACY_COLUMNS} FROM {_TABLE}").fetchall()
         with self._db:
             self._db.execute(f"ALTER TABLE {_TABLE} RENAME TO {_TABLE}_legacy")
             self._db.execute(_SCHEMA)
             self._db.executemany(
-                f"INSERT INTO {_TABLE} (device_id, page_id, {_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO {_TABLE} (device_id, page_id, {_LEGACY_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [(row[0], initial_page_id(row[0]), *row[1:]) for row in rows],
             )
             self._db.execute(f"DROP TABLE {_TABLE}_legacy")
 
+    def _add_appearance_column(self) -> None:
+        columns = [row[1] for row in self._db.execute(f"PRAGMA table_info({_TABLE})").fetchall()]
+        if "appearance" not in columns:
+            self._db.execute(f"ALTER TABLE {_TABLE} ADD COLUMN appearance TEXT NOT NULL DEFAULT '{{}}'")
+
+    def _migrate_counter_appearance(self) -> None:
+        done = self._db.execute(
+            "SELECT 1 FROM key_assignment_meta WHERE name = ?", (_COUNTER_APPEARANCE_MIGRATION,)
+        ).fetchone()
+        if done is not None:
+            return
+        rows = self._db.execute(
+            f"SELECT device_id, page_id, key_index, settings, appearance FROM {_TABLE} WHERE plugin_uuid = ?",
+            (_COUNTER_PLUGIN,),
+        ).fetchall()
+        for device_id, page_id, key_index, settings_json, appearance_json in rows:
+            settings = json.loads(settings_json)
+            moved = {k: settings.pop(k) for k in _COUNTER_APPEARANCE_KEYS if k in settings}
+            if not moved.get("title_outline"):
+                moved.pop("title_outline", None)
+            self._db.execute(
+                f"UPDATE {_TABLE} SET settings = ?, appearance = ? "
+                "WHERE device_id = ? AND page_id = ? AND key_index = ?",
+                (
+                    json.dumps(settings),
+                    json.dumps({**json.loads(appearance_json), **moved}),
+                    device_id,
+                    page_id,
+                    key_index,
+                ),
+            )
+        self._db.execute("INSERT INTO key_assignment_meta (name) VALUES (?)", (_COUNTER_APPEARANCE_MIGRATION,))
+
 
 def _to_assignment(device_id: str, row: tuple[Any, ...]) -> tuple[int, KeyAssignment]:
-    key_index, plugin_uuid, action_uuid, context_id, settings_json = row
+    key_index, plugin_uuid, action_uuid, context_id, settings_json, appearance_json = row
     target = ActionTarget(
         device_id=device_id,
         key_index=key_index,
@@ -161,4 +224,6 @@ def _to_assignment(device_id: str, row: tuple[Any, ...]) -> tuple[int, KeyAssign
         action_uuid=action_uuid,
         context_id=context_id,
     )
-    return key_index, KeyAssignment(target=target, settings=json.loads(settings_json))
+    return key_index, KeyAssignment(
+        target=target, settings=json.loads(settings_json), appearance=json.loads(appearance_json)
+    )

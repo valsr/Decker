@@ -55,6 +55,8 @@ class KeyState:
     action_uuid: str | None = None
     context_id: str | None = None
     settings: dict[str, Any] = field(default_factory=dict)
+    appearance: dict[str, Any] = field(default_factory=dict)
+    appearance_defaults: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

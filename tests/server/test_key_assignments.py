@@ -136,3 +136,81 @@ class TestPages:
         reopened.create(MagicMock())
         assert_that(reopened.all_for_page("dev1", initial_page_id("dev1"))).is_length(1)
         reopened.destroy()
+
+
+class TestAppearance:
+    def test_update_appearance_persists(self, store):
+        store.assign("dev1", "p1", 0, _target(), {})
+
+        assert_that(store.update_appearance("dev1", "p1", 0, {"title": "A"})).is_true()
+
+        assert_that(store.get("dev1", "p1", 0).appearance).is_equal_to({"title": "A"})
+        assert_that(store.all_for_page("dev1", "p1")[0][1].appearance).is_equal_to({"title": "A"})
+
+    def test_update_appearance_on_unassigned_slot_returns_false(self, store):
+        assert_that(store.update_appearance("dev1", "p1", 0, {"title": "A"})).is_false()
+
+    def test_reassigning_resets_appearance(self, store):
+        store.assign("dev1", "p1", 0, _target(), {})
+        store.update_appearance("dev1", "p1", 0, {"title": "A"})
+
+        store.assign("dev1", "p1", 0, _target(ctx="ctx2"), {})
+
+        assert_that(store.get("dev1", "p1", 0).appearance).is_equal_to({})
+
+    def _legacy_db(self, tmp_path, with_appearance_column=False):
+        db = tmp_path / "old.db"
+        conn = sqlite3.connect(db)
+        conn.execute("""CREATE TABLE key_assignments (device_id TEXT NOT NULL, page_id TEXT NOT NULL,
+            key_index INTEGER NOT NULL, plugin_uuid TEXT NOT NULL, action_uuid TEXT NOT NULL,
+            context_id TEXT NOT NULL, settings TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (device_id, page_id, key_index))""")
+        counter = '{"step": 2, "background": "#ff0000", "title": "A", "title_outline": ""}'
+        conn.execute(
+            "INSERT INTO key_assignments VALUES ('d', 'p1', 0, 'com.decker.counter', 'a', 'c1', ?)", (counter,)
+        )
+        conn.execute(
+            "INSERT INTO key_assignments VALUES ('d', 'p1', 1, 'com.other', 'a', 'c2', '{\"title\": \"keep\"}')"
+        )
+        conn.commit()
+        conn.close()
+        return db
+
+    def test_appearance_column_migrated_with_empty_default(self, tmp_path):
+        migrated = KeyAssignmentStore(db_path=self._legacy_db(tmp_path))
+        migrated.create(MagicMock())
+
+        other = migrated.get("d", "p1", 1)
+        assert other is not None
+
+        assert_that(other.appearance).is_equal_to({})
+        assert_that(other.settings).is_equal_to({"title": "keep"})
+        migrated.destroy()
+
+    def test_counter_appearance_migrated_out_of_settings(self, tmp_path):
+        db = self._legacy_db(tmp_path)
+        migrated = KeyAssignmentStore(db_path=db)
+        migrated.create(MagicMock())
+
+        counter = migrated.get("d", "p1", 0)
+        assert counter is not None
+
+        assert_that(counter.settings).is_equal_to({"step": 2})
+        assert_that(counter.appearance).is_equal_to({"background": "#ff0000", "title": "A"})
+        migrated.destroy()
+
+    def test_counter_migration_runs_only_once(self, tmp_path):
+        db = self._legacy_db(tmp_path)
+        first = KeyAssignmentStore(db_path=db)
+        first.create(MagicMock())
+        first.update_settings("d", "p1", 0, {"step": 2, "title": "stale client value"})
+        first.destroy()
+
+        second = KeyAssignmentStore(db_path=db)
+        second.create(MagicMock())
+
+        counter = second.get("d", "p1", 0)
+        assert counter is not None
+        assert_that(counter.settings).is_equal_to({"step": 2, "title": "stale client value"})
+        assert_that(counter.appearance).is_equal_to({"background": "#ff0000", "title": "A"})
+        second.destroy()

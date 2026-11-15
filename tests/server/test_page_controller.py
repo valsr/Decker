@@ -100,7 +100,7 @@ class TestActivate:
                 call.pm.deactivate_action(old),
                 call.dm.show_page(DEV, page2.page_id),
                 call.pm.store_settings(new, {"step": 2}),
-                call.pm.activate_action(new),
+                call.pm.activate_action(new, {}),
             ]
         )
         assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(page2.page_id)
@@ -132,7 +132,7 @@ class TestRestore:
 
         context.device_manager.show_page.assert_called_once_with(DEV, PAGE1)
         context.plugin_manager.store_settings.assert_called_once_with(target, {"x": 1})
-        context.plugin_manager.activate_action.assert_called_once_with(target)
+        context.plugin_manager.activate_action.assert_called_once_with(target, {})
 
 
 class TestEditing:
