@@ -65,6 +65,7 @@ def store():
 def manager():
     mock = MagicMock()
     mock.complete_settings.side_effect = lambda _target, settings: settings
+    mock.appearance_for.side_effect = lambda _target, stored: (dict(stored), {"background": "#000000"})
     return mock
 
 
@@ -205,6 +206,41 @@ class TestKeyUpdateSettings:
         manager.dispatch_settings_changed.assert_not_called()
 
 
+class TestKeyUpdateAppearance:
+    def test_key_update_appearance_rpc(self, service, manager, store):
+        target = _make_target()
+        store.assign("dev1", P1, 0, target, {})
+
+        result = service.key_update_appearance(
+            "dev1", P1, 0, json.dumps({"background": "#ff0000", "title": "A", "bogus": 1})
+        )
+
+        assert_that(result).is_true()
+        assert_that(store.get("dev1", P1, 0).appearance).is_equal_to({"background": "#ff0000", "title": "A"})
+        manager.set_appearance.assert_called_once_with(target, {"background": "#ff0000", "title": "A"})
+        manager.dispatch_settings_changed.assert_not_called()
+
+    def test_unassigned_slot_returns_false(self, service, manager):
+        assert_that(service.key_update_appearance("dev1", P1, 5, "{}")).is_false()
+        manager.set_appearance.assert_not_called()
+
+    def test_non_object_json_is_rejected(self, service, store):
+        store.assign("dev1", P1, 0, _make_target(), {})
+
+        assert_that(service.key_update_appearance("dev1", P1, 0, "[1]")).is_false()
+
+    def test_inactive_page_is_stored_without_redraw(self, service, manager, store):
+        page2 = service._context.page_store.add_page("dev1").page_id  # pylint: disable=protected-access
+        store.assign("dev1", page2, 0, _make_target(), {})
+
+        assert_that(service.key_update_appearance("dev1", page2, 0, json.dumps({"title": "x"}))).is_true()
+
+        manager.set_appearance.assert_not_called()
+
+    def test_without_context_returns_false(self):
+        assert_that(DeckerService().key_update_appearance("dev1", P1, 0, "{}")).is_false()
+
+
 class TestKeyGetStates:
     def _make_mock_device(self, num_keys: int = 2):
         from decker.common.model import (  # pylint: disable=import-outside-toplevel
@@ -275,6 +311,22 @@ class TestKeyGetStates:
         assert_that(states[1]["key_index"]).is_equal_to(1)
         assert_that(states[1]["plugin_uuid"]).is_none()
         assert_that(states[1]["label"]).is_equal_to("")
+
+    def test_states_carry_appearance_and_defaults(self, service, store):
+        service._context.device_manager.open_device.return_value = self._make_mock_device(
+            num_keys=2
+        )  # pylint: disable=protected-access
+        service._context.device_manager.get_device_state.return_value = (  # pylint: disable=protected-access
+            self._make_mock_device_state()
+        )
+        store.assign("dev1", P1, 0, _make_target(), {})
+        store.update_appearance("dev1", P1, 0, {"title": "Hi"})
+
+        states = json.loads(service.key_get_states("dev1"))
+
+        assert_that(states[0]["appearance"]).is_equal_to({"title": "Hi"})
+        assert_that(states[0]["appearance_defaults"]).is_equal_to({"background": "#000000"})
+        assert_that(states[1]["appearance"]).is_equal_to({})
 
     def test_returns_key_image_as_base64(self, service, store):
         import base64  # pylint: disable=import-outside-toplevel

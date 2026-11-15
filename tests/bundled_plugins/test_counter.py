@@ -44,6 +44,7 @@ class Harness:
     """Runs the counter through the SDK loop on os.pipe streams."""
 
     def __init__(self, counter: ModuleType) -> None:
+        self.seen: list[str] = []
         in_r, in_w = os.pipe()
         out_r, out_w = os.pipe()
         self._to_plugin = os.fdopen(in_w, "wb")
@@ -67,7 +68,9 @@ class Harness:
     def recv(self) -> dict:
         line = self._from_plugin.readline()
         assert line, "plugin closed stdout"
-        return json.loads(line)
+        message = json.loads(line)
+        self.seen.append(message["event"])
+        return message
 
     def recv_until(self, event: str) -> dict:
         while True:
@@ -88,8 +91,8 @@ class Harness:
             },
         )
 
-    def next_title(self) -> str:
-        return self.recv_until("set_title")["payload"]["title"]
+    def next_png(self) -> bytes:
+        return base64.b64decode(self.recv_until("set_image")["payload"]["image"])
 
     def close(self) -> None:
         self.send("shutdown")
@@ -124,139 +127,92 @@ class TestGestures:
 
 
 class TestCounting:
-    def test_press_increments(self, harness):
+    def test_press_increments(self, harness, counter):
         harness.appear(step=3)
-        assert_that(harness.next_title()).is_equal_to("0")
+        assert_that(harness.next_png()).is_equal_to(counter.render(0))
 
         harness.send("press", "c1")
-        assert_that(harness.next_title()).is_equal_to("3")
+        assert_that(harness.next_png()).is_equal_to(counter.render(3))
         harness.send("press", "c1")
-        assert_that(harness.next_title()).is_equal_to("6")
+        assert_that(harness.next_png()).is_equal_to(counter.render(6))
 
-    def test_default_step_is_one(self, harness):
+    def test_default_step_is_one(self, harness, counter):
         harness.appear()
-        harness.next_title()
+        harness.next_png()
 
         harness.send("press", "c1")
 
-        assert_that(harness.next_title()).is_equal_to("1")
+        assert_that(harness.next_png()).is_equal_to(counter.render(1))
 
-    def test_double_press_adds_double_step(self, harness):
+    def test_double_press_adds_double_step(self, harness, counter):
         harness.appear(step=1, double_step=10)
-        harness.next_title()
+        harness.next_png()
 
         harness.send("press", "c1")
-        harness.next_title()
+        harness.next_png()
         harness.send("double_press", "c1")
 
-        assert_that(harness.next_title()).is_equal_to("11")
+        assert_that(harness.next_png()).is_equal_to(counter.render(11))
 
-    def test_long_press_resets(self, harness):
+    def test_long_press_resets(self, harness, counter):
         harness.appear(step=4)
-        harness.next_title()
+        harness.next_png()
         harness.send("press", "c1")
-        harness.next_title()
+        harness.next_png()
 
         harness.send("long_press", "c1")
 
-        assert_that(harness.next_title()).is_equal_to("0")
+        assert_that(harness.next_png()).is_equal_to(counter.render(0))
 
-    def test_max_wraps(self, harness):
+    def test_max_wraps(self, harness, counter):
         harness.appear(step=2, max=4)
-        harness.next_title()
+        harness.next_png()
 
         harness.send("press", "c1")
-        assert_that(harness.next_title()).is_equal_to("2")
+        assert_that(harness.next_png()).is_equal_to(counter.render(2))
         harness.send("press", "c1")
-        assert_that(harness.next_title()).is_equal_to("0")
+        assert_that(harness.next_png()).is_equal_to(counter.render(0))
 
-    def test_image_is_a_png_in_the_chosen_background(self, harness):
-        harness.appear(background="#ff0000")
+    def test_counter_no_longer_sets_title(self, harness):
+        harness.appear()
+        harness.next_png()
+        harness.send("press", "c1")
+        harness.next_png()
 
-        message = harness.recv_until("set_image")["payload"]
-
-        assert_that(message["format"]).is_equal_to("png")
-        assert_that(_image(base64.b64decode(message["image"])).getpixel((2, 2))).is_equal_to((255, 0, 0))
+        assert_that(harness.seen).does_not_contain("set_title")
 
     def test_settings_change_redraws(self, harness):
         harness.appear()
-        harness.recv_until("set_image")
+        harness.next_png()
 
-        harness.send("settings_changed", "c1", {"settings": _settings(background="#00ff00")})
-        message = harness.recv_until("set_image")["payload"]
+        harness.send("settings_changed", "c1", {"settings": _settings(step=2)})
 
-        assert_that(_image(base64.b64decode(message["image"])).getpixel((2, 2))).is_equal_to((0, 255, 0))
+        assert_that(harness.next_png()).is_not_empty()
 
 
 class TestSettingsSchema:
-    def test_empty_outline_and_double_step_become_none(self):
-        settings = _settings(title_outline="", double_step="")
-
-        assert_that(settings["title_outline"]).is_none()
-        assert_that(settings["double_step"]).is_none()
+    def test_empty_double_step_becomes_none(self):
+        assert_that(_settings(double_step="")["double_step"]).is_none()
 
     def test_defaults_match_the_original_counter(self):
-        assert_that(_settings()).is_equal_to(
-            {
-                "step": 1,
-                "double_step": None,
-                "max": 0,
-                "background": "#1f618d",
-                "title": "",
-                "title_position": "bottom",
-                "title_font": "DejaVu Sans",
-                "title_size": 12,
-                "title_color": "#ffffff",
-                "title_outline": None,
-                "title_outline_width": 1,
-            }
-        )
+        assert_that(_settings()).is_equal_to({"step": 1, "double_step": None, "max": 0})
 
-    def test_everything_the_client_form_sends_is_kept(self):
-        sent = {
-            "step": 5,
-            "double_step": -3,
-            "max": 99999,
-            "background": "#102030",
-            "title": "Hi",
-            "title_position": "top",
-            "title_font": "Noto Sans",
-            "title_size": 48,
-            "title_color": "#abcdef",
-            "title_outline": "#000000",
-            "title_outline_width": 6,
-        }
+    def test_appearance_keys_are_no_longer_settings(self):
+        assert_that(_settings(background="#102030", title="Hi")).is_equal_to({"step": 1, "double_step": None, "max": 0})
 
-        assert_that(_settings(**sent)).is_equal_to(sent)
+    def test_manifest_declares_the_blue_background_default(self):
+        spec = PluginManifest.load(_DIR / "manifest.json").actions[0]
+
+        assert_that(spec.appearance).is_equal_to({"background": "#1f618d"})
 
 
 class TestRender:
-    def test_default_background_is_the_counter_blue(self, counter):
-        image = _image(counter.render(0, _settings()))
+    def test_image_is_transparent_with_the_count(self, counter):
+        image = Image.open(io.BytesIO(counter.render(8))).convert("RGBA")
 
         assert_that(image.size).is_equal_to((144, 144))
-        assert_that(image.getpixel((2, 2))).is_equal_to((31, 97, 141))
-
-    @pytest.mark.parametrize("position,band", [("top", (0, 40)), ("middle", (52, 92)), ("bottom", (104, 144))])
-    def test_title_is_drawn_at_its_position(self, counter, position, band):
-        settings = _settings(title="WWWW", title_position=position, title_color="#ffff00", title_size=14)
-
-        image = _image(counter.render(8, settings))
-
-        yellow_rows = {y for y in range(144) for x in range(144) if image.getpixel((x, y)) == (255, 255, 0)}
-        assert_that(yellow_rows).is_not_empty()
-        assert_that(min(yellow_rows)).is_greater_than_or_equal_to(band[0])
-        assert_that(max(yellow_rows)).is_less_than(band[1])
-
-    def test_outline_is_drawn_only_when_set(self, counter):
-        values = {"title": "WWWW", "title_color": "#ffff00", "title_outline_width": 2}
-
-        plain = _image(counter.render(0, _settings(**values)))
-        outlined = _image(counter.render(0, _settings(**values, title_outline="#ff00ff")))
-
-        magenta = (255, 0, 255)
-        assert_that(any(p == magenta for p in plain.get_flattened_data())).is_false()
-        assert_that(any(p == magenta for p in outlined.get_flattened_data())).is_true()
+        assert_that(image.getpixel((2, 2))).is_equal_to((0, 0, 0, 0))
+        assert_that(any(p[3] > 0 for p in image.get_flattened_data())).is_true()  # type: ignore[index]
 
     def test_missing_fontconfig_falls_back(self, counter, monkeypatch):
         def _missing(*_args: Any, **_kwargs: Any) -> None:
@@ -264,7 +220,7 @@ class TestRender:
 
         counter._font_file.cache_clear()  # pylint: disable=protected-access
         monkeypatch.setattr(counter.subprocess, "run", _missing)
-        data = counter.render(0, _settings(title="x", title_font="Anything"))
+        data = counter.render(0)
         counter._font_file.cache_clear()  # pylint: disable=protected-access
 
         assert_that(_image(data).size).is_equal_to((144, 144))

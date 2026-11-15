@@ -141,7 +141,7 @@ class PageController(Manager):
         for _key_index, assignment in self._ctx.key_assignment_store.all_for_page(device_id, page_id):
             target = assignment.target
             plugins.store_settings(target, assignment.settings)
-            plugins.activate_action(target)
+            plugins.activate_action(target, assignment.appearance)
 
     def _notify(self, device_id: str) -> None:
         self._ctx.event_bus.push(PAGES_CHANGED_EVENT, json.dumps({"device_id": device_id}))

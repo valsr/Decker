@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from rpyc.core.service import Service
 from rpyc.utils import exposed
 
+from decker.common.appearance_schema import APPEARANCE_KEYS
 from decker.common.model import DeviceHardwareInfo, DevicePages, KeyState, PageInfo
 from decker.common.utils import api_response
 from decker.plugin.target import ActionTarget
@@ -159,7 +160,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         pm.store_settings(target, settings)
         if is_active:
             self._context.device_manager.open_device(device_id)
-            pm.activate_action(target)
+            pm.activate_action(target, {})
         return True
 
     @exposed
@@ -204,6 +205,28 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         self._context.plugin_manager.store_settings(assignment.target, settings)
         if self._is_active_page(device_id, page_id):
             self._context.plugin_manager.dispatch_settings_changed(assignment.target)
+        return True
+
+    @exposed
+    def key_update_appearance(self, device_id: str, page_id: str, key_index: int, appearance_json: str) -> bool:
+        """
+        Update the Decker-drawn appearance (background, title) of a key; a live key is redrawn at once.
+
+        Returns:
+            bool: True if the slot was assigned and the appearance was persisted.
+        """
+        if self._context is None:
+            return False
+        raw = json.loads(appearance_json)
+        if not isinstance(raw, dict):
+            return False
+        appearance = {k: v for k, v in raw.items() if k in APPEARANCE_KEYS}
+        key_store = self._context.key_assignment_store
+        if not key_store.update_appearance(device_id, page_id, key_index, appearance):
+            return False
+        assignment = key_store.get(device_id, page_id, key_index)
+        if assignment is not None and self._is_active_page(device_id, page_id):
+            self._context.plugin_manager.set_appearance(assignment.target, appearance)
         return True
 
     @exposed
@@ -266,6 +289,11 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             per_key = device_state.get_key_state(key_index) if device_state is not None else None
             raw_image = per_key.image if per_key is not None else None
             image_b64 = base64.b64encode(raw_image).decode("ascii") if raw_image else None
+            appearance, defaults = (
+                self._context.plugin_manager.appearance_for(assignment.target, assignment.appearance)
+                if assignment
+                else ({}, {})
+            )
             result.append(
                 KeyState(
                     key_index=key_index,
@@ -282,6 +310,8 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
                         if assignment
                         else {}
                     ),
+                    appearance=appearance,
+                    appearance_defaults=defaults,
                 )
             )
         return result
