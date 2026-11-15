@@ -1,6 +1,6 @@
 """Tests for decker.client.tray.TrayIcon."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from assertpy import assert_that
 from PyQt6.QtWidgets import QSystemTrayIcon
@@ -15,10 +15,19 @@ def _make_window(visible: bool = True) -> MagicMock:
 
 
 class TestMenu:
-    def test_menu_has_toggle_and_exit_actions(self, qapp):  # pylint: disable=unused-argument
+    def test_menu_has_show_hide_settings_and_quit(self, qapp):  # pylint: disable=unused-argument
         tray = TrayIcon(_make_window())
-        labels = [action.text() for action in tray._menu.actions()]  # pylint: disable=protected-access
-        assert_that(labels).is_equal_to(["Hide", "Exit"])
+        actions = tray._menu.actions()  # pylint: disable=protected-access
+        labels = [action.text() for action in actions if not action.isSeparator()]
+        assert_that(labels).is_equal_to(["Hide", "Settings", "Quit"])
+
+    def test_settings_opens_settings_dialog(self, qapp):  # pylint: disable=unused-argument
+        window = _make_window()
+        tray = TrayIcon(window)
+
+        _action(tray, "Settings").trigger()
+
+        window.open_settings.assert_called_once()
 
     def test_toggle_label_reflects_visible_window(self, qapp):  # pylint: disable=unused-argument
         tray = TrayIcon(_make_window(visible=True))
@@ -64,9 +73,15 @@ class TestActivated:
         window.show.assert_not_called()
 
 
-class TestExit:
-    def test_exit_action_quits_application(self, qapp):  # pylint: disable=unused-argument
-        tray = TrayIcon(_make_window())
-        with patch("decker.client.tray.QApplication.quit") as mock_quit:
-            tray._exit_app()  # pylint: disable=protected-access
-        mock_quit.assert_called_once()
+class TestQuit:
+    def test_quit_action_shuts_the_app_down_through_the_window(self, qapp):  # pylint: disable=unused-argument
+        window = _make_window()
+        tray = TrayIcon(window)
+
+        _action(tray, "Quit").trigger()
+
+        window.quit_app.assert_called_once()
+
+
+def _action(tray: TrayIcon, text: str):
+    return next(a for a in tray._menu.actions() if a.text() == text)  # pylint: disable=protected-access

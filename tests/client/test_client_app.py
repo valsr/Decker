@@ -47,3 +47,4 @@ class TestMain:
         mock_window_cls.assert_called_once_with(manager_instance)
         mock_tray_cls.assert_called_once_with(window_instance)
         tray_instance.show.assert_called_once()
+        mock_qapp_cls.return_value.setQuitOnLastWindowClosed.assert_called_once_with(False)

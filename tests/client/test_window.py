@@ -17,7 +17,7 @@ from decker.client.events import (
 from decker.client.events.event_manager import EventManager
 from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
-from decker.client.window import MainWindow
+from decker.client.window import MainWindow, _should_close_to_tray
 from decker.common.model import DevicePages, PageInfo
 
 
@@ -200,6 +200,11 @@ class TestRestart:
 
 
 class TestCloseEvent:
+    @pytest.fixture(autouse=True)
+    def _quit_on_close(self, monkeypatch):
+        monkeypatch.setattr("decker.client.window._should_close_to_tray", lambda: False)
+        monkeypatch.setattr("decker.client.window.QApplication.instance", MagicMock)
+
     def test_stops_connection_manager(self, window, connection_manager):  # pylint: disable=redefined-outer-name
         window.closeEvent(QCloseEvent())
 
@@ -218,6 +223,60 @@ class TestCloseEvent:
 
         for view in window._views.values():  # pylint: disable=protected-access
             view.save_state.assert_called_once()
+
+
+class TestCloseToTray:
+    @pytest.fixture(autouse=True)
+    def _app(self, monkeypatch):
+        self.app = MagicMock()
+        monkeypatch.setattr("decker.client.window.QApplication.instance", lambda: self.app)
+
+    def test_close_hides_to_tray_and_keeps_running(
+        self, window, connection_manager, monkeypatch
+    ):  # pylint: disable=redefined-outer-name
+        monkeypatch.setattr("decker.client.window._should_close_to_tray", lambda: True)
+        window.show()
+        event = QCloseEvent()
+
+        window.closeEvent(event)
+
+        assert_that(event.isAccepted()).is_false()
+        assert_that(window.isVisible()).is_false()
+        connection_manager.stop.assert_not_called()
+        self.app.quit.assert_not_called()
+        assert_that(window._ui_state_store.get("window_geometry")).is_not_none()  # pylint: disable=protected-access
+
+    def test_close_without_close_to_tray_quits(
+        self, window, connection_manager, monkeypatch
+    ):  # pylint: disable=redefined-outer-name
+        monkeypatch.setattr("decker.client.window._should_close_to_tray", lambda: False)
+
+        window.closeEvent(QCloseEvent())
+
+        connection_manager.stop.assert_called_once()
+        self.app.quit.assert_called_once()
+
+    def test_quit_app_shuts_down_even_with_close_to_tray(
+        self, window, connection_manager, monkeypatch
+    ):  # pylint: disable=redefined-outer-name
+        monkeypatch.setattr("decker.client.window._should_close_to_tray", lambda: True)
+        window.show()
+
+        window.quit_app()
+
+        connection_manager.stop.assert_called_once()
+        self.app.quit.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "enabled,tray_available,expected", [(True, True, True), (True, False, False), (False, True, False)]
+    )
+    def test_close_to_tray_needs_setting_and_a_tray(self, monkeypatch, enabled, tray_available, expected):
+        monkeypatch.setattr("decker.client.window.client_config.get_close_to_tray", lambda: enabled)
+        monkeypatch.setattr(
+            "decker.client.window.QSystemTrayIcon.isSystemTrayAvailable", staticmethod(lambda: tray_available)
+        )
+
+        assert_that(_should_close_to_tray()).is_equal_to(expected)
 
 
 class TestShowEvent:
