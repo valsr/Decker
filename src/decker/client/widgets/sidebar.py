@@ -1,18 +1,15 @@
-"""Collapsible sidebar: searchable plugin action list, plus theme/settings/device buttons."""
+"""Collapsible sidebar: searchable, draggable plugin action list."""
 
 import json
-from typing import Any
 
-from PyQt6.QtCore import QByteArray, QMimeData, Qt, pyqtSignal
+from PyQt6.QtCore import QByteArray, QMimeData, Qt
 from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFrame,
-    QHBoxLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QToolButton,
     QVBoxLayout,
 )
 
@@ -35,11 +32,7 @@ class _DraggableActionList(QListWidget):
 
 
 class SidebarWidget(QFrame):
-    """Search-filterable plugin action list, plus a bottom row of theme/settings/device buttons."""
-
-    theme_clicked = pyqtSignal()
-    settings_clicked = pyqtSignal()
-    device_switcher_clicked = pyqtSignal()
+    """Search-filterable plugin action list filling the whole sidebar."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -53,32 +46,9 @@ class SidebarWidget(QFrame):
         self._action_list.setDragEnabled(True)
         self._action_list.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
 
-        theme_btn = QToolButton()
-        theme_btn.setText("Theme")
-        theme_btn.clicked.connect(self.theme_clicked.emit)
-
-        settings_btn = QToolButton()
-        settings_btn.setText("Settings")
-        settings_btn.clicked.connect(self.settings_clicked.emit)
-
-        self._device_switcher_button = QToolButton()
-        self._device_switcher_button.setText("Device")
-        self._device_switcher_button.clicked.connect(self.device_switcher_clicked.emit)
-
-        bottom_row = QHBoxLayout()
-        bottom_row.addWidget(theme_btn)
-        bottom_row.addWidget(settings_btn)
-        bottom_row.addWidget(self._device_switcher_button)
-
         layout = QVBoxLayout(self)
         layout.addWidget(self._search)
-        layout.addWidget(self._action_list)
-        layout.addLayout(bottom_row)
-
-    @property
-    def device_switcher_button(self) -> QToolButton:
-        """The device-switcher button, used as the DeviceSwitcherPopup's anchor."""
-        return self._device_switcher_button
+        layout.addWidget(self._action_list, 1)
 
     def set_actions(self, actions: list[dict[str, str]]) -> None:
         """Replace the full action list and reapply the current search filter."""

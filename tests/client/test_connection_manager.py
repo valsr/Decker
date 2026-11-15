@@ -17,12 +17,13 @@ from decker.client.events import (
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     KeyEvent,
+    PagesUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
-from decker.common.model import DeviceHardwareInfo
+from decker.common.model import DeviceHardwareInfo, DevicePages, PageInfo
 from decker.common.utils import api_response
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
 
@@ -424,3 +425,98 @@ class TestOnServerEvent:
 
     def test_malformed_payload_does_not_raise(self):
         self.manager._on_server_event("key_event", "NOT JSON")  # pylint: disable=protected-access
+
+
+_DEVICE_PAGES = DevicePages(
+    device_id="dev1",
+    pages=[PageInfo("p1", "Page 1"), PageInfo("p2", "Media")],
+    default_page_id="p1",
+    active_page_id="p2",
+)
+
+
+@api_response
+def _pages_payload(pages: DevicePages) -> DevicePages:
+    """Serialise with the server's own encoder so the wire format can't drift."""
+    return pages
+
+
+class TestPageRefresh:  # pylint: disable=protected-access
+    def setup_method(self):
+        EventManager.reset()
+        AppContext.reset()
+        AppContext.get().active_device = DeviceHardwareInfo(
+            id="dev1", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15
+        )
+        self.manager = ConnectionManager()
+        self.conn = MagicMock()
+        self.conn.root.pages_list.return_value = str(_pages_payload(_DEVICE_PAGES))
+        self.conn.root.key_get_states.return_value = json.dumps([])
+        self.manager._conn = self.conn
+
+    def teardown_method(self):
+        self.manager._conn = None
+        AppContext.reset()
+
+    def test_refresh_pages_pushes_parsed_pages(self):
+        self.manager._refresh_pages()
+
+        events = [e for e in EventManager.get().drain() if isinstance(e, PagesUpdatedEvent)]
+        assert_that(events).is_length(1)
+        assert_that(events[0].pages).is_equal_to(_DEVICE_PAGES)
+        self.conn.root.pages_list.assert_called_once_with("dev1")
+
+    def test_refresh_pages_without_device_is_a_no_op(self):
+        AppContext.reset()
+
+        self.manager._refresh_pages()
+
+        self.conn.root.pages_list.assert_not_called()
+
+    def test_malformed_or_failed_pages_response_is_logged_not_raised(self):
+        for reply in (json.dumps([]), json.dumps({"device_id": "dev1", "pages": []}), RuntimeError("down")):
+            if isinstance(reply, Exception):
+                self.conn.root.pages_list.side_effect = reply
+            else:
+                self.conn.root.pages_list.return_value = reply
+
+            self.manager._refresh_pages()
+
+        assert_that([e for e in EventManager.get().drain() if isinstance(e, PagesUpdatedEvent)]).is_empty()
+
+    def test_pages_changed_for_active_device_requests_refresh(self):
+        self.manager._on_server_event("pages_changed", json.dumps({"device_id": "dev1"}))
+
+        assert_that(self.manager._device_refresh_requested.is_set()).is_true()
+        assert_that(self.manager._wake_event.is_set()).is_true()
+        self.conn.root.pages_list.assert_not_called()  # fetched later on the worker thread
+
+    def test_pages_changed_for_other_device_is_ignored(self):
+        self.manager._on_server_event("pages_changed", json.dumps({"device_id": "other"}))
+
+        assert_that(self.manager._device_refresh_requested.is_set()).is_false()
+
+    def test_worker_handles_refresh_request(self):
+        self.manager.request_device_refresh()
+        with patch("decker.client.connection_manager._HEARTBEAT_INTERVAL_S", 3600):
+            self.manager._run_once(last_heartbeat=time.monotonic())
+
+        self.conn.root.pages_list.assert_called_once_with("dev1")
+        self.conn.root.key_get_states.assert_called_once_with("dev1")
+        assert_that(self.manager._device_refresh_requested.is_set()).is_false()
+
+    @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
+    def test_connect_fetches_pages_for_active_device(self, mock_connect: MagicMock):
+        conn = _healthy_conn()
+        conn.root.pages_list.return_value = str(_pages_payload(_DEVICE_PAGES))
+        conn.root.key_get_states.return_value = json.dumps([])
+        mock_connect.return_value = conn
+        self.manager._conn = None
+        with (
+            patch("decker.client.config.get_server_host", return_value="localhost"),
+            patch("decker.client.config.get_server_port", return_value=18861),
+        ):
+            self.manager._try_connect()
+
+        assert_that([e for e in EventManager.get().drain() if isinstance(e, PagesUpdatedEvent)]).is_length(1)
+        self.manager._close_connection()

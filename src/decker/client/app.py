@@ -8,8 +8,9 @@ from pathlib import Path
 from PyQt6.QtWidgets import QApplication
 
 import decker.common.logging
-from decker.client.assets import load_stylesheet
+from decker.client.assets import resolve_theme
 from decker.client.connection_manager import ConnectionManager
+from decker.client.themes import apply_theme
 from decker.client.tray import TrayIcon
 from decker.client.window import MainWindow
 from decker.common import paths as decker_paths
@@ -35,7 +36,7 @@ def main() -> None:
 
     decker.common.logging.configure(level=logging.WARNING)
     app = QApplication(sys.argv)
-    app.setStyleSheet(load_stylesheet())
+    apply_theme(app, *resolve_theme())
 
     connection_manager = ConnectionManager()
     connection_manager.start()

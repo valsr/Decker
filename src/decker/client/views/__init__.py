@@ -5,7 +5,6 @@ from decker.client.views.connecting import ReconnectWaitingOverlay
 from decker.client.views.dashboard import DashboardView
 from decker.client.views.device import DeviceView
 from decker.client.views.error import ErrorView
-from decker.client.views.settings import SettingsView
 
 __all__ = [
     "BaseView",
@@ -13,5 +12,4 @@ __all__ = [
     "DashboardView",
     "DeviceView",
     "ErrorView",
-    "SettingsView",
 ]

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from rpyc.core.service import Service
 from rpyc.utils import exposed
 
-from decker.common.model import DeviceHardwareInfo, KeyState
+from decker.common.model import DeviceHardwareInfo, DevicePages, KeyState, PageInfo
 from decker.common.utils import api_response
 from decker.plugin.context import ActionTarget
 
@@ -38,7 +38,7 @@ class DeckerServiceStatus:
     last_heartbeat: float
 
 
-class DeckerService(Service):
+class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one method per RPC
     """RPyC service exposed to clients for controlling the Decker application."""
 
     _context: "ServerContext | None" = None
@@ -126,6 +126,7 @@ class DeckerService(Service):
     def key_assign(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         device_id: str,
+        page_id: str,
         key_index: int,
         plugin_uuid: str,
         action_uuid: str,
@@ -133,12 +134,12 @@ class DeckerService(Service):
         settings_json: str = "{}",
     ) -> bool:
         """
-        Assign a plugin action to a key slot and activate it.
+        Assign a plugin action to a key slot on a page, activating it if the page is on the device.
 
         Returns:
-            bool: True if the action was activated successfully.
+            bool: False if the page does not exist on the device.
         """
-        if self._context is None:
+        if self._context is None or self._context.page_store.get(device_id, page_id) is None:
             return False
         settings: dict[str, Any] = json.loads(settings_json)
         target = ActionTarget(
@@ -150,19 +151,21 @@ class DeckerService(Service):
         )
         key_store = self._context.key_assignment_store
         pm = self._context.plugin_manager
-        dm = self._context.device_manager
-        existing = key_store.get(device_id, key_index)
-        if existing is not None:
+        is_active = self._is_active_page(device_id, page_id)
+        existing = key_store.get(device_id, page_id, key_index)
+        if existing is not None and is_active:
             pm.deactivate_action(existing.target)
-        key_store.assign(device_id, key_index, target, settings)
-        dm.open_device(device_id)
-        pm.activate_action(target)
+        key_store.assign(device_id, page_id, key_index, target, settings)
+        pm.store_settings(target, settings)
+        if is_active:
+            self._context.device_manager.open_device(device_id)
+            pm.activate_action(target)
         return True
 
     @exposed
-    def key_unassign(self, device_id: str, key_index: int) -> bool:
+    def key_unassign(self, device_id: str, page_id: str, key_index: int) -> bool:
         """
-        Remove a plugin action from a key slot and deactivate it.
+        Remove a plugin action from a key slot on a page, deactivating it if the page is on the device.
 
         Returns:
             bool: True if an assignment existed and was removed.
@@ -170,18 +173,21 @@ class DeckerService(Service):
         if self._context is None:
             return False
         key_store = self._context.key_assignment_store
-        assignment = key_store.get(device_id, key_index)
+        assignment = key_store.get(device_id, page_id, key_index)
         if assignment is None:
             return False
-        self._context.plugin_manager.deactivate_action(assignment.target)
-        key_store.unassign(device_id, key_index)
-        self._context.device_manager.clear_key_state(device_id, key_index)
+        key_store.unassign(device_id, page_id, key_index)
+        if self._is_active_page(device_id, page_id):
+            self._context.plugin_manager.deactivate_action(assignment.target)
+            self._context.device_manager.clear_key_state(device_id, key_index)
+        else:
+            self._context.device_state_store.delete_key_state(device_id, page_id, key_index)
         return True
 
     @exposed
-    def key_update_settings(self, device_id: str, key_index: int, settings_json: str) -> bool:
+    def key_update_settings(self, device_id: str, page_id: str, key_index: int, settings_json: str) -> bool:
         """
-        Update per-key action settings and notify the plugin via on_settings_changed.
+        Update per-key action settings; a live action is notified via on_settings_changed.
 
         Returns:
             bool: True if the slot was assigned and settings were persisted.
@@ -190,22 +196,56 @@ class DeckerService(Service):
             return False
         settings: dict[str, Any] = json.loads(settings_json)
         key_store = self._context.key_assignment_store
-        updated = key_store.update_settings(device_id, key_index, settings)
-        if not updated:
+        if not key_store.update_settings(device_id, page_id, key_index, settings):
             return False
-        assignment = key_store.get(device_id, key_index)
+        assignment = key_store.get(device_id, page_id, key_index)
         if assignment is None:
             return False
-        self._context.plugin_manager._settings_store.set_settings(  # pylint: disable=protected-access
-            assignment.target.plugin_uuid, assignment.target.action_uuid, assignment.target.context_id, settings
-        )
-        self._context.plugin_manager.dispatch_settings_changed(assignment.target)
+        self._context.plugin_manager.store_settings(assignment.target, settings)
+        if self._is_active_page(device_id, page_id):
+            self._context.plugin_manager.dispatch_settings_changed(assignment.target)
         return True
 
     @exposed
     @api_response
+    def pages_list(self, device_id: str) -> DevicePages | None:
+        """Return the device's pages in order, its default page and the page shown on the device."""
+        if self._context is None:
+            return None
+        return self._context.page_controller.device_pages(device_id)
+
+    @exposed
+    @api_response
+    def page_add(self, device_id: str, name: str = "") -> PageInfo | None:
+        """Append a new empty page to the device ("Page N" unless a name is given)."""
+        if self._context is None:
+            return None
+        return self._context.page_controller.add_page(device_id, name or None)
+
+    @exposed
+    def page_rename(self, device_id: str, page_id: str, name: str) -> bool:
+        """Rename a page. Returns False for an unknown page or a blank name."""
+        return self._context is not None and self._context.page_controller.rename_page(device_id, page_id, name)
+
+    @exposed
+    def page_delete(self, device_id: str, page_id: str) -> bool:
+        """Delete a page and its key assignments. The last page cannot be deleted."""
+        return self._context is not None and self._context.page_controller.delete_page(device_id, page_id)
+
+    @exposed
+    def page_set_default(self, device_id: str, page_id: str) -> bool:
+        """Make a page the one shown when the server starts. Returns False for an unknown page."""
+        return self._context is not None and self._context.page_controller.set_default_page(device_id, page_id)
+
+    @exposed
+    def page_activate(self, device_id: str, page_id: str) -> bool:
+        """Show a page on the device, switching which actions are live. Returns False for an unknown page."""
+        return self._context is not None and self._context.page_controller.activate(device_id, page_id)
+
+    @exposed
+    @api_response
     def key_get_states(self, device_id: str) -> list[KeyState]:
-        """Return full runtime state for every key on the device.
+        """Return full runtime state for every key on the page currently shown on the device.
 
         Covers all keys (not just assigned ones). Unassigned keys have None for plugin fields
         and None for image_b64 if no image has been pushed yet.
@@ -218,10 +258,11 @@ class DeckerService(Service):
             return []
         hw_info = device.get_hw_info()
         key_store = self._context.key_assignment_store
+        page_id = self._context.page_controller.active_page_id(device_id)
         device_state = dm.get_device_state(device_id)
         result: list[KeyState] = []
         for key_index, key_info in enumerate(hw_info.keys):
-            assignment = key_store.get(device_id, key_index)
+            assignment = key_store.get(device_id, page_id, key_index)
             per_key = device_state.get_key_state(key_index) if device_state is not None else None
             raw_image = per_key.image if per_key is not None else None
             image_b64 = base64.b64encode(raw_image).decode("ascii") if raw_image else None
@@ -306,11 +347,14 @@ class DeckerService(Service):
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _is_active_page(self, device_id: str, page_id: str) -> bool:
+        return self._context is not None and self._context.page_controller.active_page_id(device_id) == page_id
+
     def _simulate_press(self, device_id: str, key_index: int, long_press: bool) -> bool:
         if self._context is None:
             return False
-        key_store = self._context.key_assignment_store
-        assignment = key_store.get(device_id, key_index)
+        page_id = self._context.page_controller.active_page_id(device_id)
+        assignment = self._context.key_assignment_store.get(device_id, page_id, key_index)
         if assignment is None:
             return False
         target = assignment.target

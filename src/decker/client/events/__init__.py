@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from decker.client.view_name import ViewName
-from decker.common.model import DeviceHardwareInfo
+from decker.common.model import DeviceHardwareInfo, DevicePages
 
 
 @dataclass(frozen=True)
@@ -62,6 +62,13 @@ class KeyDisplayStatesUpdatedEvent:
 
 
 @dataclass(frozen=True)
+class PagesUpdatedEvent:
+    """The active device's pages, default page or active (on-device) page changed."""
+
+    pages: DevicePages
+
+
+@dataclass(frozen=True)
 class ViewActivatedEvent:
     """A view became the active view in the main window."""
 
@@ -83,6 +90,7 @@ AppEvent = (
     | PluginLoadFailedEvent
     | ActionListUpdatedEvent
     | KeyDisplayStatesUpdatedEvent
+    | PagesUpdatedEvent
     | ViewActivatedEvent
     | ViewDeactivatedEvent
 )

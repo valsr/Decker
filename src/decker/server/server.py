@@ -18,6 +18,8 @@ from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices.manager import DeviceManager
 from decker.server.event_bus import EventBus
 from decker.server.key_assignments import KeyAssignmentStore
+from decker.server.page_controller import PageController
+from decker.server.pages import PageStore
 from decker.server.plugins import PluginManager
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
@@ -131,7 +133,8 @@ class ServerProcess:
         """Route a hardware key event to the plugin and push it to all connected clients."""
         if self._context is None:
             return
-        assignment = self._context.key_assignment_store.get(device_id, key_index)
+        page_id = self._context.page_controller.active_page_id(device_id)
+        assignment = self._context.key_assignment_store.get(device_id, page_id, key_index)
         if assignment is not None:
             if pressed:
                 self._context.plugin_manager.dispatch_key_down(assignment.target)
@@ -142,53 +145,18 @@ class ServerProcess:
             json.dumps({"device_id": device_id, "key_index": key_index, "pressed": pressed}),
         )
 
-    def _replay_assignments(self, device_id_filter: str | None = None) -> None:
-        """Re-activate all persisted key assignments and reopen their devices.
+    def _restore_devices(self, device_id_filter: str | None = None) -> None:
+        """Show each connected device's active page and re-activate that page's persisted assignments.
 
-        If device_id_filter is given, only replay assignments for that device.
+        If device_id_filter is given, only that device is restored. Images are re-pushed to the hardware
+        because the device is blank after a server restart.
         """
         if self._context is None:
             return
         all_ids = {info.id for info in self._context.device_manager.list_devices() if info.id is not None}
         device_ids = {device_id_filter} & all_ids if device_id_filter else all_ids
-        pm = self._context.plugin_manager
-        dm = self._context.device_manager
-        ks = self._context.key_assignment_store
-        for device_id in device_ids:
-            for _key_index, assignment in ks.all_for_device(device_id):
-                dm.open_device(device_id)
-                pm._settings_store.set_settings(  # pylint: disable=protected-access
-                    assignment.target.plugin_uuid,
-                    assignment.target.action_uuid,
-                    assignment.target.context_id,
-                    assignment.settings,
-                )
-                pm.activate_action(assignment.target)
-
-    def _restore_device_state(self, device_id_filter: str | None = None) -> None:
-        """Push cached key images back to connected devices.
-
-        If device_id_filter is given, only restore state for that device.
-        Labels are already in DeviceState memory after open_device() calls restore_from_store().
-        Images need to be explicitly re-pushed to the hardware after a server restart.
-        """
-        if self._context is None:
-            return
-        dm = self._context.device_manager
-        for info in dm.list_devices():
-            if info.id is None:
-                continue
-            device_id = info.id
-            if device_id_filter and device_id != device_id_filter:
-                continue
-            device = dm.open_device(device_id)
-            if device is None:
-                continue
-            device_state = dm.get_device_state(device_id)
-            if device_state is None:
-                continue
-            for key_index, image in device_state.get_all_images():
-                device.set_image_bytes(key_index, image)
+        for device_id in sorted(device_ids):
+            self._context.page_controller.restore(device_id)
 
     def _resolve_target_device(self, target: str) -> str | None:
         """Find a connected device matching the given ID or USB path.
@@ -223,7 +191,9 @@ class ServerProcess:
 
         icon_pack_manager = IconPackManager()
         state_store = DeviceStateStore()
+        page_store = PageStore()
         key_store = KeyAssignmentStore()
+        page_controller = PageController()
         device_manager = DeviceManager(on_key_event=self._on_hardware_key_event)
         plugin_manager = PluginManager()
 
@@ -233,13 +203,24 @@ class ServerProcess:
             icon_pack_manager=icon_pack_manager,
             key_assignment_store=key_store,
             device_state_store=state_store,
+            page_store=page_store,
+            page_controller=page_controller,
             event_bus=EventBus(),
             server=None,
         )
 
         ctx = self._context
         assert ctx is not None
-        for manager in [icon_pack_manager, state_store, key_store, device_manager, plugin_manager]:
+        managers: list[Manager] = [
+            icon_pack_manager,
+            state_store,
+            page_store,
+            key_store,
+            page_controller,
+            device_manager,
+            plugin_manager,
+        ]
+        for manager in managers:
             manager.create(ctx)
 
         # Resolve the target device (if --device was passed).
@@ -248,7 +229,7 @@ class ServerProcess:
             matched_device_id = self._resolve_target_device(self._app_context.target_device)
             if matched_device_id is None:
                 logging.error("Device not found: %s", self._app_context.target_device)
-                for manager in [plugin_manager, device_manager, key_store, state_store, icon_pack_manager]:
+                for manager in reversed(managers):
                     self._try_destroy_manager(manager)
                 sys.exit(1)
 
@@ -259,8 +240,7 @@ class ServerProcess:
             else:
                 state_store.delete_all_key_state()
 
-        self._replay_assignments(device_id_filter=matched_device_id)
-        self._restore_device_state(device_id_filter=matched_device_id)
+        self._restore_devices(device_id_filter=matched_device_id)
 
         server = ThreadPoolServer(
             DeckerService,
@@ -274,6 +254,6 @@ class ServerProcess:
         try:
             server.start()
         finally:
-            for manager in [plugin_manager, device_manager, key_store, state_store, icon_pack_manager]:
+            for manager in reversed(managers):
                 self._try_destroy_manager(manager)
         # Normal return -> subprocess exits with code 0 (intentional stop)

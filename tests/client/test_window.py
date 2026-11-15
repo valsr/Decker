@@ -9,6 +9,7 @@ from PyQt6.QtGui import QCloseEvent
 from decker.client.context import AppContext
 from decker.client.events import (
     DeviceListUpdatedEvent,
+    PagesUpdatedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
@@ -17,6 +18,7 @@ from decker.client.events.event_manager import EventManager
 from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
 from decker.client.window import MainWindow
+from decker.common.model import DevicePages, PageInfo
 
 
 @pytest.fixture
@@ -40,7 +42,7 @@ def window(qapp, connection_manager, tmp_path):  # pylint: disable=unused-argume
 
 
 class TestRegisterView:
-    def test_all_five_views_registered(self, window):  # pylint: disable=redefined-outer-name
+    def test_all_views_registered(self, window):  # pylint: disable=redefined-outer-name
         assert_that(set(window._views.keys())).is_equal_to(set(ViewName))  # pylint: disable=protected-access
 
 
@@ -141,6 +143,18 @@ class TestDispatch:
             event
         )  # pylint: disable=protected-access
 
+    def test_pages_event_forwarded_to_active_view(self, window):  # pylint: disable=redefined-outer-name
+        window.switch_to(ViewName.DASHBOARD)
+        event = PagesUpdatedEvent(
+            pages=DevicePages(device_id="d", pages=[PageInfo("p", "Page 1")], default_page_id="p", active_page_id="p")
+        )
+
+        window.dispatch(event)
+
+        window._views[ViewName.DASHBOARD].handle_event.assert_called_once_with(  # pylint: disable=protected-access
+            event
+        )
+
 
 class TestCheckInitialView:
     def test_connected_switches_to_dashboard_and_shows(
@@ -234,3 +248,33 @@ class TestShowEvent:
             window.show()
 
         mock_set_geometry.assert_not_called()
+
+
+class TestSettingsDialog:
+    def test_plugin_load_failed_reaches_settings_dialog_and_toast(self, window):  # pylint: disable=redefined-outer-name
+        window.dispatch(PluginLoadFailedEvent(plugin_uuid="com.decker.broken", error="boom"))
+
+        dialog = window._settings_dialog  # pylint: disable=protected-access
+        assert_that(dialog._failed_list.count()).is_equal_to(1)  # pylint: disable=protected-access
+        assert_that(window._toast.isHidden()).is_false()  # pylint: disable=protected-access
+
+    def test_open_settings_shows_non_modal_dialog(
+        self, window, isolated_config
+    ):  # pylint: disable=redefined-outer-name,unused-argument
+        window.open_settings()
+
+        dialog = window._settings_dialog  # pylint: disable=protected-access
+        assert_that(dialog.isVisible()).is_true()
+        assert_that(dialog.isModal()).is_false()
+        assert_that(dialog.parent()).is_same_as(window)
+        dialog.close()
+
+    def test_overlay_settings_button_opens_dialog(
+        self, window, isolated_config
+    ):  # pylint: disable=redefined-outer-name,unused-argument
+        overlay = window._views[ViewName.CONNECTING]  # pylint: disable=protected-access
+
+        overlay._settings_btn.click()  # pylint: disable=protected-access
+
+        assert_that(window._settings_dialog.isVisible()).is_true()  # pylint: disable=protected-access
+        window._settings_dialog.close()  # pylint: disable=protected-access

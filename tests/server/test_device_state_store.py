@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -7,6 +8,7 @@ from assertpy import assert_that
 
 from decker.common.model import DeviceHardwareInfo, KeyInfo
 from decker.server.device_state_store import DeviceStateStore
+from decker.server.pages import initial_page_id
 
 
 def _make_hw_info(
@@ -89,104 +91,162 @@ class TestDeviceStateStoreDevices:
 
 class TestDeviceStateStoreKeyImages:
     def test_get_key_image_returns_none_for_missing(self, store):
-        assert_that(store.get_key_image("dev1", 0)).is_none()
+        assert_that(store.get_key_image("dev1", "p1", 0)).is_none()
 
     def test_save_and_get_key_image_round_trip(self, store):
-        store.save_key_image("dev1", 0, b"\x89PNG\r\n")
-        result = store.get_key_image("dev1", 0)
+        store.save_key_image("dev1", "p1", 0, b"\x89PNG\r\n")
+        result = store.get_key_image("dev1", "p1", 0)
         assert_that(result).is_equal_to(b"\x89PNG\r\n")
 
     def test_save_key_image_upserts(self, store):
-        store.save_key_image("dev1", 0, b"old")
-        store.save_key_image("dev1", 0, b"new")
-        assert_that(store.get_key_image("dev1", 0)).is_equal_to(b"new")
+        store.save_key_image("dev1", "p1", 0, b"old")
+        store.save_key_image("dev1", "p1", 0, b"new")
+        assert_that(store.get_key_image("dev1", "p1", 0)).is_equal_to(b"new")
 
     def test_get_all_key_images_returns_all_for_device(self, store):
-        store.save_key_image("dev1", 0, b"img0")
-        store.save_key_image("dev1", 2, b"img2")
-        store.save_key_image("dev2", 0, b"other")
-        pairs = store.get_all_key_images("dev1")
+        store.save_key_image("dev1", "p1", 0, b"img0")
+        store.save_key_image("dev1", "p1", 2, b"img2")
+        store.save_key_image("dev2", "p1", 0, b"other")
+        pairs = store.get_all_key_images("dev1", "p1")
         indices = {k for k, _ in pairs}
         assert_that(pairs).is_length(2)
         assert_that(indices).contains(0, 2)
 
     def test_get_all_key_images_empty_for_unknown_device(self, store):
-        assert_that(store.get_all_key_images("no-such-device")).is_empty()
+        assert_that(store.get_all_key_images("no-such-device", "p1")).is_empty()
 
     def test_delete_key_image_removes_entry(self, store):
-        store.save_key_image("dev1", 0, b"img")
-        store.delete_key_image("dev1", 0)
-        assert_that(store.get_key_image("dev1", 0)).is_none()
+        store.save_key_image("dev1", "p1", 0, b"img")
+        store.delete_key_state("dev1", "p1", 0)
+        assert_that(store.get_key_image("dev1", "p1", 0)).is_none()
 
     def test_delete_key_image_no_op_for_missing(self, store):
-        store.delete_key_image("dev1", 99)  # should not raise
+        store.delete_key_state("dev1", "p1", 99)  # should not raise
 
     def test_binary_image_data_preserved(self, store):
         data = bytes(range(256)) * 10
-        store.save_key_image("dev1", 3, data)
-        assert_that(store.get_key_image("dev1", 3)).is_equal_to(data)
+        store.save_key_image("dev1", "p1", 3, data)
+        assert_that(store.get_key_image("dev1", "p1", 3)).is_equal_to(data)
 
 
 class TestDeviceStateStoreKeyLabels:
     def test_get_key_label_returns_none_for_missing(self, store):
-        assert_that(store.get_key_label("dev1", 0)).is_none()
+        assert_that(store.get_key_label("dev1", "p1", 0)).is_none()
 
     def test_save_and_get_key_label_round_trip(self, store):
-        store.save_key_label("dev1", 0, "Play")
-        assert_that(store.get_key_label("dev1", 0)).is_equal_to("Play")
+        store.save_key_label("dev1", "p1", 0, "Play")
+        assert_that(store.get_key_label("dev1", "p1", 0)).is_equal_to("Play")
 
     def test_save_key_label_upserts(self, store):
-        store.save_key_label("dev1", 0, "old")
-        store.save_key_label("dev1", 0, "new")
-        assert_that(store.get_key_label("dev1", 0)).is_equal_to("new")
+        store.save_key_label("dev1", "p1", 0, "old")
+        store.save_key_label("dev1", "p1", 0, "new")
+        assert_that(store.get_key_label("dev1", "p1", 0)).is_equal_to("new")
 
     def test_get_all_key_labels_returns_all_for_device(self, store):
-        store.save_key_label("dev1", 0, "Play")
-        store.save_key_label("dev1", 1, "Stop")
-        store.save_key_label("dev2", 0, "Other")
-        pairs = store.get_all_key_labels("dev1")
+        store.save_key_label("dev1", "p1", 0, "Play")
+        store.save_key_label("dev1", "p1", 1, "Stop")
+        store.save_key_label("dev2", "p1", 0, "Other")
+        pairs = store.get_all_key_labels("dev1", "p1")
         assert_that(pairs).is_length(2)
         label_map = dict(pairs)
         assert_that(label_map[0]).is_equal_to("Play")
         assert_that(label_map[1]).is_equal_to("Stop")
 
     def test_get_all_key_labels_empty_for_unknown_device(self, store):
-        assert_that(store.get_all_key_labels("no-such-device")).is_empty()
+        assert_that(store.get_all_key_labels("no-such-device", "p1")).is_empty()
 
     def test_delete_key_label_removes_entry(self, store):
-        store.save_key_label("dev1", 0, "Play")
-        store.delete_key_label("dev1", 0)
-        assert_that(store.get_key_label("dev1", 0)).is_none()
+        store.save_key_label("dev1", "p1", 0, "Play")
+        store.delete_key_state("dev1", "p1", 0)
+        assert_that(store.get_key_label("dev1", "p1", 0)).is_none()
 
     def test_delete_key_label_no_op_for_missing(self, store):
-        store.delete_key_label("dev1", 99)  # should not raise
+        store.delete_key_state("dev1", "p1", 99)  # should not raise
 
 
 class TestDeviceStateStoreDeleteKeyState:
     def test_delete_key_state_removes_image_and_label(self, store):
-        store.save_key_image("dev1", 0, b"img")
-        store.save_key_label("dev1", 0, "Play")
-        store.delete_key_state("dev1", 0)
-        assert_that(store.get_key_image("dev1", 0)).is_none()
-        assert_that(store.get_key_label("dev1", 0)).is_none()
+        store.save_key_image("dev1", "p1", 0, b"img")
+        store.save_key_label("dev1", "p1", 0, "Play")
+        store.delete_key_state("dev1", "p1", 0)
+        assert_that(store.get_key_image("dev1", "p1", 0)).is_none()
+        assert_that(store.get_key_label("dev1", "p1", 0)).is_none()
 
     def test_delete_key_state_no_op_for_missing(self, store):
-        store.delete_key_state("dev1", 99)  # should not raise
+        store.delete_key_state("dev1", "p1", 99)  # should not raise
 
     def test_delete_all_key_state_for_device_clears_that_device(self, store):
-        store.save_key_image("dev1", 0, b"img")
-        store.save_key_label("dev1", 0, "Play")
-        store.save_key_image("dev2", 1, b"other")
+        store.save_key_image("dev1", "p1", 0, b"img")
+        store.save_key_label("dev1", "p1", 0, "Play")
+        store.save_key_image("dev2", "p1", 1, b"other")
         store.delete_all_key_state_for_device("dev1")
-        assert_that(store.get_key_image("dev1", 0)).is_none()
-        assert_that(store.get_key_label("dev1", 0)).is_none()
-        assert_that(store.get_key_image("dev2", 1)).is_equal_to(b"other")
+        assert_that(store.get_key_image("dev1", "p1", 0)).is_none()
+        assert_that(store.get_key_label("dev1", "p1", 0)).is_none()
+        assert_that(store.get_key_image("dev2", "p1", 1)).is_equal_to(b"other")
 
     def test_delete_all_key_state_clears_every_device(self, store):
-        store.save_key_image("dev1", 0, b"img1")
-        store.save_key_label("dev1", 0, "Play")
-        store.save_key_image("dev2", 1, b"img2")
+        store.save_key_image("dev1", "p1", 0, b"img1")
+        store.save_key_label("dev1", "p1", 0, "Play")
+        store.save_key_image("dev2", "p1", 1, b"img2")
         store.delete_all_key_state()
-        assert_that(store.get_all_key_images("dev1")).is_empty()
-        assert_that(store.get_all_key_labels("dev1")).is_empty()
-        assert_that(store.get_all_key_images("dev2")).is_empty()
+        assert_that(store.get_all_key_images("dev1", "p1")).is_empty()
+        assert_that(store.get_all_key_labels("dev1", "p1")).is_empty()
+        assert_that(store.get_all_key_images("dev2", "p1")).is_empty()
+
+
+class TestDeviceStateStorePages:
+    @pytest.fixture()
+    def store(self, tmp_path):
+        s = DeviceStateStore(data_dir=tmp_path)
+        s.create(MagicMock())
+        yield s
+        s.destroy()
+
+    def test_pages_are_isolated(self, store):
+        store.save_key_image("dev1", "p1", 0, b"one")
+        store.save_key_image("dev1", "p2", 0, b"two")
+        store.save_key_label("dev1", "p2", 0, "Two")
+
+        assert_that(store.get_key_image("dev1", "p1", 0)).is_equal_to(b"one")
+        assert_that(store.get_all_key_images("dev1", "p2")).is_equal_to([(0, b"two")])
+        assert_that(store.get_key_label("dev1", "p1", 0)).is_none()
+
+    def test_delete_page_state_removes_only_that_page(self, store):
+        store.save_key_image("dev1", "p1", 0, b"one")
+        store.save_key_image("dev1", "p2", 0, b"two")
+        store.save_key_label("dev1", "p2", 1, "Two")
+
+        store.delete_page_state("dev1", "p2")
+
+        assert_that(store.get_all_key_images("dev1", "p2")).is_empty()
+        assert_that(store.get_all_key_labels("dev1", "p2")).is_empty()
+        assert_that(store.get_key_image("dev1", "p1", 0)).is_equal_to(b"one")
+
+    def test_migrates_pre_page_tables_to_first_page(self, tmp_path):
+        legacy = sqlite3.connect(tmp_path / "device-dev1.db")
+        legacy.execute(
+            "CREATE TABLE key_images (key_index INTEGER PRIMARY KEY, image BLOB NOT NULL, updated_at DATETIME)"
+        )
+        legacy.execute(
+            "CREATE TABLE key_labels (key_index INTEGER PRIMARY KEY, label TEXT NOT NULL, updated_at DATETIME)"
+        )
+        legacy.execute("INSERT INTO key_images (key_index, image) VALUES (2, ?)", (b"old",))
+        legacy.execute("INSERT INTO key_labels (key_index, label) VALUES (2, 'Old')")
+        legacy.commit()
+        legacy.close()
+        store = DeviceStateStore(data_dir=tmp_path)
+        store.create(MagicMock())
+
+        page = initial_page_id("dev1")
+        assert_that(store.get_key_image("dev1", page, 2)).is_equal_to(b"old")
+        assert_that(store.get_key_label("dev1", page, 2)).is_equal_to("Old")
+        tables = {
+            row[0]
+            for row in (
+                sqlite3.connect(tmp_path / "device-dev1.db")
+                .execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+                .fetchall()
+            )
+        }
+        assert_that(tables).does_not_contain("key_images", "key_labels")
+        store.destroy()
