@@ -6,7 +6,6 @@ import shutil
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
-from zlib import error as zlib_error
 
 from decker.plugin.manifest import ManifestValidationError, PluginManifest
 
@@ -48,6 +47,7 @@ def _validate_entries(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
     if len(infos) > MAX_ENTRIES:
         raise PackageError(f"package has too many entries (limit {MAX_ENTRIES})")
     seen: set[str] = set()
+    file_names: set[str] = set()
     total = 0
     for info in infos:
         _check_name(info.filename)
@@ -59,12 +59,14 @@ def _validate_entries(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
         if key in seen:
             raise PackageError(f"duplicate entry: {info.filename!r}")
         seen.add(key)
+        if not info.is_dir():
+            file_names.add(info.filename)
         total += info.file_size
     if total > MAX_UNCOMPRESSED_BYTES:
         raise PackageError(
             f"package is too large when uncompressed (limit {MAX_UNCOMPRESSED_BYTES // (1024 * 1024)} MiB)"
         )
-    if _MANIFEST_NAME not in seen:
+    if _MANIFEST_NAME not in file_names:
         raise PackageError(f"package has no {_MANIFEST_NAME} at its root")
     return infos
 
@@ -99,8 +101,10 @@ def read_manifest(data: bytes) -> PluginManifest:
         with _open_zip(data) as zf:
             _validate_entries(zf)
             return _parse_manifest(_read_manifest_bytes(zf))
-    except (zipfile.BadZipFile, RuntimeError, NotImplementedError, zlib_error) as exc:
-        raise PackageError(f"package is corrupt: {exc}") from exc
+    except PackageError:
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        raise PackageError(f"package is corrupt: {exc!r}") from exc
 
 
 def _extract_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo, root: Path, written: int) -> int:
@@ -126,19 +130,23 @@ def extract(data: bytes, dest: Path) -> PluginManifest:
     """Validate and extract a package into a new directory `dest` (must not exist); nothing remains on failure."""
     if dest.exists() or dest.is_symlink():
         raise PackageError(f"destination already exists: {dest}")
+    created = False
     try:
         with _open_zip(data) as zf:
             infos = _validate_entries(zf)
             manifest = _parse_manifest(_read_manifest_bytes(zf))
             dest.mkdir(parents=True)
+            created = True
             root = dest.resolve()
             written = 0
             for info in infos:
                 written = _extract_member(zf, info, root, written)
             return manifest
-    except PackageError:
-        shutil.rmtree(dest, ignore_errors=True)
-        raise
-    except (zipfile.BadZipFile, RuntimeError, NotImplementedError, zlib_error, OSError) as exc:
-        shutil.rmtree(dest, ignore_errors=True)
-        raise PackageError(f"package could not be extracted: {exc}") from exc
+    except BaseException as exc:
+        if created:
+            shutil.rmtree(dest, ignore_errors=True)
+        if isinstance(exc, (PackageError, KeyboardInterrupt, SystemExit)):
+            raise
+        if not isinstance(exc, Exception):
+            raise
+        raise PackageError(f"package could not be extracted: {exc!r}") from exc

@@ -156,3 +156,41 @@ def test_rejects_non_object_manifest():
 def test_manifest_error_message_preserved():
     with pytest.raises(PackageError, match="unsupported manifest format 99"):
         read_manifest(_zip(manifest={**_MANIFEST, "format": 99}))
+
+
+def test_rejects_directory_only_manifest_entry(tmp_path):
+    data = _zip({"manifest.json/": ""})
+    with pytest.raises(PackageError, match="manifest.json"):
+        read_manifest(data)
+    dest = tmp_path / "out"
+    with pytest.raises(PackageError, match="manifest.json"):
+        extract(data, dest)
+    assert_that(dest.exists()).is_false()
+
+
+def test_unexpected_error_mid_extraction_cleans_up(tmp_path, monkeypatch):
+    real = package._extract_member  # pylint: disable=protected-access
+    calls = []
+
+    def flaky(zf, info, root, written):
+        calls.append(info.filename)
+        if len(calls) == 2:
+            raise ValueError("boom")
+        return real(zf, info, root, written)
+
+    monkeypatch.setattr(package, "_extract_member", flaky)
+    dest = tmp_path / "out"
+    with pytest.raises(PackageError, match="boom"):
+        extract(_zip(), dest)
+    assert_that(dest.exists()).is_false()
+
+
+def test_keyboard_interrupt_cleans_up_and_propagates(tmp_path, monkeypatch):
+    def interrupt(*_args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(package, "_extract_member", interrupt)
+    dest = tmp_path / "out"
+    with pytest.raises(KeyboardInterrupt):
+        extract(_zip(), dest)
+    assert_that(dest.exists()).is_false()
