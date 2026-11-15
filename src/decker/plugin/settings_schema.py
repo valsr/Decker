@@ -1,0 +1,234 @@
+"""Declarative settings schema used by plugin manifests to describe an action's settings form."""
+
+import math
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any
+
+FIELD_TYPES = frozenset({"int", "float", "text", "bool", "choice", "color", "font", "icon"})
+
+_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
+_EXTRA_KEYS: dict[str, tuple[str, ...]] = {
+    "int": ("min", "max", "step", "special_value"),
+    "float": ("min", "max", "step", "decimals"),
+    "text": ("multiline",),
+    "choice": ("options",),
+}
+_ZERO_VALUES: dict[str, Any] = {
+    "int": 0,
+    "float": 0.0,
+    "text": "",
+    "bool": False,
+    "color": "#000000",
+    "font": "",
+    "icon": "",
+}
+_MISSING = object()
+
+
+@dataclass(frozen=True)
+class SettingSection:
+    """A heading in the settings form."""
+
+    title: str
+
+
+@dataclass(frozen=True)
+class SettingField:
+    """A single typed setting; `extra` holds the type-specific keys."""
+
+    key: str
+    type: str
+    label: str
+    default: Any = None
+    optional: bool = False
+    placeholder: str = ""
+    help: str = ""
+    extra: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}), hash=False)
+
+
+SettingEntry = SettingSection | SettingField
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _parse_options(raw: Any, where: str) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{where}: choice requires a non-empty 'options' list")
+    options: list[Mapping[str, Any]] = []
+    for option in raw:
+        if not isinstance(option, dict) or "value" not in option or not isinstance(option.get("label"), str):
+            raise ValueError(f"{where}: each option needs a 'label' string and a 'value'")
+        options.append(MappingProxyType({"label": option["label"], "value": option["value"]}))
+    return tuple(options)
+
+
+def _parse_extra(type_: str, data: dict[str, Any], where: str) -> dict[str, Any]:
+    extra: dict[str, Any] = {}
+    for name in _EXTRA_KEYS.get(type_, ()):
+        if name in data:
+            extra[name] = data[name]
+    if type_ == "choice":
+        extra["options"] = _parse_options(data.get("options"), where)
+    for name in ("min", "max", "step", "decimals"):
+        if name in extra and not _is_number(extra[name]):
+            raise ValueError(f"{where}: '{name}' must be a number")
+    if type_ == "int":
+        for name in ("min", "max", "step"):
+            if name in extra and not isinstance(extra[name], int):
+                raise ValueError(f"{where}: '{name}' must be an integer for an int field")
+    if "special_value" in extra and not isinstance(extra["special_value"], str):
+        raise ValueError(f"{where}: 'special_value' must be a string")
+    if "multiline" in extra and not isinstance(extra["multiline"], bool):
+        raise ValueError(f"{where}: 'multiline' must be a boolean")
+    return extra
+
+
+def _in_range(value: float, extra: Mapping[str, Any]) -> bool:
+    return not (("min" in extra and value < extra["min"]) or ("max" in extra and value > extra["max"]))
+
+
+def _coerce(type_: str, value: Any, extra: Mapping[str, Any]) -> Any:
+    """Return the typed value, or `_MISSING` when it is not valid for the type."""
+    result: Any = _MISSING
+    if type_ == "int":
+        result = _coerce_int(value)
+    elif type_ == "float":
+        result = _coerce_float(value)
+    elif type_ == "bool":
+        result = value if isinstance(value, bool) else _MISSING
+    elif type_ == "color":
+        result = value if isinstance(value, str) and _COLOR_PATTERN.match(value) else _MISSING
+    elif type_ == "choice":
+        allowed = [o["value"] for o in extra["options"]]
+        result = next((o for o in allowed if type(o) is type(value) and o == value), _MISSING)
+    elif isinstance(value, str):
+        result = value
+    if type_ in ("int", "float") and result is not _MISSING and not _in_range(result, extra):
+        return _MISSING
+    return result
+
+
+def _coerce_int(value: Any) -> Any:
+    if isinstance(value, bool):
+        return _MISSING
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return _MISSING
+    return _MISSING
+
+
+def _coerce_float(value: Any) -> Any:
+    if isinstance(value, bool):
+        return _MISSING
+    try:
+        result = float(value.strip() if isinstance(value, str) else value)
+    except (TypeError, ValueError):
+        return _MISSING
+    return result if math.isfinite(result) else _MISSING
+
+
+def _parse_default(type_: str, data: dict[str, Any], optional: bool, extra: Mapping[str, Any], where: str) -> Any:
+    if data.get("default") is None:
+        if optional:
+            return None
+        return extra["options"][0]["value"] if type_ == "choice" else _ZERO_VALUES[type_]
+    raw = data["default"]
+    # A JSON float with an int-like value (e.g. 1.0) is not a valid int default.
+    value = _MISSING if type_ == "int" and not isinstance(raw, (int, str)) else _coerce(type_, raw, extra)
+    if value is _MISSING or (type_ in ("int", "float") and isinstance(raw, str)):
+        raise ValueError(f"{where}: default {raw!r} is not valid for type '{type_}'")
+    return value
+
+
+def _parse_field(data: dict[str, Any], where: str) -> SettingField:
+    key, type_ = data.get("key"), data.get("type")
+    if not isinstance(key, str) or not key:
+        raise ValueError(f"{where}: field requires a non-empty string 'key'")
+    if type_ not in FIELD_TYPES:
+        raise ValueError(f"{where}: unknown field type {type_!r}")
+    for name in ("label", "placeholder", "help"):
+        if name in data and not isinstance(data[name], str):
+            raise ValueError(f"{where}: '{name}' must be a string")
+    if not isinstance(data.get("optional", False), bool):
+        raise ValueError(f"{where}: 'optional' must be a boolean")
+    optional = data.get("optional", False)
+    extra = _parse_extra(type_, data, where)
+    return SettingField(
+        key=key,
+        type=type_,
+        label=data.get("label", key),
+        default=_parse_default(type_, data, optional, extra, where),
+        optional=optional,
+        placeholder=data.get("placeholder", ""),
+        help=data.get("help", ""),
+        extra=MappingProxyType(extra),
+    )
+
+
+def parse_settings_schema(data: Any, where: str) -> tuple[SettingEntry, ...]:
+    """Parse a manifest settings list; raises ValueError mentioning `where` on any problem."""
+    if not isinstance(data, list):
+        raise ValueError(f"{where}: settings must be a list")
+    entries: list[SettingEntry] = []
+    keys: set[str] = set()
+    for index, item in enumerate(data):
+        here = f"{where}[{index}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"{here}: settings entry must be an object")
+        if "section" in item:
+            if not isinstance(item["section"], str) or not item["section"]:
+                raise ValueError(f"{here}: section title must be a non-empty string")
+            entries.append(SettingSection(item["section"]))
+            continue
+        parsed = _parse_field(item, here)
+        if parsed.key in keys:
+            raise ValueError(f"{here}: duplicate key {parsed.key!r}")
+        keys.add(parsed.key)
+        entries.append(parsed)
+    return tuple(entries)
+
+
+def apply_schema(schema: Sequence[SettingEntry], values: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a complete, typed settings dict: unknown keys dropped, invalid or missing values defaulted."""
+    result: dict[str, Any] = {}
+    for entry in schema:
+        if not isinstance(entry, SettingField):
+            continue
+        raw = values.get(entry.key, _MISSING)
+        if raw is _MISSING:
+            result[entry.key] = entry.default
+        elif entry.optional and (raw is None or raw == ""):
+            result[entry.key] = None
+        else:
+            value = _coerce(entry.type, raw, entry.extra)
+            result[entry.key] = entry.default if value is _MISSING else value
+    return result
+
+
+def _field_to_json(entry: SettingField) -> dict[str, Any]:
+    out: dict[str, Any] = {"key": entry.key, "type": entry.type, "label": entry.label}
+    if entry.default is not None:
+        out["default"] = entry.default
+    if entry.optional:
+        out["optional"] = True
+    if entry.placeholder:
+        out["placeholder"] = entry.placeholder
+    if entry.help:
+        out["help"] = entry.help
+    for name, value in entry.extra.items():
+        out[name] = [dict(o) for o in value] if name == "options" else value
+    return out
+
+
+def schema_to_json(schema: Sequence[SettingEntry]) -> list[dict[str, Any]]:
+    """Serialise a schema back to the manifest shape (sent to clients)."""
+    return [{"section": e.title} if isinstance(e, SettingSection) else _field_to_json(e) for e in schema]
