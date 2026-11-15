@@ -13,3 +13,7 @@ client:
   server_port: 18861
   # Closing the main window hides it to the system tray instead of quitting (if a tray is available).
   close_to_tray: true
+
+plugin:
+  # Plugin processes using more resident memory than this (bytes) are killed.
+  memory_limit: 268435456

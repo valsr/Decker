@@ -15,7 +15,7 @@ from rpyc.utils import exposed
 
 from decker.common.model import DeviceHardwareInfo, DevicePages, KeyState, PageInfo
 from decker.common.utils import api_response
-from decker.plugin.context import ActionTarget
+from decker.plugin.target import ActionTarget
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
@@ -277,7 +277,11 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
                     plugin_uuid=assignment.target.plugin_uuid if assignment else None,
                     action_uuid=assignment.target.action_uuid if assignment else None,
                     context_id=assignment.target.context_id if assignment else None,
-                    settings=assignment.settings if assignment else {},
+                    settings=(
+                        self._context.plugin_manager.complete_settings(assignment.target, assignment.settings)
+                        if assignment
+                        else {}
+                    ),
                 )
             )
         return result

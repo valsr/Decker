@@ -1,6 +1,6 @@
 """Counter action: press adds step, double press adds double_step (if set), long press resets.
 
-Settings (all optional):
+Settings (always complete: the server fills defaults from the manifest schema):
     step              int, added on press (default 1)
     double_step       int or empty, added on double press; empty means no double press, so presses
                       register immediately (default empty)
@@ -11,64 +11,26 @@ Settings (all optional):
     title_font        font family name (default "DejaVu Sans")
     title_size        font size in px on a 72 px key (default 12)
     title_color       "#rrggbb" (default "#ffffff")
-    title_outline     "#rrggbb" outline colour, empty for none (default "")
+    title_outline     "#rrggbb" outline colour, None for none (default None)
     title_outline_width  outline width in px on a 72 px key (default 1)
 """
 
 import functools
 import io
 import logging
-import re
 import subprocess
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from decker.plugin import DeckerPlugin, Gesture, action
-from decker.plugin.context import ActionContext
-
-DEFAULTS: dict[str, Any] = {
-    "step": 1,
-    "double_step": None,
-    "max": 0,
-    "background": "#1f618d",
-    "title": "",
-    "title_position": "bottom",
-    "title_font": "DejaVu Sans",
-    "title_size": 12,
-    "title_color": "#ffffff",
-    "title_outline": "",
-    "title_outline_width": 1,
-}
-TITLE_POSITIONS = ("top", "middle", "bottom")
+from decker_plugin_sdk import ActionContext, DeckerPlugin, Gesture, action
 
 _KEY_SIZE = 72  # sizes in settings are relative to a 72 px key
 _SCALE = 2  # render at 2x so the image stays sharp when scaled to larger keys
 _COUNT_SIZE = 28
 _COUNT_COLOR = "#ffffff"
 _FALLBACK_FONT = "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
-_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 _TITLE_MARGIN = 4
-
-
-def _int_setting(settings: dict, key: str) -> int | None:
-    value = settings.get(key, DEFAULTS[key])
-    if value is None or (isinstance(value, str) and not value.strip()):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return DEFAULTS[key]
-
-
-def _color_setting(settings: dict, key: str) -> str:
-    value = settings.get(key, DEFAULTS[key])
-    return value if isinstance(value, str) and _HEX_COLOR.match(value) else DEFAULTS[key]
-
-
-def double_step(settings: dict) -> int | None:
-    """The double-press step, or None when double press is not configured."""
-    return _int_setting(settings, "double_step")
 
 
 @functools.lru_cache(maxsize=32)
@@ -95,10 +57,10 @@ def _font(family: str, size: int, bold: bool = False) -> ImageFont.FreeTypeFont 
     return ImageFont.load_default(size)
 
 
-def render(count: int, settings: dict) -> bytes:
+def render(count: int, settings: dict[str, Any]) -> bytes:
     """Render the key image: background, the count in the middle, and the optional title."""
     size = _KEY_SIZE * _SCALE
-    img = Image.new("RGB", (size, size), _color_setting(settings, "background"))
+    img = Image.new("RGB", (size, size), settings["background"])
     draw = ImageDraw.Draw(img)
     centre = size // 2
     draw.text(
@@ -108,7 +70,7 @@ def render(count: int, settings: dict) -> bytes:
         font=_font("DejaVu Sans", _COUNT_SIZE * _SCALE, True),
         anchor="mm",
     )
-    title = str(settings.get("title") or "")
+    title = str(settings["title"] or "")
     if title:
         _draw_title(draw, title, settings, size)
     buf = io.BytesIO()
@@ -116,21 +78,18 @@ def render(count: int, settings: dict) -> bytes:
     return buf.getvalue()
 
 
-def _draw_title(draw: ImageDraw.ImageDraw, title: str, settings: dict, size: int) -> None:
-    position = settings.get("title_position", DEFAULTS["title_position"])
-    if position not in TITLE_POSITIONS:
-        position = DEFAULTS["title_position"]
+def _draw_title(draw: ImageDraw.ImageDraw, title: str, settings: dict[str, Any], size: int) -> None:
     margin = _TITLE_MARGIN * _SCALE
-    anchor, y = {"top": ("mt", margin), "middle": ("mm", size // 2), "bottom": ("mb", size - margin)}[position]
-    font_size = max(1, _int_setting(settings, "title_size") or DEFAULTS["title_size"]) * _SCALE
-    outline = settings.get("title_outline")
-    outline_color = outline if isinstance(outline, str) and _HEX_COLOR.match(outline) else None
-    outline_width = max(0, _int_setting(settings, "title_outline_width") or 0) * _SCALE if outline_color else 0
+    anchor, y = {"top": ("mt", margin), "middle": ("mm", size // 2), "bottom": ("mb", size - margin)}[
+        settings["title_position"]
+    ]
+    outline_color = settings["title_outline"] or None
+    outline_width = settings["title_outline_width"] * _SCALE if outline_color else 0
     draw.text(
         (size // 2, y),
         title,
-        fill=_color_setting(settings, "title_color"),
-        font=_font(str(settings.get("title_font") or DEFAULTS["title_font"]), font_size),
+        fill=settings["title_color"],
+        font=_font(settings["title_font"] or "DejaVu Sans", settings["title_size"] * _SCALE),
         anchor=anchor,
         stroke_width=outline_width,
         stroke_fill=outline_color,
@@ -144,10 +103,10 @@ class CounterAction(DeckerPlugin):
     def __init__(self) -> None:
         self._count: int = 0
 
-    def gestures(self, settings: dict) -> frozenset[Gesture]:
+    def gestures(self, settings: dict[str, Any]) -> frozenset[Gesture]:
         """Double press is only registered when double_step is set, so plain presses never wait for it."""
         wanted = {Gesture.PRESS, Gesture.LONG_PRESS}
-        if double_step(settings) is not None:
+        if settings.get("double_step") is not None:
             wanted.add(Gesture.DOUBLE_PRESS)
         return frozenset(wanted)
 
@@ -156,14 +115,12 @@ class CounterAction(DeckerPlugin):
         self._push(ctx)
 
     def on_press(self, ctx: ActionContext) -> None:
-        settings = ctx.get_settings()
-        self._advance(_int_setting(settings, "step") or 0, settings)
-        self._push(ctx, settings)
+        self._advance(ctx.settings["step"], ctx.settings["max"])
+        self._push(ctx)
 
     def on_double_press(self, ctx: ActionContext) -> None:
-        settings = ctx.get_settings()
-        self._advance(double_step(settings) or 0, settings)
-        self._push(ctx, settings)
+        self._advance(ctx.settings["double_step"] or 0, ctx.settings["max"])
+        self._push(ctx)
 
     def on_long_press(self, ctx: ActionContext) -> None:
         self._count = 0
@@ -172,13 +129,11 @@ class CounterAction(DeckerPlugin):
     def on_settings_changed(self, ctx: ActionContext) -> None:
         self._push(ctx)
 
-    def _advance(self, amount: int, settings: dict) -> None:
+    def _advance(self, amount: int, max_count: int) -> None:
         self._count += amount
-        max_count = _int_setting(settings, "max") or 0
         if max_count > 0 and self._count >= max_count:
             self._count = 0
 
-    def _push(self, ctx: ActionContext, settings: dict | None = None) -> None:
-        settings = ctx.get_settings() if settings is None else settings
-        ctx.set_image(render(self._count, settings))
+    def _push(self, ctx: ActionContext) -> None:
+        ctx.set_image(render(self._count, ctx.settings))
         ctx.set_title(str(self._count))

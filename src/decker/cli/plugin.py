@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 
 from decker.common import paths as decker_paths
-from decker.plugin.legacy_manifest import ManifestValidationError, PluginManifest
+from decker.plugin.manifest import ManifestValidationError, PluginManifest
 
 
 class PluginCliError(Exception):
@@ -27,7 +27,7 @@ def install(source: str | Path) -> Path:
         raise PluginCliError(str(exc)) from exc
 
     plugins_dir = decker_paths.plugins()
-    dest_dir = plugins_dir / manifest.uuid
+    dest_dir = plugins_dir / manifest.id
     if dest_dir.exists():
         raise PluginCliError(f"a plugin is already installed at {dest_dir}")
 
@@ -48,7 +48,7 @@ def list_installed() -> list[dict[str, str]]:
             continue
         try:
             manifest = PluginManifest.load(entry / "manifest.json")
-            entries.append({"uuid": manifest.uuid, "status": "ok"})
+            entries.append({"uuid": manifest.id, "status": "ok"})
         except ManifestValidationError as exc:
             entries.append({"uuid": entry.name, "status": f"invalid: {exc}"})
     return entries

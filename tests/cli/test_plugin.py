@@ -6,11 +6,13 @@ from assertpy import assert_that
 from decker.cli import plugin as plugin_cli
 
 _NATIVE_MANIFEST = {
-    "UUID": "com.decker.test",
-    "Name": "Test",
-    "Version": "1.0.0",
-    "Author": "Decker",
-    "Actions": [{"UUID": "com.decker.test.show", "Name": "Show"}],
+    "format": 1,
+    "id": "com.decker.test",
+    "name": "Test",
+    "version": "1.0.0",
+    "author": "Decker",
+    "runtime": {"type": "python", "entry": "plugin.py"},
+    "contributes": {"actions": [{"id": "com.decker.test.show", "name": "Show"}]},
 }
 
 
@@ -44,7 +46,7 @@ class TestInstall:
     def test_invalid_manifest_raises(self, tmp_path):
         source = tmp_path / "bad"
         source.mkdir()
-        (source / "manifest.json").write_text(json.dumps({"Name": "Missing fields"}))
+        (source / "manifest.json").write_text(json.dumps({"name": "Missing fields"}))
         with pytest.raises(plugin_cli.PluginCliError):
             plugin_cli.install(source)
 

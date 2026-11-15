@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from decker.common import paths as decker_paths
 from decker.common.manager import Manager
-from decker.plugin.context import ActionTarget
+from decker.plugin.target import ActionTarget
 from decker.server.pages import initial_page_id
 
 if TYPE_CHECKING:

@@ -1,129 +1,245 @@
-"""Tests for the bundled counter plugin (com.decker.counter)."""
+"""Tests for the bundled counter plugin (com.decker.counter), run through the SDK loop on pipes."""
 
+import base64
 import importlib.util
 import io
+import json
+import os
+import threading
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import MagicMock, patch
+from typing import Any
 
 import pytest
 from assertpy import assert_that
 from PIL import Image
 
-from decker.plugin import Gesture
+from decker.plugin.manifest import PluginManifest
+from decker.plugin.settings_schema import apply_schema
+from decker_plugin_sdk import run
 
-_PLUGIN = Path(__file__).parents[2] / "src" / "decker" / "bundled_plugins" / "com.decker.counter" / "plugin.py"
+_DIR = Path(__file__).parents[2] / "src" / "decker" / "bundled_plugins" / "com.decker.counter"
+_ACTION = "com.decker.counter.counter"
+_SCHEMA = PluginManifest.load(_DIR / "manifest.json").actions[0].settings
 
 
-@pytest.fixture(scope="module")
-def counter() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("decker_plugin_test_counter", _PLUGIN)
+@pytest.fixture(scope="module", name="counter")
+def counter_fixture() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("decker_plugin_test_counter", _DIR / "plugin.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def _ctx(settings: dict | None = None) -> MagicMock:
-    ctx = MagicMock()
-    ctx.get_settings.return_value = settings or {}
-    return ctx
+def _settings(**values: Any) -> dict[str, Any]:
+    return apply_schema(_SCHEMA, values)
 
 
 def _image(data: bytes) -> Image.Image:
     return Image.open(io.BytesIO(data)).convert("RGB")
 
 
+class Harness:
+    """Runs the counter through the SDK loop on os.pipe streams."""
+
+    def __init__(self, counter: ModuleType) -> None:
+        in_r, in_w = os.pipe()
+        out_r, out_w = os.pipe()
+        self._to_plugin = os.fdopen(in_w, "wb")
+        self._plugin_in = os.fdopen(in_r, "rb")
+        self._plugin_out = os.fdopen(out_w, "wb")
+        self._from_plugin = os.fdopen(out_r, "rb")
+        self._thread = threading.Thread(
+            target=run, args=({_ACTION: counter.CounterAction}, self._plugin_in, self._plugin_out)
+        )
+        self._thread.start()
+        self.send("hello", payload={"protocol": 1, "decker_version": "x", "plugin_id": "com.decker.counter"})
+        assert_that(self.recv()["event"]).is_equal_to("ready")
+
+    def send(self, event: str, context: str | None = None, payload: dict | None = None) -> None:
+        data: dict[str, Any] = {"event": event, "payload": payload or {}}
+        if context:
+            data["context"] = context
+        self._to_plugin.write(json.dumps(data).encode() + b"\n")
+        self._to_plugin.flush()
+
+    def recv(self) -> dict:
+        line = self._from_plugin.readline()
+        assert line, "plugin closed stdout"
+        return json.loads(line)
+
+    def recv_until(self, event: str) -> dict:
+        while True:
+            message = self.recv()
+            if message["event"] == event:
+                return message
+
+    def appear(self, **values: Any) -> None:
+        self.send(
+            "will_appear",
+            "c1",
+            {
+                "action": _ACTION,
+                "device": "d",
+                "key": {"index": 0, "column": 0, "row": 0},
+                "settings": _settings(**values),
+                "state": 0,
+            },
+        )
+
+    def next_title(self) -> str:
+        return self.recv_until("set_title")["payload"]["title"]
+
+    def close(self) -> None:
+        self.send("shutdown")
+        self._thread.join(5)
+        for stream in (self._to_plugin, self._plugin_in, self._plugin_out, self._from_plugin):
+            stream.close()
+
+
+@pytest.fixture(name="harness")
+def harness_fixture(counter):
+    harness = Harness(counter)
+    yield harness
+    harness.close()
+
+
 class TestGestures:
-    def test_without_double_step_presses_never_wait(self, counter):
-        action = counter.CounterAction()
+    def test_double_press_registered_only_with_double_step(self, harness):
+        harness.appear()
+        without = harness.recv_until("set_gestures")["payload"]["gestures"]
+        harness.send("settings_changed", "c1", {"settings": _settings(double_step=5)})
+        with_double = harness.recv_until("set_gestures")["payload"]["gestures"]
 
-        for settings in ({}, {"double_step": None}, {"double_step": ""}, {"double_step": "  "}):
-            assert_that(action.gestures(settings)).is_equal_to(frozenset({Gesture.PRESS, Gesture.LONG_PRESS}))
+        assert_that(without).is_equal_to(["long_press", "press"])
+        assert_that(with_double).is_equal_to(["double_press", "long_press", "press"])
 
-    def test_double_step_registers_double_press(self, counter):
-        assert_that(counter.CounterAction().gestures({"double_step": 5})).contains(Gesture.DOUBLE_PRESS)
-        assert_that(counter.CounterAction().gestures({"double_step": 0})).contains(Gesture.DOUBLE_PRESS)
+    def test_cleared_double_step_unregisters_it(self, harness):
+        harness.appear(double_step=5)
+        harness.recv_until("set_gestures")
+        harness.send("settings_changed", "c1", {"settings": _settings(double_step=None)})
+
+        assert_that(harness.recv_until("set_gestures")["payload"]["gestures"]).does_not_contain("double_press")
 
 
 class TestCounting:
-    def test_press_adds_step_and_pushes_image_and_label(self, counter):
-        action = counter.CounterAction()
-        ctx = _ctx({"step": 3})
+    def test_press_increments(self, harness):
+        harness.appear(step=3)
+        assert_that(harness.next_title()).is_equal_to("0")
 
-        action.on_press(ctx)
-        action.on_press(ctx)
+        harness.send("press", "c1")
+        assert_that(harness.next_title()).is_equal_to("3")
+        harness.send("press", "c1")
+        assert_that(harness.next_title()).is_equal_to("6")
 
-        ctx.set_title.assert_called_with("6")
-        ctx.set_image.assert_called()
+    def test_default_step_is_one(self, harness):
+        harness.appear()
+        harness.next_title()
 
-    def test_default_step_is_one(self, counter):
-        action = counter.CounterAction()
-        ctx = _ctx()
+        harness.send("press", "c1")
 
-        action.on_press(ctx)
+        assert_that(harness.next_title()).is_equal_to("1")
 
-        ctx.set_title.assert_called_with("1")
+    def test_double_press_adds_double_step(self, harness):
+        harness.appear(step=1, double_step=10)
+        harness.next_title()
 
-    def test_double_press_adds_double_step(self, counter):
-        action = counter.CounterAction()
-        ctx = _ctx({"step": 1, "double_step": 10})
+        harness.send("press", "c1")
+        harness.next_title()
+        harness.send("double_press", "c1")
 
-        action.on_press(ctx)
-        action.on_double_press(ctx)
+        assert_that(harness.next_title()).is_equal_to("11")
 
-        ctx.set_title.assert_called_with("11")
+    def test_long_press_resets(self, harness):
+        harness.appear(step=4)
+        harness.next_title()
+        harness.send("press", "c1")
+        harness.next_title()
 
-    def test_long_press_resets(self, counter):
-        action = counter.CounterAction()
-        ctx = _ctx({"step": 4})
-        action.on_press(ctx)
+        harness.send("long_press", "c1")
 
-        action.on_long_press(ctx)
+        assert_that(harness.next_title()).is_equal_to("0")
 
-        ctx.set_title.assert_called_with("0")
+    def test_max_wraps(self, harness):
+        harness.appear(step=2, max=4)
+        harness.next_title()
 
-    def test_max_wraps_to_zero(self, counter):
-        action = counter.CounterAction()
-        ctx = _ctx({"step": 2, "max": 4})
+        harness.send("press", "c1")
+        assert_that(harness.next_title()).is_equal_to("2")
+        harness.send("press", "c1")
+        assert_that(harness.next_title()).is_equal_to("0")
 
-        action.on_press(ctx)
-        action.on_press(ctx)
+    def test_image_is_a_png_in_the_chosen_background(self, harness):
+        harness.appear(background="#ff0000")
 
-        ctx.set_title.assert_called_with("0")
+        message = harness.recv_until("set_image")["payload"]
 
-    def test_will_appear_and_settings_change_redraw(self, counter):
-        action = counter.CounterAction()
-        ctx = _ctx()
+        assert_that(message["format"]).is_equal_to("png")
+        assert_that(_image(base64.b64decode(message["image"])).getpixel((2, 2))).is_equal_to((255, 0, 0))
 
-        action.on_will_appear(ctx)
-        action.on_settings_changed(ctx)
+    def test_settings_change_redraws(self, harness):
+        harness.appear()
+        harness.recv_until("set_image")
 
-        assert_that(ctx.set_image.call_count).is_equal_to(2)
+        harness.send("settings_changed", "c1", {"settings": _settings(background="#00ff00")})
+        message = harness.recv_until("set_image")["payload"]
 
-    def test_bad_numbers_fall_back_to_defaults(self, counter):
-        action = counter.CounterAction()
-        ctx = _ctx({"step": "lots", "max": None})
+        assert_that(_image(base64.b64decode(message["image"])).getpixel((2, 2))).is_equal_to((0, 255, 0))
 
-        action.on_press(ctx)
 
-        ctx.set_title.assert_called_with("1")
+class TestSettingsSchema:
+    def test_empty_outline_and_double_step_become_none(self):
+        settings = _settings(title_outline="", double_step="")
+
+        assert_that(settings["title_outline"]).is_none()
+        assert_that(settings["double_step"]).is_none()
+
+    def test_defaults_match_the_original_counter(self):
+        assert_that(_settings()).is_equal_to(
+            {
+                "step": 1,
+                "double_step": None,
+                "max": 0,
+                "background": "#1f618d",
+                "title": "",
+                "title_position": "bottom",
+                "title_font": "DejaVu Sans",
+                "title_size": 12,
+                "title_color": "#ffffff",
+                "title_outline": None,
+                "title_outline_width": 1,
+            }
+        )
+
+    def test_everything_the_client_form_sends_is_kept(self):
+        sent = {
+            "step": 5,
+            "double_step": -3,
+            "max": 99999,
+            "background": "#102030",
+            "title": "Hi",
+            "title_position": "top",
+            "title_font": "Noto Sans",
+            "title_size": 48,
+            "title_color": "#abcdef",
+            "title_outline": "#000000",
+            "title_outline_width": 6,
+        }
+
+        assert_that(_settings(**sent)).is_equal_to(sent)
 
 
 class TestRender:
     def test_default_background_is_the_counter_blue(self, counter):
-        image = _image(counter.render(0, {}))
+        image = _image(counter.render(0, _settings()))
 
         assert_that(image.size).is_equal_to((144, 144))
         assert_that(image.getpixel((2, 2))).is_equal_to((31, 97, 141))
 
-    def test_custom_background_and_invalid_colour_fallback(self, counter):
-        assert_that(_image(counter.render(0, {"background": "#ff0000"})).getpixel((2, 2))).is_equal_to((255, 0, 0))
-        assert_that(_image(counter.render(0, {"background": "red"})).getpixel((2, 2))).is_equal_to((31, 97, 141))
-
     @pytest.mark.parametrize("position,band", [("top", (0, 40)), ("middle", (52, 92)), ("bottom", (104, 144))])
     def test_title_is_drawn_at_its_position(self, counter, position, band):
-        settings = {"title": "WWWW", "title_position": position, "title_color": "#ffff00", "title_size": 14}
+        settings = _settings(title="WWWW", title_position=position, title_color="#ffff00", title_size=14)
 
         image = _image(counter.render(8, settings))
 
@@ -133,24 +249,22 @@ class TestRender:
         assert_that(max(yellow_rows)).is_less_than(band[1])
 
     def test_outline_is_drawn_only_when_set(self, counter):
-        settings = {"title": "WWWW", "title_color": "#ffff00", "title_outline_width": 2}
+        values = {"title": "WWWW", "title_color": "#ffff00", "title_outline_width": 2}
 
-        plain = _image(counter.render(0, settings))
-        outlined = _image(counter.render(0, {**settings, "title_outline": "#ff00ff"}))
+        plain = _image(counter.render(0, _settings(**values)))
+        outlined = _image(counter.render(0, _settings(**values, title_outline="#ff00ff")))
 
         magenta = (255, 0, 255)
         assert_that(any(p == magenta for p in plain.get_flattened_data())).is_false()
         assert_that(any(p == magenta for p in outlined.get_flattened_data())).is_true()
 
-    def test_unknown_position_uses_default(self, counter):
-        assert_that(counter.render(0, {"title": "x", "title_position": "sideways"})).is_equal_to(
-            counter.render(0, {"title": "x", "title_position": "bottom"})
-        )
+    def test_missing_fontconfig_falls_back(self, counter, monkeypatch):
+        def _missing(*_args: Any, **_kwargs: Any) -> None:
+            raise FileNotFoundError("fc-match")
 
-    def test_missing_fontconfig_falls_back(self, counter):
         counter._font_file.cache_clear()  # pylint: disable=protected-access
-        with patch.object(counter.subprocess, "run", side_effect=FileNotFoundError("fc-match")):
-            data = counter.render(0, {"title": "x", "title_font": "Anything"})
+        monkeypatch.setattr(counter.subprocess, "run", _missing)
+        data = counter.render(0, _settings(title="x", title_font="Anything"))
         counter._font_file.cache_clear()  # pylint: disable=protected-access
 
         assert_that(_image(data).size).is_equal_to((144, 144))

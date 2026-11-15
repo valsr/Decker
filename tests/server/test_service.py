@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from assertpy import assert_that
 
-from decker.plugin.context import ActionTarget
 from decker.plugin.events import PluginLoadFailedEvent
+from decker.plugin.target import ActionTarget
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.page_controller import PageController
 from decker.server.pages import PageStore, initial_page_id
@@ -63,7 +63,9 @@ def store():
 
 @pytest.fixture()
 def manager():
-    return MagicMock()
+    mock = MagicMock()
+    mock.complete_settings.side_effect = lambda _target, settings: settings
+    return mock
 
 
 @pytest.fixture()

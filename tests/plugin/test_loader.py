@@ -4,67 +4,65 @@ from assertpy import assert_that
 
 from decker.plugin.loader import PluginLoader
 
-_NATIVE_MANIFEST = {
-    "UUID": "com.decker.test",
-    "Name": "Test",
-    "Version": "1.0.0",
-    "Author": "Decker",
-    "Actions": [{"UUID": "com.decker.test.show", "Name": "Show"}],
+_MANIFEST = {
+    "format": 1,
+    "id": "com.decker.test",
+    "name": "Test",
+    "version": "1.0.0",
+    "author": "Decker",
+    "runtime": {"type": "python", "entry": "plugin.py"},
+    "contributes": {"actions": [{"id": "com.decker.test.show", "name": "Show"}]},
 }
 
-_PLUGIN_PY = """
-from decker.plugin import DeckerPlugin, action
 
-
-@action("com.decker.test.show")
-class ShowAction(DeckerPlugin):
-    pass
-"""
-
-
-def _make_native(plugins_dir):
-    plugin_dir = plugins_dir / "com.decker.test"
+def _make_plugin(plugins_dir, manifest=None, name="com.decker.test"):
+    plugin_dir = plugins_dir / name
     plugin_dir.mkdir(parents=True)
-    (plugin_dir / "manifest.json").write_text(json.dumps(_NATIVE_MANIFEST))
-    (plugin_dir / "plugin.py").write_text(_PLUGIN_PY)
-
-
-def _make_broken_native(plugins_dir):
-    plugin_dir = plugins_dir / "com.decker.broken"
-    plugin_dir.mkdir(parents=True)
-    (plugin_dir / "manifest.json").write_text("{not valid json")
+    (plugin_dir / "manifest.json").write_text(json.dumps(manifest or _MANIFEST))
+    return plugin_dir
 
 
 class TestPluginLoader:
-    def test_empty_directory_returns_empty_result(self, tmp_path):
+    def test_missing_directory_returns_empty_result(self, tmp_path):
         result = PluginLoader(tmp_path / "plugins").scan()
-        assert_that(result.native).is_empty()
+
+        assert_that(result.plugins).is_empty()
         assert_that(result.failures).is_empty()
 
-    def test_missing_directory_returns_empty_result(self, tmp_path):
-        result = PluginLoader(tmp_path / "does-not-exist").scan()
-        assert_that(result.native).is_empty()
+    def test_scans_plugin_folders(self, tmp_path):
+        plugin_dir = _make_plugin(tmp_path)
+        (tmp_path / "stray-file.txt").write_text("ignored")
 
-    def test_loads_native_plugin(self, tmp_path):
-        plugins_dir = tmp_path / "plugins"
-        _make_native(plugins_dir)
-        result = PluginLoader(plugins_dir).scan()
-        assert_that(result.native).is_length(1)
-        assert_that(result.native[0].manifest.uuid).is_equal_to("com.decker.test")
+        result = PluginLoader(tmp_path).scan()
 
-    def test_broken_native_plugin_does_not_block_others(self, tmp_path):
-        plugins_dir = tmp_path / "plugins"
-        _make_native(plugins_dir)
-        _make_broken_native(plugins_dir)
-        result = PluginLoader(plugins_dir).scan()
-        assert_that(result.native).is_length(1)
+        assert_that(result.plugins).is_length(1)
+        assert_that(result.plugins[0].manifest.id).is_equal_to("com.decker.test")
+        assert_that(result.plugins[0].plugin_dir).is_equal_to(plugin_dir)
+        assert_that(result.failures).is_empty()
+
+    def test_invalid_manifest_reported_as_failure(self, tmp_path):
+        broken = tmp_path / "com.decker.broken"
+        broken.mkdir()
+        (broken / "manifest.json").write_text("{not valid json")
+        _make_plugin(tmp_path)
+
+        result = PluginLoader(tmp_path).scan()
+
+        assert_that(result.plugins).extracting("manifest").extracting("id").contains_only("com.decker.test")
         assert_that(result.failures).is_length(1)
         assert_that(result.failures[0].plugin_uuid).is_equal_to("com.decker.broken")
+        assert_that(result.failures[0].error).contains("malformed JSON")
 
-    def test_non_directory_entries_are_ignored(self, tmp_path):
-        plugins_dir = tmp_path / "plugins"
-        plugins_dir.mkdir()
-        (plugins_dir / "stray-file.txt").write_text("not a plugin")
-        result = PluginLoader(plugins_dir).scan()
-        assert_that(result.native).is_empty()
-        assert_that(result.failures).is_empty()
+    def test_old_format_manifest_is_a_failure(self, tmp_path):
+        _make_plugin(tmp_path, {"UUID": "com.decker.old", "Name": "Old"}, name="com.decker.old")
+
+        result = PluginLoader(tmp_path).scan()
+
+        assert_that(result.plugins).is_empty()
+        assert_that(result.failures).is_length(1)
+
+    def test_bundled_flag_set(self, tmp_path):
+        _make_plugin(tmp_path)
+
+        assert_that(PluginLoader(tmp_path, bundled=True).scan().plugins[0].bundled).is_true()
+        assert_that(PluginLoader(tmp_path).scan().plugins[0].bundled).is_false()

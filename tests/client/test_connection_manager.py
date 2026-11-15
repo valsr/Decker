@@ -419,6 +419,14 @@ class TestOnServerEvent:
         assert_that(events[0].states[0]["key_index"]).is_equal_to(2)
         assert_that(events[0].states[0]["label"]).is_equal_to("Hi")
 
+    def test_plugin_failed_dispatches_plugin_load_failed_event(self):
+        payload = json.dumps({"plugin_id": "com.decker.x", "error": "crashed"})
+        self.manager._on_server_event("plugin_failed", payload)  # pylint: disable=protected-access
+        events = [e for e in EventManager.get().drain() if isinstance(e, PluginLoadFailedEvent)]
+        assert_that(events).is_length(1)
+        assert_that(events[0].plugin_uuid).is_equal_to("com.decker.x")
+        assert_that(events[0].error).is_equal_to("crashed")
+
     def test_unknown_event_type_is_silently_ignored(self):
         self.manager._on_server_event("some_future_event", "{}")  # pylint: disable=protected-access
         assert_that(EventManager.get().drain()).is_empty()

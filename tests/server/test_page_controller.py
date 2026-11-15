@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, call
 import pytest
 from assertpy import assert_that
 
-from decker.plugin.context import ActionTarget
+from decker.plugin.target import ActionTarget
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.page_controller import PAGES_CHANGED_EVENT, PageController

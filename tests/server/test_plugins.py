@@ -1,210 +1,541 @@
 import base64
 import json
+import os
+import signal
+import stat
+import sys
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from assertpy import assert_that
 
-from decker.plugin.context import ActionTarget
+from decker.common.model import DeviceHardwareInfo, KeyInfo
 from decker.plugin.gestures import Gesture
+from decker.plugin.loader import PluginLoader
+from decker.plugin.protocol import Message
+from decker.plugin.runtime.supervisor import SupervisorPolicy
+from decker.plugin.settings_store import PluginSettingsStore
+from decker.plugin.target import ActionTarget
+from decker.server.devices.state import DeviceState
 from decker.server.plugins import PluginManager
 
-_MANIFEST = {
-    "UUID": "com.decker.test",
-    "Name": "Test",
-    "Version": "1.0.0",
-    "Author": "Decker",
-    "Actions": [{"UUID": "com.decker.test.show", "Name": "Show"}],
-}
-
-_PLUGIN_PY = """
-from decker.plugin import DeckerPlugin, action
-
-
-@action("com.decker.test.show")
-class ShowAction(DeckerPlugin):
-    def on_will_appear(self, ctx):
-        ctx.set_state(1)
-
-    def on_key_down(self, ctx):
-        ctx.set_state(2)
-
-    def on_will_disappear(self, ctx):
-        ctx.set_state(3)
-
-    def on_press(self, ctx):
-        ctx.set_state(4)
+_RECORDER = f"""#!{sys.executable}
+import json, os, sys
+here = os.path.dirname(os.path.abspath(__file__))
+if os.path.exists(os.path.join(here, "crash")):
+    sys.exit(1)
+for line in sys.stdin:
+    with open(os.path.join(here, "received.log"), "a") as log:
+        log.write(line)
+    event = json.loads(line)["event"]
+    if event == "hello":
+        print(json.dumps({{"event": "ready"}}), flush=True)
+    elif event == "ping":
+        print(json.dumps({{"event": "pong"}}), flush=True)
+    elif event == "shutdown":
+        break
 """
 
-_TARGET = ActionTarget(
-    plugin_uuid="com.decker.test",
-    action_uuid="com.decker.test.show",
-    context_id="ctx-1",
-    device_id="dev-1",
-    key_index=0,
-)
-_UNKNOWN_TARGET = ActionTarget(
-    plugin_uuid="com.decker.test",
-    action_uuid="com.decker.test.show",
-    context_id="ctx-unknown",
-    device_id="dev-1",
-    key_index=0,
-)
+_REC_MANIFEST = {
+    "format": 1,
+    "id": "com.decker.rec",
+    "name": "Recorder",
+    "version": "1.0.0",
+    "author": "Decker",
+    "runtime": {"type": "executable", "entry": "rec.py"},
+    "contributes": {
+        "actions": [
+            {
+                "id": "com.decker.rec.show",
+                "name": "Show",
+                "tooltip": "Shows things",
+                "settings": [
+                    {"key": "n", "type": "int", "label": "N", "default": 5, "min": 1, "max": 9},
+                    {"key": "t", "type": "text", "label": "T", "default": "x"},
+                ],
+            }
+        ]
+    },
+}
+
+_COUNTER = "com.decker.counter"
+_COUNTER_ACTION = "com.decker.counter.counter"
+_REC_ACTION = "com.decker.rec.show"
+_FAST = SupervisorPolicy(idle_grace_s=30.0, backoff_s=(0.05,), max_crashes=1, ping_interval_s=30.0)
+_RESTARTING = SupervisorPolicy(idle_grace_s=30.0, backoff_s=(0.05,), max_crashes=5, ping_interval_s=30.0)
 
 
-@pytest.fixture
-def plugins_dir(tmp_path):
-    plugin_dir = tmp_path / "com.decker.test"
-    plugin_dir.mkdir()
-    (plugin_dir / "manifest.json").write_text(json.dumps(_MANIFEST))
-    (plugin_dir / "plugin.py").write_text(_PLUGIN_PY)
-    return tmp_path
+def _target(plugin: str, action: str, context: str = "ctx-1", key: int = 0) -> ActionTarget:
+    return ActionTarget(plugin, action, context, "dev-1", key)
 
 
-def _mock_context() -> MagicMock:
-    ctx = MagicMock()
-    ctx.device_manager = MagicMock()
-    return ctx
+COUNTER_TARGET = _target(_COUNTER, _COUNTER_ACTION)
+REC_TARGET = _target("com.decker.rec", _REC_ACTION)
 
 
-@pytest.fixture
-def manager(tmp_path, plugins_dir):
-    mgr = PluginManager(plugins_dir)
-    mgr._settings_store = mgr._settings_store.__class__(tmp_path / "plugins.db")  # pylint: disable=protected-access
-    mgr.create(_mock_context())
-    mgr._sink = MagicMock()  # pylint: disable=protected-access
-    yield mgr
-    mgr.destroy()
+class FakeDevice:
+    def __init__(self, manager: "FakeDeviceManager") -> None:
+        self._manager = manager
+
+    def get_hw_info(self) -> DeviceHardwareInfo:
+        keys = [KeyInfo(row=i // 3, col=i % 3, pixel_width=72, pixel_height=72, type="key") for i in range(6)]
+        return DeviceHardwareInfo(id="dev-1", type="StreamDeck", vendor_id=1, product_id=2, num_keys=6, keys=keys)
+
+    def clear_key_image(self, key_index: int) -> None:
+        self._manager.cleared.append(key_index)
 
 
-def _wait_for(predicate, timeout=2.0):
+class FakeDeviceManager:
+    def __init__(self) -> None:
+        self.state = DeviceState("dev-1", None, lambda _k: "up", "p1")  # type: ignore[arg-type,return-value]
+        self.cleared: list[int] = []
+        self.hardware_images: list[tuple[int, bytes]] = []
+
+    def get_device_state(self, device_id: str) -> DeviceState | None:
+        return self.state if device_id == "dev-1" else None
+
+    def open_device(self, _device_id: str) -> FakeDevice:
+        return FakeDevice(self)
+
+    def list_devices(self) -> list[DeviceHardwareInfo]:
+        return [DeviceHardwareInfo(id="dev-1", type="StreamDeck", vendor_id=1, product_id=2, num_keys=6)]
+
+    def set_image_bytes(self, _device_id: str, key_index: int, image: bytes) -> None:
+        self.hardware_images.append((key_index, image))
+        self.state.update_key_image(key_index, image)
+
+    def clear_key_state(self, _device_id: str, key_index: int) -> None:
+        self.state.clear_key(key_index)
+
+
+class FakeBus:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
+
+    def push(self, event_type: str, payload: str) -> None:
+        self.events.append((event_type, json.loads(payload)))
+
+    def of(self, event_type: str) -> list[dict]:
+        return [p for t, p in self.events if t == event_type]
+
+
+def _wait_for(predicate, timeout=8.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
             return True
-        time.sleep(0.01)
+        time.sleep(0.02)
     return False
 
 
-class TestPluginManagerLifecycle:
-    def test_start_loads_native_plugin(self, manager):
-        assert_that(manager.load_failures()).is_empty()
-        assert_that(manager._native_plugins).contains_key("com.decker.test")  # pylint: disable=protected-access
+class Env:
+    """A running PluginManager over a fake device, with the recorder plugin installed."""
 
-    def test_list_actions_returns_native_plugin_actions(self, manager):
-        actions = manager.list_actions()
-        assert_that(actions).extracting("plugin_uuid").contains("com.decker.test")
-        test_action = next(a for a in actions if a["plugin_uuid"] == "com.decker.test")
-        assert_that(test_action).is_equal_to(
-            {
-                "plugin_uuid": "com.decker.test",
-                "plugin_name": "Test",
-                "action_uuid": "com.decker.test.show",
-                "action_name": "Show",
-                "icon_b64": "",
-            }
+    def __init__(self, tmp_path, policy: SupervisorPolicy = _FAST) -> None:
+        self.plugins_dir = tmp_path / "plugins"
+        self.rec_dir = self.plugins_dir / "com.decker.rec"
+        self.rec_dir.mkdir(parents=True)
+        (self.rec_dir / "manifest.json").write_text(json.dumps(_REC_MANIFEST))
+        script = self.rec_dir / "rec.py"
+        script.write_text(_RECORDER)
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        self.dm = FakeDeviceManager()
+        self.bus = FakeBus()
+        self.persisted: list[tuple[ActionTarget, dict]] = []
+        self.manager = PluginManager(self.plugins_dir, policy, PluginSettingsStore(tmp_path / "plugins.db"))
+        context = SimpleNamespace(
+            device_manager=self.dm,
+            event_bus=self.bus,
+            page_controller=MagicMock(),
+            key_assignment_store=MagicMock(),
         )
+        self.manager.create(context)  # type: ignore[arg-type]
+        self.manager.settings_persister = lambda target, settings: self.persisted.append((target, settings))
 
-    def test_bundled_counter_action_has_its_icon(self, manager):
-        counter = next(a for a in manager.list_actions() if a["action_uuid"] == "com.decker.counter.counter")
+    def received(self, event: str | None = None) -> list[dict]:
+        log = self.rec_dir / "received.log"
+        if not log.exists():
+            return []
+        messages = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+        return [m for m in messages if event is None or m["event"] == event]
 
+    def label(self, key: int = 0) -> str:
+        return self.dm.state.get_key_state(key).label
+
+    def image(self, key: int = 0) -> bytes | None:
+        return self.dm.state.get_key_state(key).image
+
+    def process_pid(self, plugin_id: str) -> int:
+        entry = self.manager._supervisor._entries[plugin_id]  # pylint: disable=protected-access
+        assert entry.process is not None and entry.process.pid is not None
+        return entry.process.pid
+
+
+@pytest.fixture(name="env")
+def env_fixture(tmp_path):
+    environment = Env(tmp_path)
+    yield environment
+    environment.manager.destroy()
+
+
+@pytest.fixture(name="restarting_env")
+def restarting_env_fixture(tmp_path):
+    environment = Env(tmp_path, _RESTARTING)
+    yield environment
+    environment.manager.destroy()
+
+
+class TestListing:
+    def test_list_actions_includes_settings_schema_and_tooltip(self, env):
+        actions = {a["action_uuid"]: a for a in env.manager.list_actions()}
+
+        rec = actions[_REC_ACTION]
+        assert_that(rec["plugin_uuid"]).is_equal_to("com.decker.rec")
+        assert_that(rec["plugin_name"]).is_equal_to("Recorder")
+        assert_that(rec["action_name"]).is_equal_to("Show")
+        assert_that(rec["tooltip"]).is_equal_to("Shows things")
+        assert_that(rec["icon_b64"]).is_equal_to("")
+        assert_that(rec["settings_schema"][0]).is_equal_to(
+            {"key": "n", "type": "int", "label": "N", "default": 5, "min": 1, "max": 9}
+        )
+        counter = actions[_COUNTER_ACTION]
         assert base64.b64decode(counter["icon_b64"]).startswith(b"\x89PNG")
+        assert_that(counter["tooltip"]).is_equal_to("Press to count, long press to reset")
+        keys = [e.get("key") for e in counter["settings_schema"]]
+        assert_that(keys).contains("step", "double_step", "title_outline")
+        json.dumps(counter["settings_schema"])
 
-    def test_action_icons_are_read_once(self, manager, monkeypatch):
-        manager.list_actions()
+    def test_action_icons_are_read_once(self, env, monkeypatch):
+        env.manager.list_actions()
         monkeypatch.setattr("decker.server.plugins.read_icon", MagicMock(side_effect=AssertionError("re-read")))
 
-        assert_that(manager.list_actions()).is_not_empty()
+        assert_that(env.manager.list_actions()).is_not_empty()
 
-    def test_activate_action_dispatches_on_will_appear(self, manager):
-        manager.activate_action(_TARGET)
-        assert _wait_for(lambda: manager._sink.set_state.called)  # pylint: disable=protected-access
-        manager._sink.set_state.assert_called_with("dev-1", 0, 1)  # pylint: disable=protected-access
+    def test_bundled_counter_is_loaded_alongside_user_plugins(self, env):
+        plugins = {p.manifest.id: p for p in env.manager.plugins()}
 
-    def test_key_down_dispatches_to_live_instance(self, manager):
-        manager.activate_action(_TARGET)
-        _wait_for(lambda: manager._sink.set_state.called)  # pylint: disable=protected-access
-        manager._sink.reset_mock()  # pylint: disable=protected-access
-        manager.dispatch_key_down(_TARGET)
-        assert _wait_for(lambda: manager._sink.set_state.called)  # pylint: disable=protected-access
-        manager._sink.set_state.assert_called_with("dev-1", 0, 2)  # pylint: disable=protected-access
+        assert_that(plugins).contains_key(_COUNTER, "com.decker.rec")
+        assert_that(plugins[_COUNTER].bundled).is_true()
+        assert_that(plugins["com.decker.rec"].bundled).is_false()
+        assert_that(env.manager.load_failures()).is_empty()
 
-    def test_press_reaches_on_press_without_waiting(self, manager):
-        manager.activate_action(_TARGET)
-        manager.dispatch_key_down(_TARGET)
-        manager._sink.reset_mock()  # pylint: disable=protected-access
+    def test_complete_settings_fills_defaults(self, env):
+        assert_that(env.manager.complete_settings(REC_TARGET, {"n": "3", "junk": 1})).is_equal_to({"n": 3, "t": "x"})
 
-        manager.dispatch_key_up(_TARGET)
+    def test_remove_plugin_forgets_it_and_its_live_instances(self, env):
+        env.manager.activate_action(REC_TARGET)
 
-        manager._sink.set_state.assert_called_with("dev-1", 0, 4)  # pylint: disable=protected-access
+        env.manager.remove_plugin("com.decker.rec")
 
-    def test_broken_gestures_falls_back_to_press_only(self, manager):
-        manager.activate_action(_TARGET)
-        instance = manager._registry.get(  # pylint: disable=protected-access
-            _TARGET.plugin_uuid, _TARGET.action_uuid, _TARGET.context_id
+        assert_that(env.manager.live_targets("com.decker.rec")).is_empty()
+        assert_that(env.manager.list_actions()).extracting("action_uuid").does_not_contain(_REC_ACTION)
+
+    def test_add_plugin_makes_actions_available(self, env):
+        removed = next(p for p in env.manager.plugins() if p.manifest.id == "com.decker.rec")
+        env.manager.remove_plugin("com.decker.rec")
+
+        env.manager.add_plugin(removed)
+
+        assert_that(env.manager.list_actions()).extracting("action_uuid").contains(_REC_ACTION)
+
+
+class TestWillAppear:
+    def test_activate_sends_will_appear_with_complete_settings(self, env):
+        env.manager.store_settings(REC_TARGET, {"n": "7", "junk": True})
+
+        env.manager.activate_action(REC_TARGET)
+
+        assert _wait_for(lambda: env.received("will_appear"))
+        message = env.received("will_appear")[0]
+        assert_that(message["context"]).is_equal_to("ctx-1")
+        assert_that(message["payload"]).is_equal_to(
+            {
+                "action": _REC_ACTION,
+                "device": "dev-1",
+                "key": {"index": 0, "column": 0, "row": 0},
+                "settings": {"n": 7, "t": "x"},
+                "state": 0,
+            }
         )
-        instance.gestures = MagicMock(side_effect=RuntimeError("boom"))
+        assert_that(env.received("hello")[0]["payload"]["plugin_id"]).is_equal_to("com.decker.rec")
 
-        gestures = manager._registered_gestures(_TARGET)  # pylint: disable=protected-access
+    def test_key_column_and_row_come_from_the_device_layout(self, env):
+        env.manager.activate_action(_target("com.decker.rec", _REC_ACTION, "ctx-5", key=4))
 
-        assert_that(gestures).is_equal_to(frozenset({Gesture.PRESS}))
+        assert _wait_for(lambda: env.received("will_appear"))
+        assert_that(env.received("will_appear")[0]["payload"]["key"]).is_equal_to({"index": 4, "column": 1, "row": 1})
 
-    def test_registered_gestures_for_unknown_target_is_empty(self, manager):
-        assert_that(manager._registered_gestures(_UNKNOWN_TARGET)).is_empty()  # pylint: disable=protected-access
+    def test_only_one_will_appear_on_first_start(self, env):
+        env.manager.activate_action(REC_TARGET)
+        assert _wait_for(lambda: env.received("will_appear"))
+        time.sleep(0.3)
 
-    def test_deactivate_drops_the_gesture_recognizer(self, manager):
-        manager.activate_action(_TARGET)
-        assert_that(manager._recognizers).contains_key(_TARGET.context_id)  # pylint: disable=protected-access
+        assert_that(env.received("will_appear")).is_length(1)
 
-        manager.deactivate_action(_TARGET)
+    def test_unknown_action_is_ignored(self, env):
+        env.manager.activate_action(_target("com.decker.rec", "com.decker.rec.nope"))
 
-        assert_that(manager._recognizers).does_not_contain_key(_TARGET.context_id)  # pylint: disable=protected-access
+        assert_that(env.manager.live_targets("com.decker.rec")).is_empty()
 
-    def test_counter_gestures_follow_double_step_setting(self, manager):
-        target = ActionTarget(
-            plugin_uuid="com.decker.counter",
-            action_uuid="com.decker.counter.counter",
-            context_id="ctr",
-            device_id="dev-1",
-            key_index=1,
+    def test_deactivate_sends_will_disappear_and_releases(self, env):
+        env.manager.activate_action(REC_TARGET)
+        assert _wait_for(lambda: env.received("will_appear"))
+
+        env.manager.deactivate_action(REC_TARGET)
+
+        assert _wait_for(lambda: env.received("will_disappear"))
+        assert_that(env.received("will_disappear")[0]["context"]).is_equal_to("ctx-1")
+        assert_that(env.manager.live_targets("com.decker.rec")).is_empty()
+        entry = env.manager._supervisor._entries["com.decker.rec"]  # pylint: disable=protected-access
+        assert_that(entry.refs).is_equal_to(0)
+
+    def test_ready_after_restart_replays_will_appear_for_live_contexts(self, restarting_env):
+        restarting_env.manager.activate_action(REC_TARGET)
+        assert _wait_for(lambda: restarting_env.received("will_appear"))
+
+        os.kill(restarting_env.process_pid("com.decker.rec"), signal.SIGKILL)
+
+        assert _wait_for(lambda: len(restarting_env.received("will_appear")) == 2)
+        assert_that(restarting_env.received("will_appear")[1]["context"]).is_equal_to("ctx-1")
+
+    def test_device_connected_sent_after_ready(self, env):
+        env.manager.activate_action(REC_TARGET)
+
+        assert _wait_for(lambda: env.received("device_connected"))
+        assert_that(env.received("device_connected")[0]["payload"]).is_equal_to({"device": "dev-1"})
+        events = [m["event"] for m in env.received()]
+        assert_that(events.index("device_connected")).is_greater_than(events.index("will_appear"))
+
+
+class TestCounterEndToEnd:
+    def test_press_reaches_plugin_and_image_reaches_sink(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(lambda: env.image() is not None and env.label() == "0")
+        first = env.image()
+
+        env.manager.dispatch_key_down(COUNTER_TARGET)
+        env.manager.dispatch_key_up(COUNTER_TARGET)
+
+        assert _wait_for(lambda: env.label() == "1")
+        assert_that(env.image()).is_not_equal_to(first)
+        assert env.image().startswith(b"\x89PNG")
+        assert_that(env.dm.hardware_images[-1][0]).is_equal_to(0)
+
+    def test_set_gestures_changes_recognizer_registration(self, env):
+        env.manager.store_settings(COUNTER_TARGET, {"double_step": 5})
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(lambda: env.label() == "0")
+        live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
+        assert _wait_for(lambda: Gesture.DOUBLE_PRESS in live.gestures)
+
+        env.manager.dispatch_key_down(COUNTER_TARGET)
+        env.manager.dispatch_key_up(COUNTER_TARGET)
+        time.sleep(0.15)
+        assert_that(env.label()).is_equal_to("0")  # press is held back by the double-press window
+
+        assert _wait_for(lambda: env.label() == "1")
+
+    def test_press_is_immediate_without_double_step(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(lambda: env.label() == "0")
+        live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
+        assert_that(live.gestures).does_not_contain(Gesture.DOUBLE_PRESS)
+
+    def test_settings_changed_is_applied_and_redraws(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(lambda: env.image() is not None)
+        first = env.image()
+
+        env.manager.store_settings(COUNTER_TARGET, {"background": "#ff0000", "title_outline": ""})
+        env.manager.dispatch_settings_changed(COUNTER_TARGET)
+
+        assert _wait_for(lambda: env.image() != first)
+
+    def test_set_image_for_disappeared_context_is_dropped(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(lambda: env.label() == "0")
+        env.manager.deactivate_action(COUNTER_TARGET)
+        sent_before = list(env.dm.hardware_images)
+        image_before = env.image()
+        stale = base64.b64encode(b"stale-image").decode()
+
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            _COUNTER, Message("set_image", "ctx-1", {"image": stale, "format": "png"})
         )
-        manager.activate_action(target)
 
-        assert_that(manager._registered_gestures(target)).does_not_contain(
-            Gesture.DOUBLE_PRESS
+        assert_that(env.dm.hardware_images).is_equal_to(sent_before)
+        assert_that(env.image()).is_equal_to(image_before)
+
+    def test_set_image_from_another_plugin_is_dropped(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(lambda: env.label() == "0")
+        sent_before = list(env.dm.hardware_images)
+
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("set_image", "ctx-1", {"image": base64.b64encode(b"x").decode()})
+        )
+
+        assert_that(env.dm.hardware_images).is_equal_to(sent_before)
+
+    def test_null_image_clears_the_key(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(lambda: env.image() is not None)
+
+        env.manager._on_plugin_message(
+            _COUNTER, Message("set_image", "ctx-1", {"image": None})
         )  # pylint: disable=protected-access
-        manager.store_settings(target, {"double_step": 5})
-        assert_that(manager._registered_gestures(target)).contains(
-            Gesture.DOUBLE_PRESS
+
+        assert_that(env.image()).is_none()
+        assert_that(env.dm.cleared).contains(0)
+
+    def test_invalid_base64_image_is_dropped(self, env):
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(lambda: env.label() == "0")
+        sent_before = list(env.dm.hardware_images)
+
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            _COUNTER, Message("set_image", "ctx-1", {"image": "***not base64***"})
+        )
+
+        assert_that(env.dm.hardware_images).is_equal_to(sent_before)
+
+
+class TestFailure:
+    def test_failed_plugin_keys_marked_and_failure_reported(self, env):
+        (env.rec_dir / "crash").write_text("")
+
+        env.manager.activate_action(REC_TARGET)
+
+        assert _wait_for(lambda: env.label() == "Plugin failed")
+        assert_that(env.dm.cleared).contains(0)
+        assert_that(env.manager.load_failures()).extracting("plugin_uuid").contains("com.decker.rec")
+        assert _wait_for(lambda: env.bus.of("plugin_failed"))
+        assert_that(env.bus.of("plugin_failed")[0]["plugin_id"]).is_equal_to("com.decker.rec")
+
+    def test_activating_while_failed_marks_the_key(self, env):
+        (env.rec_dir / "crash").write_text("")
+        env.manager.activate_action(REC_TARGET)
+        assert _wait_for(lambda: env.label() == "Plugin failed")
+
+        env.manager.activate_action(_target("com.decker.rec", _REC_ACTION, "ctx-2", key=2))
+
+        assert _wait_for(lambda: env.label(2) == "Plugin failed")
+
+    def test_resaving_settings_retries_failed_plugin(self, env):
+        (env.rec_dir / "crash").write_text("")
+        env.manager.activate_action(REC_TARGET)
+        assert _wait_for(lambda: env.label() == "Plugin failed")
+        (env.rec_dir / "crash").unlink()
+
+        env.manager.store_settings(REC_TARGET, {"n": 2})
+        env.manager.dispatch_settings_changed(REC_TARGET)
+
+        assert _wait_for(lambda: env.received("will_appear"))
+        assert_that(env.received("will_appear")[0]["payload"]["settings"]["n"]).is_equal_to(2)
+        assert_that(env.manager.load_failures()).is_empty()
+
+
+class TestPluginRequests:
+    def test_open_url_non_http_dropped(self, env):
+        for url in ("file:///etc/passwd", "javascript:alert(1)", "http://", "", 5):
+            env.manager._on_plugin_message(
+                "com.decker.rec", Message("open_url", "ctx-1", {"url": url})
+            )  # pylint: disable=protected-access
+
+        assert_that(env.bus.of("open_url")).is_empty()
+
+    def test_open_url_http_and_https_pushed(self, env):
+        for url in ("http://example.com/a", "https://example.com"):
+            env.manager._on_plugin_message(
+                "com.decker.rec", Message("open_url", "ctx-1", {"url": url})
+            )  # pylint: disable=protected-access
+
+        assert_that(env.bus.of("open_url")).is_equal_to(
+            [
+                {"plugin_id": "com.decker.rec", "url": "http://example.com/a"},
+                {"plugin_id": "com.decker.rec", "url": "https://example.com"},
+            ]
+        )
+
+    def test_set_settings_from_plugin_is_validated_and_persisted(self, env):
+        env.manager.activate_action(REC_TARGET)
+        assert _wait_for(lambda: env.received("will_appear"))
+
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("set_settings", "ctx-1", {"settings": {"n": 99, "t": "hi", "junk": 1}})
+        )
+
+        expected = {"n": 5, "t": "hi"}  # 99 is out of range -> default; unknown keys dropped
+        assert_that(env.persisted).is_equal_to([(REC_TARGET, expected)])
+        stored = env.manager._settings_store.get_settings(  # pylint: disable=protected-access
+            "com.decker.rec", _REC_ACTION, "ctx-1"
+        )
+        assert_that(stored).is_equal_to(expected)
+        time.sleep(0.2)
+        assert_that(env.received("settings_changed")).is_empty()  # not echoed back
+
+    def test_set_gestures_ignores_invalid_values(self, env):
+        env.manager.activate_action(REC_TARGET)
+        live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
+        assert_that(live.gestures).is_equal_to(frozenset({Gesture.PRESS}))
+
+        env.manager._on_plugin_message(
+            "com.decker.rec", Message("set_gestures", "ctx-1", {"gestures": ["nope"]})
+        )  # pylint: disable=protected-access
+        assert_that(live.gestures).is_equal_to(frozenset({Gesture.PRESS}))
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("set_gestures", "ctx-1", {"gestures": ["press", "long_press", "x"]})
+        )
+
+        assert_that(live.gestures).is_equal_to(frozenset({Gesture.PRESS, Gesture.LONG_PRESS}))
+
+    def test_raw_key_events_and_gestures_are_forwarded(self, env):
+        env.manager.activate_action(REC_TARGET)
+        assert _wait_for(lambda: env.received("will_appear"))
+
+        env.manager.dispatch_key_down(REC_TARGET)
+        env.manager.dispatch_key_up(REC_TARGET)
+
+        assert _wait_for(lambda: env.received("press"))
+        events = [m["event"] for m in env.received()]
+        assert_that(events).contains("key_down", "key_up", "press")
+
+    def test_log_messages_do_not_raise(self, env):
+        env.manager._on_plugin_message(
+            "com.decker.rec", Message("log", None, {"level": "warning", "message": "hi"})
         )  # pylint: disable=protected-access
 
-    def test_key_down_without_activation_is_noop(self, manager):
-        manager.dispatch_key_down(_UNKNOWN_TARGET)
-        time.sleep(0.05)
-        manager._sink.set_state.assert_not_called()  # pylint: disable=protected-access
 
-    def test_deactivate_dispatches_on_will_disappear_then_unregisters(self, manager):
-        manager.activate_action(_TARGET)
-        _wait_for(lambda: manager._sink.set_state.called)  # pylint: disable=protected-access
-        manager._sink.reset_mock()  # pylint: disable=protected-access
-        manager.deactivate_action(_TARGET)
-        assert _wait_for(lambda: manager._sink.set_state.called)  # pylint: disable=protected-access
-        manager._sink.set_state.assert_called_with("dev-1", 0, 3)  # pylint: disable=protected-access
+def test_plugins_dir_loader_failure_is_reported(tmp_path):
+    broken = tmp_path / "bad"
+    broken.mkdir()
+    (broken / "manifest.json").write_text("{")
+    manager = PluginManager(tmp_path, _FAST, PluginSettingsStore(tmp_path / "db.sqlite"))
+    context = SimpleNamespace(device_manager=FakeDeviceManager(), event_bus=FakeBus())
+    manager.create(context)  # type: ignore[arg-type]
+    try:
+        assert_that(manager.load_failures()).extracting("plugin_uuid").contains("bad")
+    finally:
+        manager.destroy()
 
-        manager._sink.reset_mock()  # pylint: disable=protected-access
-        manager.dispatch_key_down(_TARGET)
-        time.sleep(0.05)
-        manager._sink.set_state.assert_not_called()  # pylint: disable=protected-access
 
-    def test_settings_persist_across_context(self, manager):
-        manager.activate_action(_TARGET)
-        _wait_for(lambda: manager._sink.set_state.called)  # pylint: disable=protected-access
-        manager._settings_store.set_settings(  # pylint: disable=protected-access
-            "com.decker.test", "com.decker.test.show", "ctx-1", {"v": 1}
-        )
-        assert_that(
-            manager._settings_store.get_settings(  # pylint: disable=protected-access
-                "com.decker.test", "com.decker.test.show", "ctx-1"
-            )
-        ).is_equal_to({"v": 1})
+def test_user_plugin_with_bundled_id_is_rejected(tmp_path):
+    dup = tmp_path / "com.decker.counter"
+    dup.mkdir()
+    bundled = PluginLoader(
+        __import__(
+            "decker.server.plugins", fromlist=["_BUNDLED_PLUGINS_DIR"]
+        )._BUNDLED_PLUGINS_DIR  # pylint: disable=protected-access
+    ).scan()
+    (dup / "manifest.json").write_text(
+        json.dumps({**json.loads((bundled.plugins[0].plugin_dir / "manifest.json").read_text())})
+    )
+    manager = PluginManager(tmp_path, _FAST, PluginSettingsStore(tmp_path / "db.sqlite"))
+    manager.create(SimpleNamespace(device_manager=FakeDeviceManager(), event_bus=FakeBus()))  # type: ignore[arg-type]
+    try:
+        assert_that(manager.load_failures()).extracting("error").contains("duplicate plugin id")
+        assert_that([p for p in manager.plugins() if p.manifest.id == "com.decker.counter"][0].bundled).is_true()
+    finally:
+        manager.destroy()
