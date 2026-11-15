@@ -22,10 +22,10 @@ pillow = "^12.2.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^26"
-mypy = "^2"
+mypy = "^2.1.0"
 pytest = "^8.3.4"
 pytest-timeout = "^2.3.1"
-pytest-cov = "^7"
+pytest-cov = "^7.1.0"
 pylint = "^4"
 assertpy = "^1.1"
 assertpy-stubs = "^1.1.2"
