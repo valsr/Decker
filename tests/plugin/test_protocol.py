@@ -110,3 +110,8 @@ def test_event_sets_match_spec() -> None:
             }
         )
     )
+
+
+def test_decode_rejects_deeply_nested_input() -> None:
+    with pytest.raises(ProtocolError):
+        decode(b"[" * 200000)
