@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 
 from decker.common import paths as decker_paths
-from decker.plugin.manifest import ManifestValidationError, PluginManifest
+from decker.plugin.legacy_manifest import ManifestValidationError, PluginManifest
 
 
 class PluginCliError(Exception):

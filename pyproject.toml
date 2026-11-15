@@ -18,6 +18,7 @@ PyQt6 = "^6.0"
 argcomplete = "^3.6.3"
 cairosvg = "^2.7"
 pillow = "^12.2.0"
+packaging = "^25.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^26.5.1"

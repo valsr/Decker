@@ -1,111 +1,198 @@
+import copy
+import json
+from typing import Any
+
 import pytest
 from assertpy import assert_that
 
-from decker.plugin.manifest import ManifestValidationError, PluginManifest
+from decker.plugin.manifest import (
+    SUPPORTED_FORMAT,
+    ManifestValidationError,
+    PluginManifest,
+)
 
-_VALID = {
-    "UUID": "com.decker.clock",
-    "Name": "Clock",
-    "Version": "1.0.0",
-    "Author": "Decker",
-    "Actions": [{"UUID": "com.decker.clock.show", "Name": "Show clock"}],
+_COUNTER: dict[str, Any] = {
+    "format": 1,
+    "id": "com.decker.counter",
+    "name": "Counter",
+    "version": "1.0.0",
+    "author": "Decker",
+    "description": "Counts key presses.",
+    "homepage": "https://github.com/valsr/Decker",
+    "icon": "icons/plugin",
+    "category": "Utilities",
+    "decker": ">=0.2",
+    "runtime": {"type": "python", "entry": "plugin.py", "python": ">=3.12", "requirements": []},
+    "permissions": [],
+    "global_settings": [],
+    "contributes": {
+        "icon_packs": [{"id": "com.decker.counter.icons", "name": "Counter icons", "path": "iconpack"}],
+        "actions": [
+            {
+                "id": "com.decker.counter.counter",
+                "name": "Counter",
+                "tooltip": "Press to count, long press to reset",
+                "icon": "icons/counter",
+                "gestures": ["press", "long_press"],
+                "states": [{"image": "icons/counter"}],
+                "settings": [
+                    {"section": "Counting"},
+                    {"key": "step", "type": "int", "label": "Step", "default": 1, "min": 1, "max": 9999},
+                    {
+                        "key": "double_step",
+                        "type": "int",
+                        "label": "Double press step",
+                        "optional": True,
+                        "placeholder": "None (presses register immediately)",
+                    },
+                    {
+                        "key": "max",
+                        "type": "int",
+                        "label": "Max count",
+                        "default": 0,
+                        "min": 0,
+                        "special_value": "∞ (no limit)",
+                    },
+                ],
+            }
+        ],
+    },
 }
 
 
-class TestFromDict:
-    def test_valid_manifest_parses(self):
-        manifest = PluginManifest.from_dict(_VALID)
-        assert_that(manifest.uuid).is_equal_to("com.decker.clock")
-        assert_that(manifest.actions).is_length(1)
-        assert_that(manifest.actions[0].uuid).is_equal_to("com.decker.clock.show")
-
-    @pytest.mark.parametrize("field", ["UUID", "Name", "Version", "Author", "Actions"])
-    def test_missing_required_field_raises(self, field):
-        data = dict(_VALID)
-        del data[field]
-        with pytest.raises(ManifestValidationError):
-            PluginManifest.from_dict(data)
-
-    def test_invalid_uuid_format_raises(self):
-        with pytest.raises(ManifestValidationError):
-            PluginManifest.from_dict({**_VALID, "UUID": "NotAValidUUID"})
-
-    def test_empty_actions_raises(self):
-        with pytest.raises(ManifestValidationError):
-            PluginManifest.from_dict({**_VALID, "Actions": []})
-
-    def test_actions_not_a_list_raises(self):
-        with pytest.raises(ManifestValidationError):
-            PluginManifest.from_dict({**_VALID, "Actions": "not-a-list"})
-
-    def test_action_missing_uuid_raises(self):
-        with pytest.raises(ManifestValidationError):
-            PluginManifest.from_dict({**_VALID, "Actions": [{"Name": "No UUID"}]})
-
-    def test_action_invalid_uuid_format_raises(self):
-        with pytest.raises(ManifestValidationError):
-            PluginManifest.from_dict({**_VALID, "Actions": [{"UUID": "Bad UUID", "Name": "x"}]})
+def _counter(**overrides: Any) -> dict[str, Any]:
+    data = copy.deepcopy(_COUNTER)
+    data.update(overrides)
+    return data
 
 
-class TestLoad:
-    def test_loads_valid_manifest_file(self, tmp_path):
-        path = tmp_path / "manifest.json"
-        path.write_text(
-            '{"UUID": "com.decker.clock", "Name": "Clock", "Version": "1.0.0", '
-            '"Author": "Decker", "Actions": [{"UUID": "com.decker.clock.show", "Name": "Show"}]}'
-        )
-        manifest = PluginManifest.load(path)
-        assert_that(manifest.uuid).is_equal_to("com.decker.clock")
-
-    def test_missing_file_raises(self, tmp_path):
-        with pytest.raises(ManifestValidationError):
-            PluginManifest.load(tmp_path / "missing.json")
-
-    def test_malformed_json_raises(self, tmp_path):
-        path = tmp_path / "manifest.json"
-        path.write_text("{not valid json")
-        with pytest.raises(ManifestValidationError):
-            PluginManifest.load(path)
-
-    def test_non_object_json_raises(self, tmp_path):
-        path = tmp_path / "manifest.json"
-        path.write_text("[1, 2, 3]")
-        with pytest.raises(ManifestValidationError):
-            PluginManifest.load(path)
+def _with_action(**action: Any) -> dict[str, Any]:
+    data = _counter()
+    data["contributes"]["actions"][0].update(action)
+    return data
 
 
-class TestIcons:
-    def _manifest(self, **overrides):
-        data = {
-            "UUID": "com.decker.x",
-            "Name": "X",
-            "Version": "1",
-            "Author": "A",
-            "Actions": [{"UUID": "com.decker.x.a", "Name": "A"}],
-        }
-        data.update(overrides)
-        return PluginManifest.from_dict(data)
+def test_counter_manifest_parses() -> None:
+    manifest = PluginManifest.from_dict(_counter())
+    assert_that(manifest.format).is_equal_to(SUPPORTED_FORMAT)
+    assert_that(manifest.actions[0].id).is_equal_to("com.decker.counter.counter")
+    assert_that(manifest.actions[0].gestures).is_equal_to({"press", "long_press"})
+    assert_that(manifest.actions[0].settings).is_length(4)
+    assert_that(manifest.runtime).is_not_none()
+    assert manifest.runtime is not None
+    assert_that(manifest.runtime.type).is_equal_to("python")
+    assert_that(manifest.runtime.entry).is_equal_to("plugin.py")
+    assert_that(manifest.icon_packs[0].path).is_equal_to("iconpack")
 
-    def test_action_icon_defaults_to_none(self):
-        assert_that(self._manifest().actions[0].icon).is_none()
 
-    def test_action_icon_is_parsed(self):
-        manifest = self._manifest(Actions=[{"UUID": "com.decker.x.a", "Name": "A", "Icon": "imgs/a"}])
+def test_unknown_format_rejected() -> None:
+    with pytest.raises(ManifestValidationError, match="format 2"):
+        PluginManifest.from_dict(_counter(format=2))
 
-        assert_that(manifest.actions[0].icon).is_equal_to("imgs/a")
 
-    def test_plugin_icon_is_the_fallback_for_actions_without_one(self):
-        manifest = self._manifest(
-            Icon="imgs/plugin",
-            Actions=[
-                {"UUID": "com.decker.x.a", "Name": "A"},
-                {"UUID": "com.decker.x.b", "Name": "B", "Icon": "imgs/b"},
-            ],
-        )
+def test_missing_format_rejected() -> None:
+    data = _counter()
+    del data["format"]
+    with pytest.raises(ManifestValidationError, match="format"):
+        PluginManifest.from_dict(data)
 
-        assert_that([a.icon for a in manifest.actions]).is_equal_to(["imgs/plugin", "imgs/b"])
 
-    def test_non_string_or_blank_icons_are_ignored(self):
-        manifest = self._manifest(Icon=7, Actions=[{"UUID": "com.decker.x.a", "Name": "A", "Icon": "  "}])
+def test_unknown_top_level_keys_ignored() -> None:
+    manifest = PluginManifest.from_dict(_counter(signature="x", future={"a": 1}))
+    assert_that(manifest.id).is_equal_to("com.decker.counter")
 
-        assert_that(manifest.actions[0].icon).is_none()
+
+@pytest.mark.parametrize("contributes", [{}, [], None])
+def test_contributes_required_and_non_empty(contributes: Any) -> None:
+    with pytest.raises(ManifestValidationError, match="contributes"):
+        PluginManifest.from_dict(_counter(contributes=contributes))
+
+
+def test_unknown_contribution_kind_rejected() -> None:
+    with pytest.raises(ManifestValidationError, match="requires a newer version of Decker"):
+        PluginManifest.from_dict(_counter(contributes={"screensavers": []}))
+
+
+def test_actions_require_runtime() -> None:
+    data = _counter()
+    del data["runtime"]
+    with pytest.raises(ManifestValidationError, match="runtime"):
+        PluginManifest.from_dict(data)
+
+
+def test_icon_pack_only_needs_no_runtime() -> None:
+    data = _counter()
+    del data["runtime"]
+    del data["contributes"]["actions"]
+    manifest = PluginManifest.from_dict(data)
+    assert_that(manifest.runtime).is_none()
+    assert_that(manifest.actions).is_empty()
+
+
+def test_contribution_id_must_be_prefixed_by_plugin_id() -> None:
+    with pytest.raises(ManifestValidationError, match="com.decker.counter."):
+        PluginManifest.from_dict(_with_action(id="com.other.x"))
+    data = _counter()
+    data["contributes"]["icon_packs"][0]["id"] = "com.other.icons"
+    with pytest.raises(ManifestValidationError, match="icon pack id"):
+        PluginManifest.from_dict(data)
+
+
+def test_invalid_gesture_rejected() -> None:
+    with pytest.raises(ManifestValidationError, match="gestures"):
+        PluginManifest.from_dict(_with_action(gestures=["swipe"]))
+
+
+@pytest.mark.parametrize("req", ["foo @ https://x/y.whl", "git+https://x"])
+def test_url_requirement_rejected(req: str) -> None:
+    data = _counter()
+    data["runtime"]["requirements"] = [req]
+    with pytest.raises(ManifestValidationError):
+        PluginManifest.from_dict(data)
+
+
+def test_index_requirement_accepted() -> None:
+    data = _counter()
+    data["runtime"]["requirements"] = ["requests>=2"]
+    manifest = PluginManifest.from_dict(data)
+    assert manifest.runtime is not None
+    assert_that(manifest.runtime.requirements).is_equal_to(("requests>=2",))
+
+
+def test_runtime_type_must_be_python_or_executable() -> None:
+    data = _counter()
+    data["runtime"]["type"] = "java"
+    with pytest.raises(ManifestValidationError, match="runtime type"):
+        PluginManifest.from_dict(data)
+
+
+def test_action_gestures_default_to_press() -> None:
+    data = _counter()
+    del data["contributes"]["actions"][0]["gestures"]
+    assert_that(PluginManifest.from_dict(data).actions[0].gestures).is_equal_to({"press"})
+
+
+def test_invalid_settings_schema_becomes_manifest_error() -> None:
+    with pytest.raises(ManifestValidationError, match="settings"):
+        PluginManifest.from_dict(_with_action(settings="nope"))
+    with pytest.raises(ManifestValidationError, match="global_settings"):
+        PluginManifest.from_dict(_counter(global_settings="nope"))
+
+
+def test_load_valid_file(tmp_path: Any) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(_counter()), encoding="utf-8")
+    assert_that(PluginManifest.load(path).name).is_equal_to("Counter")
+
+
+def test_malformed_json_and_non_object_rejected(tmp_path: Any) -> None:
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ManifestValidationError, match="malformed"):
+        PluginManifest.load(bad)
+    arr = tmp_path / "arr.json"
+    arr.write_text("[]", encoding="utf-8")
+    with pytest.raises(ManifestValidationError, match="JSON object"):
+        PluginManifest.load(arr)
+    with pytest.raises(ManifestValidationError, match="could not read"):
+        PluginManifest.load(tmp_path / "missing.json")
