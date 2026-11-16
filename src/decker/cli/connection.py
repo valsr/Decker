@@ -13,16 +13,17 @@ class CliConnection:
 
     _TIMEOUT: float = 3.0
 
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(self, host: str, port: int, timeout: float | None = None) -> None:
         self._host = host
         self._port = port
+        self._timeout = self._TIMEOUT if timeout is None else timeout
         self._conn: Any = None
 
     def __enter__(self) -> "CliConnection":
         self._conn = rpyc.utils.factory.connect(
             self._host,
             self._port,
-            config={"sync_request_timeout": self._TIMEOUT},
+            config={"sync_request_timeout": self._timeout},
         )
         return self
 
