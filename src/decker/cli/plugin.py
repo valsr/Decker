@@ -1,63 +1,38 @@
-"""Local filesystem operations for installing, listing, and removing plugins.
+"""Plugin install / remove / list over the server's RPCs (the server owns ~/.decker/plugins/)."""
 
-Unlike other CLI commands, these never talk to the server — they only touch
-~/.decker/plugins/. A server restart is required to pick up the change.
-"""
-
-import shutil
 from pathlib import Path
+from typing import Any
 
-from decker.common import paths as decker_paths
-from decker.plugin.manifest import ManifestValidationError, PluginManifest
+from decker.cli.connection import CliConnection
+
+DENIED_MESSAGE = "Installing plugins is only allowed from the server's own machine"
 
 
 class PluginCliError(Exception):
     """A plugin CLI operation failed."""
 
 
-def install(source: str | Path) -> Path:
-    """Validate the plugin at source and copy it into ~/.decker/plugins/. Returns the install path."""
-    source_dir = Path(source)
-    manifest_path = source_dir / "manifest.json"
-    if not manifest_path.exists():
-        raise PluginCliError(f"{manifest_path} not found")
+def install(conn: CliConnection, path: Path) -> str:
+    """Send a .deckerplugin file to the server; returns the install job id."""
     try:
-        manifest = PluginManifest.load(manifest_path)
-    except ManifestValidationError as exc:
-        raise PluginCliError(str(exc)) from exc
-
-    plugins_dir = decker_paths.plugins()
-    dest_dir = plugins_dir / manifest.id
-    if dest_dir.exists():
-        raise PluginCliError(f"a plugin is already installed at {dest_dir}")
-
-    plugins_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source_dir, dest_dir)
-    return dest_dir
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        raise PluginCliError(f"cannot read {path}: {exc}") from exc
+    try:
+        return str(conn.request("plugin_install", Path(path).name, data))
+    except PermissionError as exc:
+        raise PluginCliError(DENIED_MESSAGE) from exc
 
 
-def list_installed() -> list[dict[str, str]]:
-    """Return metadata for every plugin in ~/.decker/plugins/: uuid and status."""
-    plugins_dir = decker_paths.plugins()
-    if not plugins_dir.exists():
-        return []
-
-    entries: list[dict[str, str]] = []
-    for entry in sorted(plugins_dir.iterdir()):
-        if not entry.is_dir():
-            continue
-        try:
-            manifest = PluginManifest.load(entry / "manifest.json")
-            entries.append({"uuid": manifest.id, "status": "ok"})
-        except ManifestValidationError as exc:
-            entries.append({"uuid": entry.name, "status": f"invalid: {exc}"})
-    return entries
+def remove(conn: CliConnection, plugin_id: str) -> None:
+    """Uninstall a plugin on the server."""
+    try:
+        conn.request("plugin_uninstall", plugin_id)
+    except PermissionError as exc:
+        raise PluginCliError(DENIED_MESSAGE.replace("Installing", "Removing")) from exc
 
 
-def remove(uuid: str) -> None:
-    """Remove the installed plugin matching uuid. Raises PluginCliError if not found."""
-    candidate = decker_paths.plugins() / uuid
-    if candidate.exists():
-        shutil.rmtree(candidate)
-        return
-    raise PluginCliError(f"no installed plugin found with uuid {uuid!r}")
+def list_plugins(conn: CliConnection) -> list[dict[str, Any]]:
+    """Return the server's installed plugins."""
+    result = conn.request("plugins_list")
+    return result if isinstance(result, list) else []

@@ -1,87 +1,54 @@
-import json
-
 import pytest
 from assertpy import assert_that
 
 from decker.cli import plugin as plugin_cli
-
-_NATIVE_MANIFEST = {
-    "format": 1,
-    "id": "com.decker.test",
-    "name": "Test",
-    "version": "1.0.0",
-    "author": "Decker",
-    "runtime": {"type": "python", "entry": "plugin.py"},
-    "contributes": {"actions": [{"id": "com.decker.test.show", "name": "Show"}]},
-}
+from decker.cli.connection import CliConnection
 
 
-def _make_source_plugin(tmp_path, manifest=_NATIVE_MANIFEST, name="source"):
-    source_dir = tmp_path / name
-    source_dir.mkdir()
-    (source_dir / "manifest.json").write_text(json.dumps(manifest))
-    return source_dir
+class FakeConn(CliConnection):
+    def __init__(self, reply=None, error=None):  # pylint: disable=super-init-not-called
+        self.calls = []
+        self._reply = reply
+        self._error = error
+
+    def request(self, name, *args):
+        self.calls.append((name, args))
+        if self._error:
+            raise self._error
+        return self._reply
 
 
-@pytest.fixture(autouse=True)
-def _isolated_plugins_dir(tmp_path, monkeypatch):
-    plugins_dir = tmp_path / "installed-plugins"
-    monkeypatch.setattr("decker.common.paths.plugins", lambda: plugins_dir)
-    return plugins_dir
+def test_install_sends_bytes_over_rpc(tmp_path):
+    package = tmp_path / "a-1.0.0.deckerplugin"
+    package.write_bytes(b"PK-data")
+    conn = FakeConn(reply=12345)
+    assert_that(plugin_cli.install(conn, package)).is_equal_to("12345")
+    assert_that(conn.calls).is_equal_to([("plugin_install", ("a-1.0.0.deckerplugin", b"PK-data"))])
 
 
-class TestInstall:
-    def test_installs_native_plugin_by_uuid(self, tmp_path, _isolated_plugins_dir):
-        source = _make_source_plugin(tmp_path)
-        dest = plugin_cli.install(source)
-        assert_that(dest).is_equal_to(_isolated_plugins_dir / "com.decker.test")
-        assert_that((dest / "manifest.json").exists()).is_true()
-
-    def test_missing_manifest_raises(self, tmp_path):
-        source = tmp_path / "no-manifest"
-        source.mkdir()
-        with pytest.raises(plugin_cli.PluginCliError):
-            plugin_cli.install(source)
-
-    def test_invalid_manifest_raises(self, tmp_path):
-        source = tmp_path / "bad"
-        source.mkdir()
-        (source / "manifest.json").write_text(json.dumps({"name": "Missing fields"}))
-        with pytest.raises(plugin_cli.PluginCliError):
-            plugin_cli.install(source)
-
-    def test_duplicate_install_raises(self, tmp_path):
-        source = _make_source_plugin(tmp_path)
-        plugin_cli.install(source)
-        with pytest.raises(plugin_cli.PluginCliError, match="already installed"):
-            plugin_cli.install(source)
+def test_install_permission_error_has_clear_message(tmp_path):
+    package = tmp_path / "a.deckerplugin"
+    package.write_bytes(b"x")
+    with pytest.raises(plugin_cli.PluginCliError, match="only allowed from the server's own machine"):
+        plugin_cli.install(FakeConn(error=PermissionError("denied")), package)
 
 
-class TestListInstalled:
-    def test_empty_when_no_plugins_dir(self):
-        assert_that(plugin_cli.list_installed()).is_equal_to([])
-
-    def test_lists_installed_native_plugin(self, tmp_path):
-        plugin_cli.install(_make_source_plugin(tmp_path))
-        result = plugin_cli.list_installed()
-        assert_that(result).is_equal_to([{"uuid": "com.decker.test", "status": "ok"}])
-
-    def test_lists_invalid_plugin_with_status(self, tmp_path, _isolated_plugins_dir):
-        broken_dir = _isolated_plugins_dir / "broken"
-        broken_dir.mkdir(parents=True)
-        (broken_dir / "manifest.json").write_text("{not valid json")
-        result = plugin_cli.list_installed()
-        assert_that(result).is_length(1)
-        assert_that(result[0]["uuid"]).is_equal_to("broken")
-        assert_that(result[0]["status"]).starts_with("invalid")
+def test_install_missing_file(tmp_path):
+    with pytest.raises(plugin_cli.PluginCliError, match="cannot read"):
+        plugin_cli.install(FakeConn(), tmp_path / "missing.deckerplugin")
 
 
-class TestRemove:
-    def test_removes_native_plugin(self, tmp_path, _isolated_plugins_dir):
-        dest = plugin_cli.install(_make_source_plugin(tmp_path))
-        plugin_cli.remove("com.decker.test")
-        assert_that(dest.exists()).is_false()
+def test_remove_and_list_use_rpc():
+    conn = FakeConn(reply=[{"id": "com.x.y"}])
+    assert_that(plugin_cli.list_plugins(conn)).is_equal_to([{"id": "com.x.y"}])
+    plugin_cli.remove(conn, "com.x.y")
+    assert_that(conn.calls).is_equal_to([("plugins_list", ()), ("plugin_uninstall", ("com.x.y",))])
 
-    def test_remove_unknown_uuid_raises(self):
-        with pytest.raises(plugin_cli.PluginCliError):
-            plugin_cli.remove("com.decker.does-not-exist")
+
+def test_list_non_list_reply_is_empty():
+    assert_that(plugin_cli.list_plugins(FakeConn(reply=None))).is_empty()
+
+
+def test_remove_permission_error():
+    with pytest.raises(plugin_cli.PluginCliError, match="only allowed"):
+        plugin_cli.remove(FakeConn(error=PermissionError("denied")), "com.x.y")

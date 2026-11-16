@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "id": "{{plugin_id}}",
+  "name": "{{name}}",
+  "version": "0.1.0",
+  "author": "Your Name",
+  "description": "A Decker plugin.",
+  "decker": ">=0.2",
+  "runtime": {
+    "type": "python",
+    "entry": "plugin.py"
+  },
+  "contributes": {
+    "actions": [
+      {
+        "id": "{{action_id}}",
+        "name": "{{name}}",
+        "tooltip": "Press to say hello",
+        "icon": "icons/action",
+        "gestures": ["press"],
+        "states": [{ "image": "icons/action" }]
+      }
+    ]
+  }
+}
