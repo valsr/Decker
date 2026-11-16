@@ -56,3 +56,12 @@ class TestDeviceView:
         view._icon_picker.icon_selected.emit("/path/to/icon.svg")  # pylint: disable=protected-access
 
         assert_that(view._icon_status.text()).contains("/path/to/icon.svg")  # pylint: disable=protected-access
+
+    def test_pack_icon_selected_updates_status_label(self, qapp):  # pylint: disable=unused-argument
+        view = DeviceView()
+
+        view._icon_picker.pack_icon_selected.emit("com.x/p", "a.svg")  # pylint: disable=protected-access
+
+        assert_that(view._icon_status.text()).is_equal_to(
+            "Selected: com.x/p / a.svg"
+        )  # pylint: disable=protected-access
