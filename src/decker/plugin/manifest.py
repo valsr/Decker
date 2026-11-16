@@ -15,7 +15,7 @@ SUPPORTED_FORMAT = 1
 KNOWN_CONTRIBUTION_KINDS = frozenset({"actions", "icon_packs"})
 VALID_GESTURES = frozenset({"press", "double_press", "long_press"})
 _RUNTIME_TYPES = ("python", "executable")
-_UUID_PATTERN = re.compile(r"^[a-z0-9]+(\.[a-z0-9-]+)+$")
+_UUID_PATTERN = re.compile(r"[a-z0-9]+(\.[a-z0-9-]+)+")
 
 
 class ManifestValidationError(ValueError):
@@ -150,7 +150,7 @@ class PluginManifest:
 
 
 def _parse_id(value: Any, what: str) -> str:
-    if not isinstance(value, str) or not _UUID_PATTERN.match(value):
+    if not isinstance(value, str) or not _UUID_PATTERN.fullmatch(value):
         raise ManifestValidationError(f"{what} {value!r} is not a valid reverse-domain identifier")
     return value
 

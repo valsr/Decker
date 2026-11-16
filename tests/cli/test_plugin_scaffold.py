@@ -71,3 +71,30 @@ def test_pack_default_out_dir_is_cwd_and_overwrites(tmp_path, monkeypatch):
     second = plugin_scaffold.pack(folder)
     assert_that(first).is_equal_to(second)
     assert_that(first.parent.samefile(tmp_path)).is_true()
+
+
+def test_pack_rejects_file_symlink(tmp_path):
+    folder = plugin_scaffold.scaffold("com.example.s", tmp_path)
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret")
+    (folder / "link.txt").symlink_to(outside)
+    out = tmp_path / "out"
+    with pytest.raises(plugin_cli.PluginCliError, match="link.txt"):
+        plugin_scaffold.pack(folder, out)
+    assert_that(out.exists()).is_false()
+
+
+def test_pack_rejects_directory_symlink(tmp_path):
+    folder = plugin_scaffold.scaffold("com.example.d", tmp_path)
+    outside = tmp_path / "outdir"
+    outside.mkdir()
+    (outside / "f.txt").write_text("x")
+    (folder / "linkdir").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(plugin_cli.PluginCliError, match="linkdir"):
+        plugin_scaffold.pack(folder, tmp_path / "out")
+    assert_that((tmp_path / "out").exists()).is_false()
+
+
+def test_scaffold_rejects_trailing_newline_id(tmp_path):
+    with pytest.raises(plugin_cli.PluginCliError, match="invalid plugin id"):
+        plugin_scaffold.scaffold("a.b\n", tmp_path)
