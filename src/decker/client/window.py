@@ -47,6 +47,7 @@ from decker.client.widgets.plugins_tab import (
     PACKAGE_SUFFIX,
     install_allowed,
     install_package_file,
+    refresh_install_allowed,
 )
 from decker.client.widgets.settings_dialog import SettingsDialog
 from decker.common.model import DeviceHardwareInfo
@@ -240,6 +241,7 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         return True
 
     def _on_server_connected(self, _event: ServerConnectedEvent) -> bool:
+        refresh_install_allowed()
         self.switch_to(self._last_view or ViewName.DASHBOARD)
         self._last_view = None
         return True

@@ -20,6 +20,7 @@ from decker.client.events import (
 from decker.client.events.event_manager import EventManager
 from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
+from decker.client.widgets.plugins_tab import refresh_install_allowed
 from decker.client.window import MainWindow, _should_close_to_tray
 from decker.common.model import DevicePages, PageInfo
 
@@ -380,6 +381,7 @@ class TestDropInstall:
         self, window, connection_manager, tmp_path
     ):  # pylint: disable=redefined-outer-name
         connection_manager.call.return_value = True
+        refresh_install_allowed()
         package = tmp_path / "a.deckerplugin"
         event = _drop_event(package)
 
@@ -393,6 +395,7 @@ class TestDropInstall:
         self, window, connection_manager, tmp_path
     ):  # pylint: disable=redefined-outer-name
         connection_manager.call.return_value = True
+        refresh_install_allowed()
         event = _drop_event(tmp_path / "a.txt")
 
         with patch("decker.client.window.install_package_file") as install:
@@ -406,6 +409,7 @@ class TestDropInstall:
         self, window, connection_manager, tmp_path
     ):  # pylint: disable=redefined-outer-name
         connection_manager.call.return_value = False
+        refresh_install_allowed()
         event = _drop_event(tmp_path / "a.deckerplugin")
 
         with patch("decker.client.window.install_package_file") as install:
@@ -415,10 +419,23 @@ class TestDropInstall:
         install.assert_not_called()
         event.acceptProposedAction.assert_not_called()
 
+    def test_drag_enter_does_not_call_server(
+        self, window, connection_manager, tmp_path
+    ):  # pylint: disable=redefined-outer-name
+        connection_manager.call.return_value = True
+        refresh_install_allowed()
+        connection_manager.call.reset_mock()
+
+        window.dragEnterEvent(_drop_event(tmp_path / "a.deckerplugin"))
+        window.dropEvent(_drop_event(tmp_path / "a.txt"))
+
+        connection_manager.call.assert_not_called()
+
     def test_drag_enter_accepts_package_when_allowed(
         self, window, connection_manager, tmp_path
     ):  # pylint: disable=redefined-outer-name
         connection_manager.call.return_value = True
+        refresh_install_allowed()
         event = _drop_event(tmp_path / "a.deckerplugin")
 
         window.dragEnterEvent(event)
