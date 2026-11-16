@@ -137,6 +137,7 @@ def _cmd_help(conn: CliConnection | None, cmd_name: str | None, parser: Argument
     return 0
 
 
+_INSTALL_TIMEOUT = 120.0
 _PLUGIN_USAGE = "Usage: decker-cli plugin <new|pack|install|remove|list> ..."
 
 
@@ -158,7 +159,8 @@ def _dispatch_plugin(rest: list[str], host: str, port: int) -> int:
         print(f"Usage: decker-cli plugin {sub} <{'path' if sub == 'install' else 'plugin-id'}>")
         return 1
     try:
-        with CliConnection(host, port) as conn:
+        timeout = _INSTALL_TIMEOUT if sub == "install" else None
+        with CliConnection(host, port, timeout=timeout) as conn:
             return handler(conn, sub_args)
     except ConnectionRefusedError:
         print(f"Error: cannot connect to server at {host}:{port}. Is the server running?")

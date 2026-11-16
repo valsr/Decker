@@ -285,3 +285,15 @@ class TestIconpackSubcommand:
                 main()
         assert_that(exc_info.value.code).is_equal_to(1)
         assert_that(capsys.readouterr().out).contains("unknown iconpack subcommand")
+
+
+def test_plugin_install_uses_long_timeout(tmp_path):
+    package = tmp_path / "a.deckerplugin"
+    package.write_bytes(b"x")
+    with (
+        patch.object(sys, "argv", ["decker-cli", "plugin", "install", str(package)]),
+        patch("decker.cli.app.CliConnection", return_value=_FakeConn({"plugin_install": "j"})) as cls,
+    ):
+        with pytest.raises(SystemExit):
+            main()
+    assert_that(cls.call_args.kwargs["timeout"]).is_equal_to(120.0)

@@ -63,3 +63,11 @@ class TestCliConnection:
         args = mock_connect.call_args
         assert_that(args[0][0]).is_equal_to("myhost")
         assert_that(args[0][1]).is_equal_to(9999)
+
+
+def test_timeout_default_and_override():
+    for kwargs, expected in (({}, 3.0), ({"timeout": 120.0}, 120.0)):
+        with patch("rpyc.utils.factory.connect", return_value=MagicMock()) as mock_connect:
+            with CliConnection("localhost", 18861, **kwargs):
+                pass
+        assert_that(mock_connect.call_args.kwargs["config"]["sync_request_timeout"]).is_equal_to(expected)
