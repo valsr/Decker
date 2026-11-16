@@ -197,3 +197,12 @@ def test_malformed_json_and_non_object_rejected(tmp_path: Any) -> None:
         PluginManifest.load(arr)
     with pytest.raises(ManifestValidationError, match="could not read"):
         PluginManifest.load(tmp_path / "missing.json")
+
+
+def test_trailing_newline_ids_rejected() -> None:
+    data = _counter()
+    data["id"] = "com.x.y\n"
+    with pytest.raises(ManifestValidationError):
+        PluginManifest.from_dict(data)
+    with pytest.raises(ManifestValidationError):
+        PluginManifest.from_dict(_with_action(id="com.decker.counter.x\n"))

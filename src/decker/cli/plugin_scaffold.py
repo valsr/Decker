@@ -1,7 +1,7 @@
 """Scaffolding (`plugin new`) and packaging (`plugin pack`) of Decker plugins."""
 
 import io
-import json
+import os
 import zipfile
 from importlib import resources
 from importlib.resources.abc import Traversable
@@ -30,6 +30,20 @@ def _render(text: str, values: dict[str, str]) -> str:
 
 def scaffold(plugin_id: str, dest: Path) -> Path:
     """Create `<dest>/<plugin_id>/` from the plugin template. Refuses an existing folder."""
+    try:
+        PluginManifest.from_dict(
+            {
+                "format": 1,
+                "id": plugin_id,
+                "name": "x",
+                "version": "0.1.0",
+                "author": "x",
+                "runtime": {"type": "python", "entry": "plugin.py"},
+                "contributes": {"actions": [{"id": f"{plugin_id}.action", "name": "x"}]},
+            }
+        )
+    except ManifestValidationError as exc:
+        raise PluginCliError(f"invalid plugin id {plugin_id!r}: {exc}") from exc
     target = dest / plugin_id
     if target.exists():
         raise PluginCliError(f"{target} already exists")
@@ -50,11 +64,6 @@ def scaffold(plugin_id: str, dest: Path) -> Path:
             else:
                 files[rel] = child.read_bytes()
 
-    try:
-        PluginManifest.from_dict(json.loads(files["manifest.json"]))
-    except ManifestValidationError as exc:
-        raise PluginCliError(f"invalid plugin id {plugin_id!r}: {exc}") from exc
-
     for rel, data in sorted(files.items()):
         path = target / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,6 +78,18 @@ def _included(folder: Path, path: Path) -> bool:
     return not (path.is_file() and path.suffix == PACKAGE_SUFFIX)
 
 
+def _walk(folder: Path) -> list[Path]:
+    """List every entry under folder without following symlinks; any symlink is an error."""
+    found: list[Path] = []
+    for root, dirs, files in os.walk(folder, followlinks=False):
+        for name in sorted(dirs + files):
+            path = Path(root) / name
+            if path.is_symlink():
+                raise PluginCliError(f"symlinks are not allowed in a plugin folder: {path}")
+            found.append(path)
+    return sorted(found)
+
+
 def pack(folder: Path, out_dir: Path | None = None) -> Path:
     """Build `<id>-<version>.deckerplugin` from a plugin folder; an existing output file is overwritten."""
     if not folder.is_dir():
@@ -76,8 +97,8 @@ def pack(folder: Path, out_dir: Path | None = None) -> Path:
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(folder.rglob("*")):
-            if path.is_file() and _included(folder, path):
+        for path in _walk(folder):
+            if _included(folder, path) and path.is_file():
                 zf.write(path, path.relative_to(folder).as_posix())
     data = buffer.getvalue()
     try:
