@@ -27,6 +27,9 @@
             "special_value": "∞ (no limit)" }
         ]
       }
+    ],
+    "icon_packs": [
+      { "id": "com.decker.counter.icons", "name": "Counter icons", "path": "iconpack" }
     ]
   }
 }

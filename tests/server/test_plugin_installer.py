@@ -139,7 +139,6 @@ class Env:
         self.context = ServerContext(
             device_manager=self.dm,  # type: ignore[arg-type]
             plugin_manager=self.manager,
-            icon_pack_manager=MagicMock(),
             key_assignment_store=self.key_store,
             device_state_store=self.state_store,
             page_store=self.page_store,

@@ -32,7 +32,6 @@ def context(tmp_path):
     ctx = ServerContext(
         device_manager=device_manager,
         plugin_manager=MagicMock(),
-        icon_pack_manager=MagicMock(),
         key_assignment_store=keys,
         device_state_store=states,
         page_store=pages,

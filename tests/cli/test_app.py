@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from assertpy import assert_that
 
-from decker.asset.store import IconPackStore
 from decker.cli.app import create_parser, main
 
 _SAMPLE_COMMANDS = {
@@ -222,69 +221,6 @@ class TestPluginSubcommand:
     def test_plugin_unknown_subcommand_exits_1(self, capsys):
         assert_that(_run(["plugin", "bogus"], _FakeConn())).is_equal_to(1)
         assert_that(capsys.readouterr().out).contains("unknown plugin subcommand")
-
-
-class TestIconpackSubcommand:
-    def test_iconpack_command_does_not_open_connection(self):
-        with (
-            patch.object(sys, "argv", ["decker-cli", "iconpack", "list"]),
-            patch("decker.cli.app.CliConnection") as mock_conn_cls,
-        ):
-            with pytest.raises(SystemExit):
-                main()
-        mock_conn_cls.assert_not_called()
-
-    def test_iconpack_no_subcommand_exits_1(self, capsys):
-        with patch.object(sys, "argv", ["decker-cli", "iconpack"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-        assert_that(exc_info.value.code).is_equal_to(1)
-        assert_that(capsys.readouterr().out).contains("Usage")
-
-    def test_iconpack_list_exits_0(self, capsys, tmp_path, monkeypatch):
-        monkeypatch.setattr("decker.asset.iconpack.iconpacks_dir", lambda: tmp_path / "iconpacks")
-        monkeypatch.setattr("decker.asset.iconpack.IconPackStore", lambda: IconPackStore(tmp_path / "decker.db"))
-        with patch.object(sys, "argv", ["decker-cli", "iconpack", "list"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-        assert_that(exc_info.value.code).is_equal_to(0)
-        assert_that(capsys.readouterr().out).contains("No icon packs installed")
-
-    def test_iconpack_install_missing_path_exits_1(self):
-        with patch.object(sys, "argv", ["decker-cli", "iconpack", "install"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-        assert_that(exc_info.value.code).is_equal_to(1)
-
-    def test_iconpack_install_invalid_source_exits_1(self, capsys, tmp_path):
-        bad = tmp_path / "not-a-pack"
-        bad.mkdir()
-        with patch.object(sys, "argv", ["decker-cli", "iconpack", "install", str(bad)]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-        assert_that(exc_info.value.code).is_equal_to(1)
-        assert_that(capsys.readouterr().out).contains("Error")
-
-    def test_iconpack_remove_missing_uuid_exits_1(self):
-        with patch.object(sys, "argv", ["decker-cli", "iconpack", "remove"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-        assert_that(exc_info.value.code).is_equal_to(1)
-
-    def test_iconpack_remove_unknown_uuid_exits_1(self, capsys, tmp_path, monkeypatch):
-        monkeypatch.setattr("decker.asset.iconpack.iconpacks_dir", lambda: tmp_path / "iconpacks")
-        with patch.object(sys, "argv", ["decker-cli", "iconpack", "remove", "unknown"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-        assert_that(exc_info.value.code).is_equal_to(1)
-        assert_that(capsys.readouterr().out).contains("Error")
-
-    def test_iconpack_unknown_subcommand_exits_1(self, capsys):
-        with patch.object(sys, "argv", ["decker-cli", "iconpack", "bogus"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-        assert_that(exc_info.value.code).is_equal_to(1)
-        assert_that(capsys.readouterr().out).contains("unknown iconpack subcommand")
 
 
 def test_plugin_install_uses_long_timeout(tmp_path):

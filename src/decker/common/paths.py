@@ -63,8 +63,3 @@ def assets() -> Path:
 def user_icons() -> Path:
     """Return the user-uploaded icons directory."""
     return assets() / "user-icons"
-
-
-def iconpacks() -> Path:
-    """Return the icon packs directory."""
-    return assets() / "iconpacks"
