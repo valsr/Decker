@@ -243,7 +243,7 @@ class TestInstallPackageFile:
         question.assert_not_called()
 
     def test_upload_runs_off_ui_thread_and_reports_status_first(self, manager, tmp_path):
-        seen = {}
+        seen: dict[str, threading.Thread] = {}
         statuses = []
         EventManager.get().subscribe(PluginInstallProgressEvent, lambda e: statuses.append(e.message))
         manager.call.side_effect = lambda method, *a: seen.setdefault(method, threading.current_thread()) and "job"
@@ -253,6 +253,7 @@ class TestInstallPackageFile:
             worker = install_package_file(package)
 
         assert_that(statuses).is_equal_to(["Uploading x.deckerplugin…"])
+        assert worker is not None
         worker.join(2)
         assert_that(seen["plugin_install"]).is_not_same_as(threading.current_thread())
 
@@ -263,7 +264,9 @@ class TestInstallPackageFile:
         package = tmp_path / "x.deckerplugin"
         package.write_bytes(b"zip")
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
-            install_package_file(package).join(2)
+            worker = install_package_file(package)
+        assert worker is not None
+        worker.join(2)
         EventManager.get().drain_and_dispatch()
 
         assert_that(finished).is_length(1)
