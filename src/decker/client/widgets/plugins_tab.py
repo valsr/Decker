@@ -3,6 +3,7 @@
 import base64
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -34,39 +35,66 @@ PACKAGE_SUFFIX = ".deckerplugin"
 MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 TRUST_NOTICE = "Plugins run with your user's permissions. Only install plugins from authors you trust."
 NOT_ALLOWED_TOOLTIP = "Installing plugins is only allowed from the server's own machine"
+_FAILURE_HINT = (
+    "Installing and uninstalling is only allowed from the server's own machine; otherwise check the connection."
+)
 _PLUGIN_ID_ROLE = Qt.ItemDataRole.UserRole
 
 
+_install_allowed_cache: bool = False
+
+
 def install_allowed() -> bool:
-    """Whether the connected server accepts plugin installs from this client."""
+    """The cached answer to whether this client may install and uninstall plugins (no RPC)."""
+    return _install_allowed_cache
+
+
+def refresh_install_allowed() -> bool:
+    """Ask the server whether installs are allowed and cache the answer."""
+    global _install_allowed_cache  # pylint: disable=global-statement
     manager = AppContext.get().connection_manager
-    return manager is not None and bool(manager.call("plugin_install_allowed"))
+    _install_allowed_cache = manager is not None and bool(manager.call("plugin_install_allowed"))
+    return _install_allowed_cache
 
 
-def install_package_file(path: Path, parent: QWidget | None = None) -> None:
-    """Confirm (with the trust notice) and send a .deckerplugin file to the server for installation."""
+def install_package_file(path: Path, parent: QWidget | None = None) -> threading.Thread | None:
+    """Confirm (with the trust notice), then upload a .deckerplugin file on a worker thread.
+
+    Returns the worker thread (None when nothing was started). Failures are reported as a finished event.
+    """
     manager = AppContext.get().connection_manager
     if manager is None:
         QMessageBox.warning(parent, "Install plugin", "Not connected to the server.")
-        return
+        return None
     try:
         too_large = path.stat().st_size > MAX_PACKAGE_BYTES
     except OSError as exc:
         QMessageBox.warning(parent, "Install plugin", f"Cannot read {path.name}: {exc}")
-        return
+        return None
     if too_large:
         QMessageBox.warning(parent, "Install plugin", f"{path.name} is larger than 64 MiB and cannot be installed.")
-        return
+        return None
     answer = QMessageBox.question(parent, "Install plugin", f"Install {path.name}?\n\n{TRUST_NOTICE}")
     if answer != QMessageBox.StandardButton.Yes:
-        return
+        return None
+    EventManager.get().emit(PluginInstallProgressEvent(job_id="", message=f"Uploading {path.name}…"))
+    worker = threading.Thread(target=_upload_package, args=(manager, path), daemon=True)
+    worker.start()
+    return worker
+
+
+def _upload_package(manager: Any, path: Path) -> None:
     try:
-        data = path.read_bytes()
+        job_id = manager.call("plugin_install", path.name, path.read_bytes())
+        error = "" if job_id else f"Could not install {path.name}. {_FAILURE_HINT}"
     except OSError as exc:
-        QMessageBox.warning(parent, "Install plugin", f"Cannot read {path.name}: {exc}")
-        return
-    if not manager.call("plugin_install", path.name, data):
-        QMessageBox.warning(parent, "Install plugin", f"The server refused to install {path.name}.")
+        error = f"Cannot read {path.name}: {exc}"
+    if error:
+        EventManager.get().push(
+            PluginInstallFinishedEvent(
+                job_id="", ok=False, plugin_id="", version="", previous_version="", message=error
+            )
+        )
 
 
 def _contribution_summary(plugin: dict[str, Any]) -> str:
@@ -122,9 +150,10 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
             plugins = []
         self._plugins = {str(p["id"]): p for p in plugins}
         self._render_plugins()
-        allowed = install_allowed()
+        allowed = refresh_install_allowed()
         self._install_btn.setEnabled(allowed)
         self._install_btn.setToolTip("" if allowed else NOT_ALLOWED_TOOLTIP)
+        self._show_selection()
 
     def set_failed_plugins(self, failures: dict[str, str]) -> None:
         """Replace the failed-plugin list (plugin UUID → error message)."""
@@ -187,7 +216,9 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
 
     def _show_selection(self) -> None:
         plugin = self._plugins.get(self._selected_id or "")
-        self._uninstall_btn.setEnabled(plugin is not None and not plugin.get("bundled"))
+        removable = plugin is not None and not plugin.get("bundled")
+        self._uninstall_btn.setEnabled(removable and install_allowed())
+        self._uninstall_btn.setToolTip("" if install_allowed() else NOT_ALLOWED_TOOLTIP)
         schema = plugin.get("global_settings_schema") if plugin else None
         if plugin is None or not schema:
             self._set_settings_visible(False)
@@ -209,7 +240,11 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         manager = AppContext.get().connection_manager
         if plugin is None or manager is None or plugin.get("bundled"):
             return
-        count = int(manager.call("plugin_usage", plugin["id"]) or 0)
+        usage = manager.call("plugin_usage", plugin["id"])
+        if usage is None:
+            self._status_label.setText(f"Couldn't check where {plugin['name']} is used; try again.")
+            return
+        count = int(usage)
         answer = QMessageBox.question(
             self, "Uninstall plugin", f"{plugin['name']} is used on {count} keys. Uninstall it and clear those keys?"
         )
@@ -218,7 +253,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         if manager.call("plugin_uninstall", plugin["id"]):
             self._status_label.setText(f"Uninstalled {plugin['name']}.")
         else:
-            self._status_label.setText(f"Could not uninstall {plugin['name']}.")
+            self._status_label.setText(f"Could not uninstall {plugin['name']}. {_FAILURE_HINT}")
         self.refresh()
 
     def _on_apply_settings(self) -> None:

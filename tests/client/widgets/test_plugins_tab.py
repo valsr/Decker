@@ -2,6 +2,7 @@
 
 import base64
 import json
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -177,7 +178,46 @@ def test_install_button_uses_file_dialog_and_confirms(tab, manager, tmp_path):
         tab._install_btn.click()
 
     assert_that(question.call_args.args[2]).contains(plugins_tab.TRUST_NOTICE)
+    assert_that(tab._status_label.text()).is_equal_to("Uploading x.deckerplugin…")
+    _join_uploads()
     manager.call.assert_any_call("plugin_install", "x.deckerplugin", b"zip")
+
+
+def _join_uploads():
+    for thread in threading.enumerate():
+        if thread is not threading.current_thread() and thread.daemon:
+            thread.join(2)
+    EventManager.get().drain_and_dispatch()
+
+
+def test_uninstall_disabled_when_not_allowed(manager):
+    manager.answers["plugin_install_allowed"] = False
+    tab = PluginsTab()
+    tab.refresh()
+    _select(tab, "com.acme.extra")
+
+    assert_that(tab._uninstall_btn.isEnabled()).is_false()
+    assert_that(tab._uninstall_btn.toolTip()).is_equal_to(plugins_tab.NOT_ALLOWED_TOOLTIP)
+
+
+def test_uninstall_failure_mentions_same_machine_rule(tab, manager):
+    manager.answers["plugin_uninstall"] = None
+    _select(tab, "com.acme.extra")
+    with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+        tab._uninstall_btn.click()
+
+    assert_that(tab._status_label.text()).contains("server's own machine")
+
+
+def test_unknown_usage_does_not_claim_zero_keys(tab, manager):
+    manager.answers["plugin_usage"] = None
+    _select(tab, "com.acme.extra")
+    with patch.object(QMessageBox, "question") as question:
+        tab._uninstall_btn.click()
+
+    question.assert_not_called()
+    assert_that(tab._status_label.text()).is_equal_to("Couldn't check where Extra is used; try again.")
+    assert_that([c.args[0] for c in manager.call.call_args_list]).does_not_contain("plugin_uninstall")
 
 
 class TestInstallPackageFile:
@@ -202,17 +242,33 @@ class TestInstallPackageFile:
         warning.assert_called_once()
         question.assert_not_called()
 
-    def test_server_refusal_warns(self, manager, tmp_path):
-        manager.answers["plugin_install"] = None
+    def test_upload_runs_off_ui_thread_and_reports_status_first(self, manager, tmp_path):
+        seen = {}
+        statuses = []
+        EventManager.get().subscribe(PluginInstallProgressEvent, lambda e: statuses.append(e.message))
+        manager.call.side_effect = lambda method, *a: seen.setdefault(method, threading.current_thread()) and "job"
         package = tmp_path / "x.deckerplugin"
         package.write_bytes(b"zip")
-        with (
-            patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes),
-            patch.object(QMessageBox, "warning") as warning,
-        ):
-            install_package_file(package)
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            worker = install_package_file(package)
 
-        warning.assert_called_once()
+        assert_that(statuses).is_equal_to(["Uploading x.deckerplugin…"])
+        worker.join(2)
+        assert_that(seen["plugin_install"]).is_not_same_as(threading.current_thread())
+
+    def test_server_refusal_reported_with_same_machine_hint(self, manager, tmp_path):
+        manager.answers["plugin_install"] = None
+        finished = []
+        EventManager.get().subscribe(PluginInstallFinishedEvent, lambda e: finished.append(e))
+        package = tmp_path / "x.deckerplugin"
+        package.write_bytes(b"zip")
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            install_package_file(package).join(2)
+        EventManager.get().drain_and_dispatch()
+
+        assert_that(finished).is_length(1)
+        assert_that(finished[0].ok).is_false()
+        assert_that(finished[0].message).contains("server's own machine")
 
     def test_no_connection_warns(self, qapp, tmp_path):
         AppContext.reset()
