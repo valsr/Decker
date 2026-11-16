@@ -1,5 +1,6 @@
 """Main application window — view registry, navigation, and event handler registration."""
 
+from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QTimer, QUrl
@@ -25,6 +26,7 @@ from decker.client.events import (
     KeyEvent,
     OpenUrlRequestedEvent,
     PagesUpdatedEvent,
+    PluginInstallFinishedEvent,
     PluginLoadFailedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
@@ -40,6 +42,11 @@ from decker.client.views import (
     DeviceView,
     ErrorView,
     ReconnectWaitingOverlay,
+)
+from decker.client.widgets.plugins_tab import (
+    PACKAGE_SUFFIX,
+    install_allowed,
+    install_package_file,
 )
 from decker.client.widgets.settings_dialog import SettingsDialog
 from decker.common.model import DeviceHardwareInfo
@@ -74,6 +81,7 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         self._register_all_views()
         self._build_ui()
         self._register_event_handlers()
+        self.setAcceptDrops(True)
 
         self._drain_timer: QTimer = QTimer(self)
         self._drain_timer.timeout.connect(EventManager.get().drain_and_dispatch)
@@ -146,6 +154,25 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         if app is not None:
             app.quit()
 
+    def dragEnterEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
+        """Accept drags that carry local .deckerplugin files, when the server allows installs."""
+        if a0 is not None and _dropped_packages(a0.mimeData()) and install_allowed():
+            a0.acceptProposedAction()
+        elif a0 is not None:
+            a0.ignore()
+
+    def dropEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
+        """Install each dropped .deckerplugin file; other files are ignored."""
+        if a0 is None:
+            return
+        packages = _dropped_packages(a0.mimeData())
+        if not packages or not install_allowed():
+            a0.ignore()
+            return
+        a0.acceptProposedAction()
+        for path in packages:
+            install_package_file(path, self)
+
     def resizeEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
         """Keep the connecting overlay sized to fill the central widget."""
         super().resizeEvent(a0)
@@ -196,6 +223,7 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         em.subscribe(ServerConnectedEvent, self._on_server_connected)
         em.subscribe(PluginLoadFailedEvent, self._on_plugin_load_failed)
         em.subscribe(OpenUrlRequestedEvent, self._on_open_url_requested)
+        em.subscribe(PluginInstallFinishedEvent, self._on_plugin_install_finished)
         for event_type in (
             DeviceListUpdatedEvent,
             ActionListUpdatedEvent,
@@ -219,6 +247,12 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
     def _on_plugin_load_failed(self, event: PluginLoadFailedEvent) -> bool:
         self._show_toast(f"Plugin '{event.plugin_uuid}' failed to load: {event.error}")
         return True
+
+    def _on_plugin_install_finished(self, event: PluginInstallFinishedEvent) -> None:
+        if event.ok:
+            self._show_toast(f"Installed plugin {event.plugin_id} {event.version}")
+        else:
+            self._show_toast(f"Plugin install failed: {event.message}")
 
     def _on_open_url_requested(self, event: OpenUrlRequestedEvent) -> bool:
         if QUrl(event.url).scheme().lower() not in ("http", "https"):
@@ -261,3 +295,10 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
 def _should_close_to_tray() -> bool:
     # Without a system tray there is no way back to a hidden window, so closing must quit.
     return client_config.get_close_to_tray() and QSystemTrayIcon.isSystemTrayAvailable()
+
+
+def _dropped_packages(mime: Any) -> list[Path]:
+    if mime is None or not mime.hasUrls():
+        return []
+    paths = [Path(url.toLocalFile()) for url in mime.urls() if url.isLocalFile()]
+    return [p for p in paths if p.suffix.lower() == PACKAGE_SUFFIX]

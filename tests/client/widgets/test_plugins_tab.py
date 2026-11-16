@@ -1,0 +1,228 @@
+"""Tests for decker.client.widgets.plugins_tab."""
+
+import base64
+import json
+from unittest.mock import MagicMock, patch
+
+import pytest
+from assertpy import assert_that
+from PyQt6.QtWidgets import QMessageBox
+
+from decker.client.context import AppContext
+from decker.client.events import (
+    PluginInstallFinishedEvent,
+    PluginInstallProgressEvent,
+    PluginsChangedEvent,
+)
+from decker.client.events.event_manager import EventManager
+from decker.client.widgets import plugins_tab
+from decker.client.widgets.plugins_tab import PluginsTab, install_package_file
+
+# pylint: disable=protected-access,redefined-outer-name,unused-argument
+
+_PLUGINS = [
+    {
+        "id": "com.decker.core",
+        "name": "Core",
+        "version": "1.0.0",
+        "author": "Decker",
+        "description": "",
+        "bundled": True,
+        "actions": 2,
+        "icon_packs": 1,
+        "icon_b64": base64.b64encode(b"").decode(),
+        "global_settings_schema": [],
+        "global_settings": {},
+    },
+    {
+        "id": "com.acme.extra",
+        "name": "Extra",
+        "version": "2.1.0",
+        "author": "Acme",
+        "description": "Extra things",
+        "bundled": False,
+        "actions": 1,
+        "icon_packs": 0,
+        "icon_b64": "",
+        "global_settings_schema": [{"key": "token", "type": "text", "label": "Token", "default": ""}],
+        "global_settings": {"token": "abc"},
+    },
+]
+
+
+@pytest.fixture
+def manager(qapp):
+    AppContext.reset()
+    EventManager.reset()
+    cm = MagicMock()
+    answers = {
+        "plugins_list": json.dumps(_PLUGINS),
+        "plugin_install_allowed": True,
+        "plugin_usage": 3,
+        "plugin_uninstall": True,
+        "plugin_update_global_settings": True,
+        "plugin_install": "job-1",
+    }
+    cm.call.side_effect = lambda method, *args: answers.get(method)
+    cm.answers = answers
+    AppContext.get().connection_manager = cm
+    yield cm
+    AppContext.reset()
+
+
+@pytest.fixture
+def tab(manager):
+    widget = PluginsTab()
+    widget.refresh()
+    return widget
+
+
+def _select(tab, plugin_id):
+    for row in range(tab._plugin_list.count()):
+        item = tab._plugin_list.item(row)
+        if item.data(plugins_tab._PLUGIN_ID_ROLE) == plugin_id:
+            tab._plugin_list.setCurrentItem(item)
+
+
+def test_lists_plugins_with_contribution_summary(tab):
+    texts = [tab._plugin_list.item(i).text() for i in range(tab._plugin_list.count())]
+
+    assert_that(texts).is_length(2)
+    assert_that(texts[0]).contains("Core", "v1.0.0", "Decker", "bundled", "2 actions · 1 icon pack")
+    assert_that(texts[1]).contains("Extra", "Acme", "installed", "1 action")
+
+
+def test_uninstall_confirms_with_usage_count_and_calls_rpc(tab, manager):
+    _select(tab, "com.acme.extra")
+    with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes) as question:
+        tab._uninstall_btn.click()
+
+    assert_that(question.call_args.args[2]).is_equal_to("Extra is used on 3 keys. Uninstall it and clear those keys?")
+    manager.call.assert_any_call("plugin_uninstall", "com.acme.extra")
+
+
+def test_uninstall_declined_does_not_call_rpc(tab, manager):
+    _select(tab, "com.acme.extra")
+    with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
+        tab._uninstall_btn.click()
+
+    assert_that([c.args[0] for c in manager.call.call_args_list]).does_not_contain("plugin_uninstall")
+
+
+def test_bundled_plugin_has_no_uninstall(tab):
+    _select(tab, "com.decker.core")
+
+    assert_that(tab._uninstall_btn.isEnabled()).is_false()
+    _select(tab, "com.acme.extra")
+    assert_that(tab._uninstall_btn.isEnabled()).is_true()
+
+
+def test_install_button_disabled_when_not_allowed(manager):
+    manager.answers["plugin_install_allowed"] = False
+    tab = PluginsTab()
+    tab.refresh()
+
+    assert_that(tab._install_btn.isEnabled()).is_false()
+    assert_that(tab._install_btn.toolTip()).is_equal_to(
+        "Installing plugins is only allowed from the server's own machine"
+    )
+
+
+def test_install_progress_and_result_shown(tab):
+    EventManager.get().emit(PluginInstallProgressEvent(job_id="j", message="Installing requirements"))
+    assert_that(tab._status_label.text()).is_equal_to("Installing requirements")
+
+    EventManager.get().emit(
+        PluginInstallFinishedEvent(
+            job_id="j", ok=True, plugin_id="com.acme.extra", version="2.1.0", previous_version="2.0.0", message=""
+        )
+    )
+    assert_that(tab._status_label.text()).contains("2.0.0", "2.1.0")
+
+    EventManager.get().emit(
+        PluginInstallFinishedEvent(
+            job_id="k", ok=False, plugin_id="", version="", previous_version="", message="bad manifest"
+        )
+    )
+    assert_that(tab._status_label.text()).contains("bad manifest")
+
+
+def test_plugins_changed_refreshes_list(tab, manager):
+    manager.answers["plugins_list"] = json.dumps(_PLUGINS[:1])
+
+    EventManager.get().emit(PluginsChangedEvent())
+
+    assert_that(tab._plugin_list.count()).is_equal_to(1)
+
+
+def test_global_settings_form_applies(tab, manager):
+    _select(tab, "com.decker.core")
+    assert_that(tab._apply_settings_btn.isHidden()).is_true()
+    _select(tab, "com.acme.extra")
+    assert_that(tab._apply_settings_btn.isHidden()).is_false()
+    assert_that(tab._settings_form.values()).is_equal_to({"token": "abc"})
+
+    tab._apply_settings_btn.click()
+
+    manager.call.assert_any_call("plugin_update_global_settings", "com.acme.extra", json.dumps({"token": "abc"}))
+
+
+def test_install_button_uses_file_dialog_and_confirms(tab, manager, tmp_path):
+    package = tmp_path / "x.deckerplugin"
+    package.write_bytes(b"zip")
+    with (
+        patch.object(plugins_tab.QFileDialog, "getOpenFileName", return_value=(str(package), "")),
+        patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes) as question,
+    ):
+        tab._install_btn.click()
+
+    assert_that(question.call_args.args[2]).contains(plugins_tab.TRUST_NOTICE)
+    manager.call.assert_any_call("plugin_install", "x.deckerplugin", b"zip")
+
+
+class TestInstallPackageFile:
+    def test_declined_sends_nothing(self, manager, tmp_path):
+        package = tmp_path / "x.deckerplugin"
+        package.write_bytes(b"zip")
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
+            install_package_file(package)
+
+        assert_that([c.args[0] for c in manager.call.call_args_list]).does_not_contain("plugin_install")
+
+    def test_oversize_refused(self, manager, tmp_path):
+        package = tmp_path / "x.deckerplugin"
+        package.write_bytes(b"zip")
+        with (
+            patch.object(plugins_tab, "MAX_PACKAGE_BYTES", 1),
+            patch.object(QMessageBox, "warning") as warning,
+            patch.object(QMessageBox, "question") as question,
+        ):
+            install_package_file(package)
+
+        warning.assert_called_once()
+        question.assert_not_called()
+
+    def test_server_refusal_warns(self, manager, tmp_path):
+        manager.answers["plugin_install"] = None
+        package = tmp_path / "x.deckerplugin"
+        package.write_bytes(b"zip")
+        with (
+            patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes),
+            patch.object(QMessageBox, "warning") as warning,
+        ):
+            install_package_file(package)
+
+        warning.assert_called_once()
+
+    def test_no_connection_warns(self, qapp, tmp_path):
+        AppContext.reset()
+        with patch.object(QMessageBox, "warning") as warning:
+            install_package_file(tmp_path / "x.deckerplugin")
+
+        warning.assert_called_once()
+
+    def test_unreadable_file_warns(self, manager, tmp_path):
+        with patch.object(QMessageBox, "warning") as warning:
+            install_package_file(tmp_path / "missing.deckerplugin")
+
+        warning.assert_called_once()

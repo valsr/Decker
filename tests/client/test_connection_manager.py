@@ -19,7 +19,10 @@ from decker.client.events import (
     KeyEvent,
     OpenUrlRequestedEvent,
     PagesUpdatedEvent,
+    PluginInstallFinishedEvent,
+    PluginInstallProgressEvent,
     PluginLoadFailedEvent,
+    PluginsChangedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
@@ -435,6 +438,37 @@ class TestOnServerEvent:
         assert_that(events).is_length(1)
         assert_that(events[0].plugin_id).is_equal_to("com.decker.x")
         assert_that(events[0].url).is_equal_to("https://example.com")
+
+    def test_install_events_become_client_events(self):
+        self.manager._on_server_event(  # pylint: disable=protected-access
+            "plugin_install_progress", json.dumps({"job_id": "j", "message": "working"})
+        )
+        self.manager._on_server_event(  # pylint: disable=protected-access
+            "plugin_install_finished",
+            json.dumps(
+                {"job_id": "j", "ok": True, "plugin_id": "a.b", "version": "2", "previous_version": None, "message": ""}
+            ),
+        )
+        events = EventManager.get().drain()
+        assert_that([type(e) for e in events]).is_equal_to([PluginInstallProgressEvent, PluginInstallFinishedEvent])
+        progress, finished = events
+        assert isinstance(progress, PluginInstallProgressEvent) and isinstance(finished, PluginInstallFinishedEvent)
+        assert_that(progress.message).is_equal_to("working")
+        assert_that(finished.ok).is_true()
+        assert_that(finished.previous_version).is_equal_to("")
+
+    def test_plugins_changed_refreshes_action_list(self):
+        self.manager._on_server_event("plugins_changed", "{}")  # pylint: disable=protected-access
+        assert_that([type(e) for e in EventManager.get().drain()]).is_equal_to([PluginsChangedEvent])
+        assert_that(self.manager._actions_refresh_requested.is_set()).is_true()  # pylint: disable=protected-access
+
+        self.manager._conn = MagicMock()  # pylint: disable=protected-access
+        self.manager._conn.root.plugins_actions_list.return_value = json.dumps(
+            [{"id": "x"}]
+        )  # pylint: disable=protected-access
+        self.manager._run_once(time.monotonic())  # pylint: disable=protected-access
+        events = [e for e in EventManager.get().drain() if isinstance(e, ActionListUpdatedEvent)]
+        assert_that(events).is_length(1)
 
     def test_unknown_event_type_is_silently_ignored(self):
         self.manager._on_server_event("some_future_event", "{}")  # pylint: disable=protected-access

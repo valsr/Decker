@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from assertpy import assert_that
+from PyQt6.QtCore import QMimeData, QUrl
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QMessageBox
 
@@ -364,3 +365,62 @@ class TestSettingsDialog:
 
         assert_that(window._settings_dialog.isVisible()).is_true()  # pylint: disable=protected-access
         window._settings_dialog.close()  # pylint: disable=protected-access
+
+
+def _drop_event(*paths):
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(p)) for p in paths])
+    event = MagicMock()
+    event.mimeData.return_value = mime
+    return event
+
+
+class TestDropInstall:
+    def test_drop_deckerplugin_triggers_install(
+        self, window, connection_manager, tmp_path
+    ):  # pylint: disable=redefined-outer-name
+        connection_manager.call.return_value = True
+        package = tmp_path / "a.deckerplugin"
+        event = _drop_event(package)
+
+        with patch("decker.client.window.install_package_file") as install:
+            window.dropEvent(event)
+
+        install.assert_called_once_with(package, window)
+        event.acceptProposedAction.assert_called_once()
+
+    def test_drop_other_files_ignored(
+        self, window, connection_manager, tmp_path
+    ):  # pylint: disable=redefined-outer-name
+        connection_manager.call.return_value = True
+        event = _drop_event(tmp_path / "a.txt")
+
+        with patch("decker.client.window.install_package_file") as install:
+            window.dragEnterEvent(event)
+            window.dropEvent(event)
+
+        install.assert_not_called()
+        event.acceptProposedAction.assert_not_called()
+
+    def test_drop_rejected_when_install_not_allowed(
+        self, window, connection_manager, tmp_path
+    ):  # pylint: disable=redefined-outer-name
+        connection_manager.call.return_value = False
+        event = _drop_event(tmp_path / "a.deckerplugin")
+
+        with patch("decker.client.window.install_package_file") as install:
+            window.dragEnterEvent(event)
+            window.dropEvent(event)
+
+        install.assert_not_called()
+        event.acceptProposedAction.assert_not_called()
+
+    def test_drag_enter_accepts_package_when_allowed(
+        self, window, connection_manager, tmp_path
+    ):  # pylint: disable=redefined-outer-name
+        connection_manager.call.return_value = True
+        event = _drop_event(tmp_path / "a.deckerplugin")
+
+        window.dragEnterEvent(event)
+
+        event.acceptProposedAction.assert_called_once()

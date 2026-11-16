@@ -21,7 +21,10 @@ from decker.client.events import (
     KeyEvent,
     OpenUrlRequestedEvent,
     PagesUpdatedEvent,
+    PluginInstallFinishedEvent,
+    PluginInstallProgressEvent,
     PluginLoadFailedEvent,
+    PluginsChangedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
@@ -70,6 +73,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._wake_event = threading.Event()
         self._reconnect_requested = threading.Event()
         self._device_refresh_requested = threading.Event()
+        self._actions_refresh_requested = threading.Event()
         self._thread: threading.Thread | None = None
         self.state: ServerState = ServerState.DISCONNECTED
         self._reported_plugin_failures: set[str] = set()
@@ -113,6 +117,11 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._device_refresh_requested.set()
         self._wake_event.set()
 
+    def request_actions_refresh(self) -> None:
+        """Re-fetch the plugin action list on the worker thread."""
+        self._actions_refresh_requested.set()
+        self._wake_event.set()
+
     def _wait(self, timeout: float) -> None:
         self._wake_event.wait(timeout)
         self._wake_event.clear()
@@ -144,6 +153,9 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         if self._device_refresh_requested.is_set():
             self._device_refresh_requested.clear()
             self._refresh_active_device()
+        if self._actions_refresh_requested.is_set():
+            self._actions_refresh_requested.clear()
+            self._refresh_actions()
         now = time.monotonic()
         if now - last_heartbeat >= _HEARTBEAT_INTERVAL_S:
             self._check_heartbeat()
@@ -323,6 +335,15 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         elif event_type == "pages_changed":
             if data.get("device_id") == _active_device_id():
                 self.request_device_refresh()
+        elif event_type == "plugin_install_progress":
+            EventManager.get().push(
+                PluginInstallProgressEvent(job_id=str(data.get("job_id", "")), message=str(data.get("message", "")))
+            )
+        elif event_type == "plugin_install_finished":
+            EventManager.get().push(_parse_install_finished(data))
+        elif event_type == "plugins_changed":
+            self.request_actions_refresh()
+            EventManager.get().push(PluginsChangedEvent())
         else:
             logging.debug("Unknown server event type: %s", event_type)
 
@@ -388,4 +409,15 @@ def _parse_hw_info(data: dict[str, Any]) -> DeviceHardwareInfo:
         serial=data.get("serial") or None,
         path=str(data.get("path") or ""),
         firmware=data.get("firmware") or None,
+    )
+
+
+def _parse_install_finished(data: dict[str, Any]) -> PluginInstallFinishedEvent:
+    return PluginInstallFinishedEvent(
+        job_id=str(data.get("job_id", "")),
+        ok=bool(data.get("ok", False)),
+        plugin_id=str(data.get("plugin_id") or ""),
+        version=str(data.get("version") or ""),
+        previous_version=str(data.get("previous_version") or ""),
+        message=str(data.get("message") or ""),
     )
