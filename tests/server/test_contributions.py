@@ -1,0 +1,137 @@
+from pathlib import Path
+
+import pytest
+from assertpy import assert_that
+
+from decker.asset.iconpack import IconPackRegistry
+from decker.plugin.loader import InstalledPlugin, PluginLoader
+from decker.plugin.manifest import PluginManifest
+from decker.plugin.settings_store import PluginSettingsStore
+from decker.server.contributions import ContributionRegistry
+from decker.server.plugins import _BUNDLED_PLUGINS_DIR, PluginManager
+
+
+class _Recorder:
+    def __init__(self, kind: str, fail: bool = False) -> None:
+        self.kind = kind
+        self.fail = fail
+        self.calls: list[tuple[str, str]] = []
+
+    def register(self, plugin: InstalledPlugin) -> None:
+        if self.fail:
+            raise RuntimeError("boom")
+        self.calls.append(("register", plugin.manifest.id))
+
+    def unregister(self, plugin_id: str) -> None:
+        self.calls.append(("unregister", plugin_id))
+
+
+def _plugin(tmp_path: Path, contributes: dict, runtime: bool = False) -> InstalledPlugin:
+    data: dict = {
+        "format": 1,
+        "id": "com.t.p",
+        "name": "T",
+        "version": "1.0.0",
+        "author": "a",
+        "description": "d",
+        "contributes": contributes,
+    }
+    if runtime:
+        data["runtime"] = {"type": "python", "entry": "plugin.py"}
+    return InstalledPlugin(PluginManifest.from_dict(data), tmp_path, False)
+
+
+_PACK = {"icon_packs": [{"id": "com.t.p.icons", "name": "Pack", "path": "pack"}]}
+_ACTION = {"id": "com.t.p.a", "name": "A"}
+
+
+def _pack_dir(tmp_path: Path) -> None:
+    (tmp_path / "pack").mkdir()
+    (tmp_path / "pack" / "a.png").write_bytes(b"x")
+
+
+def test_registry_dispatches_by_kind(tmp_path):
+    actions, packs = _Recorder("actions"), _Recorder("icon_packs")
+    registry = ContributionRegistry([actions, packs])
+
+    registry.add(_plugin(tmp_path, _PACK))
+    registry.remove("com.t.p")
+
+    assert_that(actions.calls).is_equal_to([("unregister", "com.t.p")])
+    assert_that(packs.calls).is_equal_to([("register", "com.t.p"), ("unregister", "com.t.p")])
+
+
+def test_registry_requires_every_known_kind():
+    with pytest.raises(AssertionError):
+        ContributionRegistry([_Recorder("actions")])
+
+
+def test_handler_failure_rolls_back(tmp_path):
+    actions, packs = _Recorder("actions"), _Recorder("icon_packs", fail=True)
+    registry = ContributionRegistry([actions, packs])
+    plugin = _plugin(tmp_path, {"actions": [_ACTION], **_PACK}, runtime=True)
+
+    with pytest.raises(RuntimeError):
+        registry.add(plugin)
+
+    assert_that(actions.calls).is_equal_to([("register", "com.t.p"), ("unregister", "com.t.p")])
+
+
+def _manager(tmp_path: Path) -> PluginManager:
+    return PluginManager(tmp_path / "plugins", settings_store=PluginSettingsStore(tmp_path / "plugins.db"))
+
+
+def test_icon_pack_only_plugin_starts_no_process(tmp_path):
+    _pack_dir(tmp_path)
+    manager = _manager(tmp_path)
+    try:
+        manager.add_plugin(_plugin(tmp_path, _PACK))
+        assert_that(manager.icon_packs.list_icons("com.t.p.icons")).is_equal_to(["a.png"])
+        assert_that(manager._supervisor._entries).is_empty()  # pylint: disable=protected-access
+    finally:
+        manager.destroy()
+
+
+def test_uninstall_removes_pack(tmp_path):
+    _pack_dir(tmp_path)
+    manager = _manager(tmp_path)
+    try:
+        manager.add_plugin(_plugin(tmp_path, _PACK))
+        manager.remove_plugin("com.t.p")
+        assert_that(manager.icon_packs.list_packs()).is_empty()
+        assert_that(manager.plugins()).is_empty()
+    finally:
+        manager.destroy()
+
+
+def test_bad_pack_path_is_a_load_failure_but_keeps_actions(tmp_path):
+    manager = _manager(tmp_path)
+    plugin = _plugin(
+        tmp_path,
+        {"actions": [_ACTION], "icon_packs": [{"id": "com.t.p.icons", "name": "P", "path": "../out"}]},
+        runtime=True,
+    )
+    try:
+        manager.add_plugin(plugin)
+        assert_that(manager.icon_packs.list_packs()).is_empty()
+        assert_that(manager.load_failures()).extracting("error").contains(
+            "icon pack com.t.p.icons: path points outside the plugin folder"
+        )
+        assert_that(manager.list_actions()).extracting("action_uuid").contains("com.t.p.a")
+    finally:
+        manager.destroy()
+
+
+def test_counter_contributes_example_pack(tmp_path):
+    scan = PluginLoader(_BUNDLED_PLUGINS_DIR, bundled=True).scan()
+    counter = next(p for p in scan.plugins if p.manifest.id == "com.decker.counter")
+    registry = IconPackRegistry()
+
+    registry.register(counter)
+
+    assert_that(registry.list_packs()).extracting("id").is_equal_to(["com.decker.counter.icons"])
+    icons = registry.list_icons("com.decker.counter.icons")
+    assert_that(icons).is_not_empty()
+    data = registry.read_icon("com.decker.counter.icons", icons[0])
+    assert data is not None
+    assert_that(data[:4]).is_equal_to(b"\x89PNG")

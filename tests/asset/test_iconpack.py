@@ -1,134 +1,117 @@
 import json
-import zipfile
-from unittest.mock import MagicMock
 
-import pytest
 from assertpy import assert_that
 
-from decker.asset.iconpack import IconPackError, IconPackManager
-from decker.asset.store import IconPackStore
-
-_MANIFEST = {"Name": "My Pack", "Version": "1.0.0", "Author": "Someone"}
-_ICONS = {"icon1": "icon1.svg"}
-
-
-def _make_manager(tmp_path):
-    store = IconPackStore(tmp_path / "decker.db")
-    packs_dir = tmp_path / "iconpacks"
-    manager = IconPackManager(store=store, packs_dir=packs_dir)
-    manager.create(MagicMock())
-    return manager, store, packs_dir
+from decker.asset.iconpack import IconPackRegistry
+from decker.plugin.icons import MAX_ICON_BYTES
+from decker.plugin.loader import InstalledPlugin
+from decker.plugin.manifest import PluginManifest
 
 
-def _write_source_pack(tmp_path, name="MyPack.sdIconPack"):
-    source_dir = tmp_path / name
-    source_dir.mkdir()
-    (source_dir / "manifest.json").write_text(json.dumps(_MANIFEST))
-    (source_dir / "icons.json").write_text(json.dumps(_ICONS))
-    return source_dir
+def _plugin(tmp_path, path="pack", plugin_id="com.t.p", pack_id="com.t.p.icons") -> InstalledPlugin:
+    data = {
+        "format": 1,
+        "id": plugin_id,
+        "name": "T",
+        "version": "1.0.0",
+        "author": "a",
+        "description": "d",
+        "contributes": {"icon_packs": [{"id": pack_id, "name": "Pack", "path": path}]},
+    }
+    manifest = PluginManifest.from_dict(data)
+    return InstalledPlugin(manifest, tmp_path, False)
 
 
-class TestInstallFolder:
-    def test_installs_sdiconpack_folder(self, tmp_path):
-        manager, store, packs_dir = _make_manager(tmp_path)
-        source = _write_source_pack(tmp_path)
-
-        dest = manager.install(source)
-
-        assert_that(dest).is_equal_to(packs_dir / "MyPack.sdIconPack")
-        assert_that(store.list_packs()).is_length(1)
-
-    def test_rejects_non_sdiconpack_directory(self, tmp_path):
-        manager, _, _ = _make_manager(tmp_path)
-        source = tmp_path / "not-a-pack"
-        source.mkdir()
-        with pytest.raises(IconPackError):
-            manager.install(source)
-
-    def test_invalid_manifest_raises_and_cleans_up(self, tmp_path):
-        manager, store, packs_dir = _make_manager(tmp_path)
-        source = tmp_path / "Bad.sdIconPack"
-        source.mkdir()
-        (source / "manifest.json").write_text(json.dumps({"Name": "Missing fields"}))
-        (source / "icons.json").write_text(json.dumps(_ICONS))
-
-        with pytest.raises(IconPackError):
-            manager.install(source)
-
-        assert_that(store.list_packs()).is_empty()
-        assert_that((packs_dir / "Bad.sdIconPack").exists()).is_false()
-
-    def test_duplicate_install_raises(self, tmp_path):
-        manager, _, _ = _make_manager(tmp_path)
-        source = _write_source_pack(tmp_path)
-        manager.install(source)
-        with pytest.raises(IconPackError, match="already installed"):
-            manager.install(source)
+def _pack(tmp_path) -> None:
+    pack = tmp_path / "pack"
+    (pack / "sub").mkdir(parents=True)
+    (pack / "a.png").write_bytes(b"png-a")
+    (pack / "sub" / "b.svg").write_text("<svg/>")
+    (pack / "notes.txt").write_text("x")
+    (tmp_path / "manifest.json").write_text("{}")
 
 
-class TestInstallZip:
-    def test_installs_streamdeckiconpack_zip(self, tmp_path):
-        manager, store, packs_dir = _make_manager(tmp_path)
-        zip_path = tmp_path / "MyPack.streamDeckIconPack"
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            zf.writestr("manifest.json", json.dumps(_MANIFEST))
-            zf.writestr("icons.json", json.dumps(_ICONS))
-
-        dest = manager.install(zip_path)
-
-        assert_that(dest).is_equal_to(packs_dir / "MyPack.sdIconPack")
-        assert_that(store.list_packs()).is_length(1)
+def test_list_icons_finds_images(tmp_path):
+    _pack(tmp_path)
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    assert_that(registry.list_icons("com.t.p.icons")).is_equal_to(["a.png", "sub/b.svg"])
+    assert_that(registry.list_packs()).is_equal_to(
+        [{"id": "com.t.p.icons", "name": "Pack", "description": "", "plugin_id": "com.t.p", "icon_count": 2}]
+    )
 
 
-class TestListAndRemove:
-    def test_list_returns_installed_packs(self, tmp_path):
-        manager, _, _ = _make_manager(tmp_path)
-        manager.install(_write_source_pack(tmp_path))
-        assert_that(manager.list_packs()).is_length(1)
-
-    def test_remove_deletes_from_disk_and_store(self, tmp_path):
-        manager, store, packs_dir = _make_manager(tmp_path)
-        manager.install(_write_source_pack(tmp_path))
-        pack_uuid = store.list_packs()[0]["uuid"]
-
-        manager.remove(pack_uuid)
-
-        assert_that(store.list_packs()).is_empty()
-        assert_that((packs_dir / "MyPack.sdIconPack").exists()).is_false()
-
-    def test_remove_unknown_uuid_raises(self, tmp_path):
-        manager, _, _ = _make_manager(tmp_path)
-        with pytest.raises(IconPackError):
-            manager.remove("unknown")
+def test_icons_json_orders_icons(tmp_path):
+    _pack(tmp_path)
+    (tmp_path / "pack" / "icons.json").write_text(json.dumps([{"path": "sub/b.svg"}, "a.png", "gone.png"]))
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    assert_that(registry.list_icons("com.t.p.icons")).is_equal_to(["sub/b.svg", "a.png"])
 
 
-class TestDiscoverManualDropins:
-    def test_detects_unregistered_folder(self, tmp_path):
-        manager, store, packs_dir = _make_manager(tmp_path)
-        dropin = packs_dir / "Dropped.sdIconPack"
-        dropin.mkdir()
-        (dropin / "manifest.json").write_text(json.dumps(_MANIFEST))
-        (dropin / "icons.json").write_text(json.dumps(_ICONS))
+def test_read_icon_returns_bytes(tmp_path):
+    _pack(tmp_path)
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    assert_that(registry.read_icon("com.t.p.icons", "a.png")).is_equal_to(b"png-a")
+    assert_that(registry.read_icon("com.t.p.icons", "missing.png")).is_none()
+    assert_that(registry.read_icon("unknown", "a.png")).is_none()
+    assert_that(registry.read_icon("com.t.p.icons", "notes.txt")).is_none()
 
-        manager.discover_manual_dropins()
 
-        assert_that(store.list_packs()).is_length(1)
+def test_read_icon_rejects_path_escape(tmp_path):
+    _pack(tmp_path)
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    assert_that(registry.read_icon("com.t.p.icons", "../manifest.json")).is_none()
 
-    def test_skips_already_registered_pack(self, tmp_path):
-        manager, store, packs_dir = _make_manager(tmp_path)
-        manager.install(_write_source_pack(tmp_path))
 
-        manager.discover_manual_dropins()
+def test_read_icon_rejects_symlink_escape(tmp_path):
+    _pack(tmp_path)
+    outside = tmp_path.parent / f"{tmp_path.name}-secret.png"
+    outside.write_bytes(b"secret")
+    (tmp_path / "pack" / "link.png").symlink_to(outside)
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    assert_that(registry.read_icon("com.t.p.icons", "link.png")).is_none()
+    assert_that(registry.list_icons("com.t.p.icons")).does_not_contain("link.png")
 
-        assert_that(store.list_packs()).is_length(1)
 
-    def test_invalid_dropin_is_skipped_not_deleted(self, tmp_path):
-        manager, store, packs_dir = _make_manager(tmp_path)
-        dropin = packs_dir / "Bad.sdIconPack"
-        dropin.mkdir()
-        (dropin / "manifest.json").write_text(json.dumps({"Name": "Missing fields"}))
+def test_read_icon_rejects_oversized(tmp_path):
+    _pack(tmp_path)
+    (tmp_path / "pack" / "big.png").write_bytes(b"x" * (MAX_ICON_BYTES + 1))
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    assert_that(registry.read_icon("com.t.p.icons", "big.png")).is_none()
 
-        manager.discover_manual_dropins()
 
-        assert_that(store.list_packs()).is_empty()
-        assert_that(dropin.exists()).is_true()
+def test_pack_path_escaping_plugin_is_refused(tmp_path):
+    plugin_dir = tmp_path / "plugin"
+    (tmp_path / "elsewhere").mkdir()
+    plugin_dir.mkdir()
+    failures: list[tuple[str, str]] = []
+    registry = IconPackRegistry(on_failure=lambda pid, err: failures.append((pid, err)))
+    registry.register(_plugin(plugin_dir, path="../elsewhere"))
+    assert_that(registry.list_packs()).is_empty()
+    assert_that(failures).is_length(1)
+    assert_that(failures[0][1]).contains("outside")
+
+
+def test_missing_folder_and_duplicate_id_are_refused(tmp_path):
+    _pack(tmp_path)
+    failures: list[tuple[str, str]] = []
+    registry = IconPackRegistry(on_failure=lambda pid, err: failures.append((pid, err)))
+    registry.register(_plugin(tmp_path, path="nope"))
+    registry.register(_plugin(tmp_path))
+    registry.register(_plugin(tmp_path))
+    assert_that(failures).is_length(2)
+    assert_that(registry.list_packs()).is_length(1)
+
+
+def test_unregister_removes_pack(tmp_path):
+    _pack(tmp_path)
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    registry.unregister("com.t.p")
+    assert_that(registry.list_packs()).is_empty()
+    assert_that(registry.list_icons("com.t.p.icons")).is_empty()

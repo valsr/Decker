@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from decker.asset.iconpack import IconPackRegistry
 from decker.asset.renderer import AssetRenderer
 from decker.common import config
 from decker.common.manager import Manager
@@ -29,6 +30,7 @@ from decker.plugin.settings_schema import apply_schema, schema_to_json
 from decker.plugin.settings_store import PluginSettingsStore
 from decker.plugin.target import ActionTarget
 from decker.server.appearance import compose_key_image, resolve_appearance
+from decker.server.contributions import ContributionRegistry
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
@@ -40,6 +42,21 @@ _OPEN_URL_SCHEMES = ("http", "https")
 
 
 _StateChangedCallback = Callable[[str, int], None]
+
+
+class _ActionsHandler:
+    """The "actions" contribution handler: delegates to the PluginManager's process and action logic."""
+
+    kind = "actions"
+
+    def __init__(self, manager: "PluginManager") -> None:
+        self._manager = manager
+
+    def register(self, plugin: InstalledPlugin) -> None:
+        self._manager.register_actions(plugin)
+
+    def unregister(self, plugin_id: str) -> None:
+        self._manager.unregister_actions(plugin_id)
 
 
 class _StreamDeckHardwareSink:
@@ -154,6 +171,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             limit = int(config.get_or_default("plugin.memory_limit", _DEFAULT_MEMORY_LIMIT))
             policy = SupervisorPolicy(memory_limit=limit)
         self._supervisor = PluginSupervisor(policy, PluginProcess, self._on_plugin_message, self._on_plugin_failed)
+        self.icon_packs = IconPackRegistry(on_failure=self._record_failure)
+        self._contributions = ContributionRegistry([_ActionsHandler(self), self.icon_packs])
 
     def create(self, context: "ServerContext") -> None:
         """Wire up the device manager, then scan plugins and start the supervisor."""
@@ -196,17 +215,25 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._settings_store.close()
 
     def add_plugin(self, plugin: InstalledPlugin) -> None:
-        """Make a plugin's actions available; its process starts when the first action appears."""
+        """Register a plugin's contributions; an actions plugin's process starts when its first action appears."""
         manifest = plugin.manifest
         with self._lock:
             self._plugins[manifest.id] = plugin
-        if manifest.runtime is None or not manifest.actions:
+        try:
+            self._contributions.add(plugin)
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.exception("Registering plugin %s failed", manifest.id)
+            self._record_failure(manifest.id, str(exc))
+
+    def register_actions(self, plugin: InstalledPlugin) -> None:
+        """Register a plugin's actions with the supervisor (the "actions" contribution handler)."""
+        manifest = plugin.manifest
+        if manifest.runtime is None:
             return
         try:
             command = launch_command(plugin.plugin_dir, manifest.runtime, plugin.bundled)
         except ValueError as exc:
-            with self._lock:
-                self._failures.append(PluginLoadFailedEvent(manifest.id, str(exc)))
+            self._record_failure(manifest.id, str(exc))
             return
         hello = {
             "protocol": 1,
@@ -217,14 +244,21 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         with self._lock:
             self._hellos[manifest.id] = hello
         if not plugin.bundled and self._sdk_path is None:
-            with self._lock:
-                self._failures.append(PluginLoadFailedEvent(manifest.id, "plugin SDK is not staged"))
+            self._record_failure(manifest.id, "plugin SDK is not staged")
             return
         env = launch_env(None if plugin.bundled else self._sdk_path)
         self._supervisor.register(manifest.id, command, plugin.plugin_dir, env, hello)
 
     def remove_plugin(self, plugin_id: str) -> None:
         """Stop a plugin, drop its live instances and forget it."""
+        self._contributions.remove(plugin_id)
+        with self._lock:
+            self._plugins.pop(plugin_id, None)
+            self._icon_cache.clear()
+            self._drop_failure(plugin_id)
+
+    def unregister_actions(self, plugin_id: str) -> None:
+        """Stop a plugin's process and drop its live instances (the "actions" contribution handler)."""
         with self._lock:
             dropped = [c for c, live in self._live.items() if live.target.plugin_uuid == plugin_id]
             recognizers = [self._live.pop(c).recognizer for c in dropped]
@@ -232,10 +266,11 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             recognizer.cancel()
         self._supervisor.unregister(plugin_id)
         with self._lock:
-            self._plugins.pop(plugin_id, None)
             self._hellos.pop(plugin_id, None)
-            self._icon_cache.clear()
-            self._drop_failure(plugin_id)
+
+    def _record_failure(self, plugin_id: str, error: str) -> None:
+        with self._lock:
+            self._failures.append(PluginLoadFailedEvent(plugin_id, error))
 
     def plugins(self) -> list[InstalledPlugin]:
         """Return every known plugin."""

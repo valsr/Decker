@@ -25,7 +25,6 @@ class TestConfigure:
         assert paths.plugins() == tmp_path / ".decker" / "plugins"
         assert paths.assets() == tmp_path / ".decker" / "assets"
         assert paths.user_icons() == tmp_path / ".decker" / "assets" / "user-icons"
-        assert paths.iconpacks() == tmp_path / ".decker" / "assets" / "iconpacks"
 
     def test_default_prefix_is_home(self):
         paths._prefix = Path.home()

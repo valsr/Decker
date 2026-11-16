@@ -11,7 +11,6 @@ from typing import Any
 from rpyc.utils.server import ThreadPoolServer
 
 import decker.common.logging
-from decker.asset.iconpack import IconPackManager
 from decker.common import paths as decker_paths
 from decker.common.context import ServerAppContext
 from decker.common.manager import Manager
@@ -198,7 +197,6 @@ class ServerProcess:
             self._app_context.verbosity, server_id=self.server_id, log_others=self._app_context.log_others
         )
 
-        icon_pack_manager = IconPackManager()
         state_store = DeviceStateStore()
         page_store = PageStore()
         key_store = KeyAssignmentStore()
@@ -209,7 +207,6 @@ class ServerProcess:
         self._context = ServerContext(
             device_manager=device_manager,
             plugin_manager=plugin_manager,
-            icon_pack_manager=icon_pack_manager,
             key_assignment_store=key_store,
             device_state_store=state_store,
             page_store=page_store,
@@ -221,7 +218,6 @@ class ServerProcess:
         ctx = self._context
         assert ctx is not None
         managers: list[Manager] = [
-            icon_pack_manager,
             state_store,
             page_store,
             key_store,

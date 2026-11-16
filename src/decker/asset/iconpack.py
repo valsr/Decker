@@ -1,102 +1,126 @@
-"""Installs, lists, removes, and discovers icon packs on disk."""
+"""Registry of icon packs contributed by installed plugins."""
 
+import json
 import logging
-import shutil
-import uuid as uuid_lib
-import zipfile
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
-from decker.asset.manifest import (
-    IconPackManifest,
-    IconPackValidationError,
-    validate_icons_json,
-)
-from decker.asset.paths import ensure_asset_dirs, iconpacks_dir
-from decker.asset.store import IconPackStore
-from decker.common.manager import Manager
+from decker.plugin.icons import MAX_ICON_BYTES
+from decker.plugin.loader import InstalledPlugin
 
-if TYPE_CHECKING:
-    from decker.server.server_context import ServerContext
+_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".svg"})
+_FailureCallback = Callable[[str, str], None]
 
 
-class IconPackError(Exception):
-    """An icon pack operation failed."""
+@dataclass(frozen=True)
+class _Pack:
+    plugin_id: str
+    name: str
+    description: str
+    root: Path
 
 
-class IconPackManager(Manager):
-    """Handles icon pack install/list/remove and manual drop-in detection."""
+class IconPackRegistry:
+    """Handler for the "icon_packs" contribution: knows each pack's folder and serves its icons."""
 
-    def __init__(self, store: IconPackStore | None = None, packs_dir: Path | None = None) -> None:
-        self._store = store or IconPackStore()
-        self._packs_dir = packs_dir or iconpacks_dir()
+    kind = "icon_packs"
 
-    def create(self, context: "ServerContext") -> None:
-        """Ensure asset directories exist and register any on-disk drop-ins."""
-        self._packs_dir.mkdir(parents=True, exist_ok=True)
-        ensure_asset_dirs()
-        self.discover_manual_dropins()
+    def __init__(self, on_failure: _FailureCallback | None = None) -> None:
+        self._packs: dict[str, _Pack] = {}
+        self._on_failure = on_failure
+        self._lock = threading.RLock()
 
-    def destroy(self) -> None:
-        """No-op: IconPackManager holds no open resources."""
-
-    def install(self, source: str | Path) -> Path:
-        """Install a .sdIconPack folder or .streamDeckIconPack ZIP. Raises IconPackError on failure."""
-        source_path = Path(source)
-        if source_path.is_file() and source_path.suffix == ".streamDeckIconPack":
-            return self._install_zip(source_path)
-        if source_path.is_dir() and source_path.name.endswith(".sdIconPack"):
-            return self._install_folder(source_path)
-        raise IconPackError(f"{source_path} is not a .sdIconPack folder or .streamDeckIconPack file")
-
-    def list_packs(self) -> list[dict]:
-        """Return all registered icon packs."""
-        return self._store.list_packs()
-
-    def remove(self, pack_uuid: str) -> None:
-        """Remove an installed icon pack from disk and the registry. Raises IconPackError if unknown."""
-        pack = self._store.get_pack(pack_uuid)
-        if pack is None:
-            raise IconPackError(f"no installed icon pack found with uuid {pack_uuid!r}")
-        shutil.rmtree(pack["path"], ignore_errors=True)
-        self._store.remove_pack(pack_uuid)
-
-    def discover_manual_dropins(self) -> None:
-        """Register any .sdIconPack folders present on disk but not yet in the store."""
-        registered_paths = {pack["path"] for pack in self._store.list_packs()}
-        for entry in self._packs_dir.iterdir():
-            if not entry.is_dir() or not entry.name.endswith(".sdIconPack") or str(entry) in registered_paths:
+    def register(self, plugin: InstalledPlugin) -> None:
+        """Register the plugin's packs; a pack whose folder is missing or escapes the plugin is refused."""
+        plugin_id = plugin.manifest.id
+        plugin_root = plugin.plugin_dir.resolve()
+        for spec in plugin.manifest.icon_packs:
+            root = (plugin_root / spec.path).resolve()
+            error = self._refusal(spec.id, root, plugin_root)
+            if error is not None:
+                logging.error("[%s] icon pack %s refused: %s", plugin_id, spec.id, error)
+                if self._on_failure is not None:
+                    self._on_failure(plugin_id, f"icon pack {spec.id}: {error}")
                 continue
-            try:
-                self._register(entry)
-            except IconPackValidationError as exc:
-                logging.warning("Skipping invalid icon pack drop-in %s: %s", entry, exc)
+            with self._lock:
+                self._packs[spec.id] = _Pack(plugin_id, spec.name, spec.description, root)
 
-    def _install_zip(self, source_path: Path) -> Path:
-        dest_dir = self._packs_dir / f"{source_path.stem}.sdIconPack"
-        if dest_dir.exists():
-            raise IconPackError(f"an icon pack is already installed at {dest_dir}")
-        with zipfile.ZipFile(source_path) as zip_file:
-            zip_file.extractall(dest_dir)
-        return self._register_new(dest_dir)
+    def unregister(self, plugin_id: str) -> None:
+        """Drop every pack the plugin contributed."""
+        with self._lock:
+            self._packs = {k: v for k, v in self._packs.items() if v.plugin_id != plugin_id}
 
-    def _install_folder(self, source_path: Path) -> Path:
-        dest_dir = self._packs_dir / source_path.name
-        if dest_dir.exists():
-            raise IconPackError(f"an icon pack is already installed at {dest_dir}")
-        shutil.copytree(source_path, dest_dir)
-        return self._register_new(dest_dir)
+    def list_packs(self) -> list[dict[str, Any]]:
+        """Return every registered pack with its owner and icon count."""
+        with self._lock:
+            packs = list(self._packs.items())
+        return [
+            {
+                "id": pack_id,
+                "name": pack.name,
+                "description": pack.description,
+                "plugin_id": pack.plugin_id,
+                "icon_count": len(self._icons_of(pack)),
+            }
+            for pack_id, pack in sorted(packs, key=lambda item: item[1].name)
+        ]
 
-    def _register_new(self, dest_dir: Path) -> Path:
-        """Register a pack we just copied/extracted ourselves; clean up dest_dir if invalid."""
+    def list_icons(self, pack_id: str) -> list[str]:
+        """Return the pack's image paths relative to its folder; icons.json decides the order when present."""
+        pack = self._pack(pack_id)
+        return self._icons_of(pack) if pack is not None else []
+
+    def read_icon(self, pack_id: str, name: str) -> bytes | None:
+        """Return the icon's bytes, or None if unknown, outside the pack folder, not an image or too large."""
+        pack = self._pack(pack_id)
+        if pack is None:
+            return None
+        path = (pack.root / name).resolve()
+        if not path.is_relative_to(pack.root) or path.suffix.lower() not in _IMAGE_SUFFIXES:
+            logging.warning("Refusing icon %r of pack %s: not an image inside the pack", name, pack_id)
+            return None
         try:
-            self._register(dest_dir)
-        except IconPackValidationError as exc:
-            shutil.rmtree(dest_dir, ignore_errors=True)
-            raise IconPackError(str(exc)) from exc
-        return dest_dir
+            if not path.is_file() or path.stat().st_size > MAX_ICON_BYTES:
+                return None
+            return path.read_bytes()
+        except OSError as exc:
+            logging.warning("Could not read icon %s: %s", path, exc)
+            return None
 
-    def _register(self, dest_dir: Path) -> None:
-        manifest = IconPackManifest.load(dest_dir / "manifest.json")
-        validate_icons_json(dest_dir / "icons.json")
-        self._store.add_pack(str(uuid_lib.uuid4()), manifest.name, manifest.version, str(dest_dir))
+    def _pack(self, pack_id: str) -> _Pack | None:
+        with self._lock:
+            return self._packs.get(pack_id)
+
+    def _refusal(self, pack_id: str, root: Path, plugin_root: Path) -> str | None:
+        if not root.is_relative_to(plugin_root):
+            return "path points outside the plugin folder"
+        if not root.is_dir():
+            return "path is not a folder"
+        with self._lock:
+            if pack_id in self._packs:
+                return "duplicate icon pack id"
+        return None
+
+    @staticmethod
+    def _icons_of(pack: _Pack) -> list[str]:
+        found: set[str] = set()
+        for path in pack.root.rglob("*"):
+            if path.suffix.lower() in _IMAGE_SUFFIXES and path.is_file():
+                if path.resolve().is_relative_to(pack.root):
+                    found.add(path.relative_to(pack.root).as_posix())
+        ordered = [name for name in _declared_order(pack.root) if name in found]
+        return ordered + sorted(found - set(ordered))
+
+
+def _declared_order(root: Path) -> list[str]:
+    try:
+        data = json.loads((root / "icons.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    names = (entry.get("path") if isinstance(entry, dict) else entry for entry in data)
+    return [name for name in names if isinstance(name, str)]

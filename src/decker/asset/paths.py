@@ -17,12 +17,6 @@ def user_icons_dir() -> Path:
     return decker_paths.user_icons()
 
 
-def iconpacks_dir() -> Path:
-    """Return the icon packs directory."""
-    return decker_paths.iconpacks()
-
-
 def ensure_asset_dirs() -> None:
     """Create the asset directory structure on first run. Idempotent."""
     user_icons_dir().mkdir(parents=True, exist_ok=True)
-    iconpacks_dir().mkdir(parents=True, exist_ok=True)

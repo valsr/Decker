@@ -2,6 +2,7 @@
 
 import shutil
 from pathlib import Path
+from typing import Any, Protocol
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
@@ -14,7 +15,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from decker.asset.iconpack import IconPackManager
 from decker.asset.paths import ensure_asset_dirs, user_icons_dir
 
 _IMAGE_FILE_FILTER = "Images (*.svg *.png *.jpg *.jpeg *.gif *.webp)"
@@ -36,14 +36,21 @@ def list_pack_icons(pack_path: Path) -> list[Path]:
     return sorted(p for p in pack_path.iterdir() if p.suffix.lower() in _ICON_EXTENSIONS)
 
 
+class IconPackSource(Protocol):  # pylint: disable=too-few-public-methods
+    """Anything that lists icon packs as dicts with at least ``name`` and ``path``."""
+
+    def list_packs(self) -> list[dict[str, Any]]:
+        """Return the available icon packs."""
+
+
 class IconPackBrowserDialog(QDialog):
     """Two-pane dialog: installed icon packs on the left, that pack's icons on the right."""
 
-    def __init__(self, parent: QWidget | None = None, icon_pack_manager: IconPackManager | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, icon_pack_manager: IconPackSource | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Choose icon from pack")
         self.selected_path: Path | None = None
-        self._manager = icon_pack_manager or IconPackManager()
+        self._manager = icon_pack_manager  # temporary: Task 18 lists packs over RPC
 
         self._pack_list = QListWidget()
         self._icon_list = QListWidget()
@@ -57,7 +64,7 @@ class IconPackBrowserDialog(QDialog):
         self._populate_packs()
 
     def _populate_packs(self) -> None:
-        for pack in self._manager.list_packs():
+        for pack in self._manager.list_packs() if self._manager is not None else []:
             item = QListWidgetItem(pack["name"])
             item.setData(1, pack["path"])
             self._pack_list.addItem(item)
@@ -81,7 +88,7 @@ class IconPickerWidget(QWidget):
 
     icon_selected = pyqtSignal(str)
 
-    def __init__(self, parent: QWidget | None = None, icon_pack_manager: IconPackManager | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, icon_pack_manager: IconPackSource | None = None) -> None:
         super().__init__(parent)
         self._icon_pack_manager = icon_pack_manager
 

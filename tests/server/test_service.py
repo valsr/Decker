@@ -32,7 +32,6 @@ def _make_context(plugin_manager: MagicMock, store: KeyAssignmentStore, device_m
     ctx = ServerContext(
         device_manager=dm,
         plugin_manager=plugin_manager,
-        icon_pack_manager=MagicMock(),
         key_assignment_store=store,
         device_state_store=MagicMock(),
         page_store=page_store,
@@ -449,3 +448,23 @@ class TestPageRpcs:
             "pages.list", "page.add", "page.rename", "page.delete", "page.set.default", "page.activate"
         )
         assert_that(commands["key.assign"]["params"]).starts_with("device_id, page_id, key_index")
+
+
+class TestIconPackRpcs:
+    def test_iconpack_rpcs(self, store, manager):
+        manager.icon_packs.list_packs.return_value = [{"id": "p"}]
+        manager.icon_packs.list_icons.return_value = ["a.png"]
+        manager.icon_packs.read_icon.side_effect = lambda pack, name: b"\x89PNG" if name == "a.png" else None
+        DeckerService.configure_context(_make_context(manager, store))
+        svc = DeckerService()
+
+        assert_that(json.loads(svc.iconpacks_list())).is_equal_to([{"id": "p"}])
+        assert_that(json.loads(svc.iconpack_icons("p"))).is_equal_to(["a.png"])
+        assert_that(svc.iconpack_icon("p", "a.png")).is_equal_to("iVBORw==")
+        assert_that(svc.iconpack_icon("p", "missing.png")).is_equal_to("")
+
+    def test_iconpack_rpcs_without_context(self):
+        svc = DeckerService()
+        assert_that(json.loads(svc.iconpacks_list())).is_equal_to([])
+        assert_that(json.loads(svc.iconpack_icons("p"))).is_equal_to([])
+        assert_that(svc.iconpack_icon("p", "a.png")).is_equal_to("")

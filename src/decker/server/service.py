@@ -161,6 +161,30 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         return [self._plugin_info(plugin, manager.global_settings(plugin.manifest.id)) for plugin in manager.plugins()]
 
     @exposed
+    @api_response
+    def iconpacks_list(self) -> list:
+        """List the icon packs contributed by installed plugins."""
+        if self._context is None:
+            return []
+        return self._context.plugin_manager.icon_packs.list_packs()
+
+    @exposed
+    @api_response
+    def iconpack_icons(self, pack_id: str) -> list:
+        """List an icon pack's image paths, relative to the pack folder."""
+        if self._context is None:
+            return []
+        return self._context.plugin_manager.icon_packs.list_icons(pack_id)
+
+    @exposed
+    def iconpack_icon(self, pack_id: str, name: str) -> str:
+        """Return one pack icon as base64, or an empty string if it is missing."""
+        if self._context is None:
+            return ""
+        data = self._context.plugin_manager.icon_packs.read_icon(pack_id, name)
+        return base64.b64encode(data).decode("ascii") if data else ""
+
+    @exposed
     def plugin_install_allowed(self) -> bool:
         """Report whether this client may install and uninstall plugins."""
         return self._install_allowed()
