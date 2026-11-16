@@ -26,6 +26,7 @@ class DeviceView(BaseView):
         self._grid_placeholder.setProperty("role", "muted")
         self._icon_picker = IconPickerWidget()
         self._icon_picker.icon_selected.connect(self._on_icon_selected)
+        self._icon_picker.pack_icon_selected.connect(self._on_pack_icon_selected)
         self._icon_status = QLabel()
         self._icon_status.setProperty("role", "success")
 
@@ -41,6 +42,7 @@ class DeviceView(BaseView):
 
     def on_activate(self) -> None:
         device = AppContext.get().active_device
+        self._icon_picker.connection_manager = AppContext.get().connection_manager
         self._title.setText(_device_title(device))
         self._info.setText(_device_info(device))
 
@@ -49,6 +51,9 @@ class DeviceView(BaseView):
 
     def _on_icon_selected(self, path: str) -> None:
         self._icon_status.setText(f"Selected: {path}")
+
+    def _on_pack_icon_selected(self, pack_id: str, icon_name: str) -> None:
+        self._icon_status.setText(f"Selected: {pack_id} / {icon_name}")
 
 
 def _device_title(device: DeviceHardwareInfo | None) -> str:
