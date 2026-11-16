@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
     QPushButton,
     QTabWidget,
     QVBoxLayout,
@@ -24,9 +23,8 @@ from PyQt6.QtWidgets import (
 from decker.client import config as client_config
 from decker.client.assets import read_custom_stylesheet, resolve_theme
 from decker.client.context import AppContext
-from decker.client.events import PluginLoadFailedEvent
-from decker.client.events.event_manager import EventManager
 from decker.client.themes import ThemeColors, apply_theme
+from decker.client.widgets.plugins_tab import PluginsTab
 
 _STATUS_REFRESH_MS = 1000
 _THEME_LABELS: dict[str, str] = {
@@ -52,7 +50,6 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(False)
-        self._failed_plugins: dict[str, str] = {}
 
         self._host_input: QLineEdit = QLineEdit()
         self._port_input: QLineEdit = QLineEdit()
@@ -60,8 +57,9 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._theme_combo: QComboBox = QComboBox()
         self._custom_path_input: QLineEdit = QLineEdit()
         self._browse_btn: QPushButton = QPushButton("Browse…")
-        self._failed_list: QListWidget = QListWidget()
-        self._no_failures_label: QLabel = QLabel("No plugins failed to load.")
+        self._plugins_tab: PluginsTab = PluginsTab()
+        self._failed_list = self._plugins_tab._failed_list  # pylint: disable=protected-access
+        self._no_failures_label = self._plugins_tab._no_failures_label  # pylint: disable=protected-access
         self._message_label: QLabel = QLabel()
         self._buttons: QDialogButtonBox = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Close
@@ -76,7 +74,7 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._tabs.addTab(self._general_tab, "General")
         self._tabs.addTab(self._server_tab, "Server")
         self._tabs.addTab(self._ui_tab, "UI")
-        self._tabs.addTab(self._build_plugins_tab(), "Plugins")
+        self._tabs.addTab(self._plugins_tab, "Plugins")
 
         self._buttons.rejected.connect(self.reject)
         apply_btn = self._buttons.button(QDialogButtonBox.StandardButton.Apply)
@@ -90,16 +88,16 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         layout = QVBoxLayout(self)
         layout.addWidget(self._tabs, 1)
         layout.addLayout(bottom_row)
-        self.resize(420, 300)
+        self.resize(520, 520)
 
         self._status_timer: QTimer = QTimer(self)
         self._status_timer.timeout.connect(self._refresh_status)
-        EventManager.get().subscribe(PluginLoadFailedEvent, self._on_plugin_load_failed)
 
     def open_dialog(self) -> None:
         """Load current settings into the form and show the dialog, or raise it if already open."""
         if not self.isVisible():
             self._load_from_config()
+            self._plugins_tab.refresh()
         self.show()
         self.raise_()
         self.activateWindow()
@@ -133,8 +131,7 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
 
     def set_failed_plugins(self, failures: dict[str, str]) -> None:
         """Replace the failed-plugin list (plugin UUID → error message)."""
-        self._failed_plugins = dict(failures)
-        self._refresh_failed_plugins()
+        self._plugins_tab.set_failed_plugins(failures)
 
     def showEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
         """Start live status updates while visible."""
@@ -186,16 +183,6 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         form.addRow("Stylesheet", path_row)
         return tab
 
-    def _build_plugins_tab(self) -> QWidget:
-        self._no_failures_label.setProperty("role", "muted")
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.addWidget(QLabel("Failed plugins"))
-        layout.addWidget(self._no_failures_label)
-        layout.addWidget(self._failed_list, 1)
-        self._refresh_failed_plugins()
-        return tab
-
     def _load_from_config(self) -> None:
         self._close_to_tray_check.setChecked(client_config.get_close_to_tray())
         self._host_input.setText(client_config.get_server_host())
@@ -231,17 +218,6 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         connection_manager = AppContext.get().connection_manager
         state = str(connection_manager.state) if connection_manager is not None else "disconnected"
         self._status_label.setText(_STATE_LABELS.get(state, state))
-
-    def _refresh_failed_plugins(self) -> None:
-        self._failed_list.clear()
-        for plugin_uuid, error in sorted(self._failed_plugins.items()):
-            self._failed_list.addItem(f"{plugin_uuid}: {error}")
-        self._no_failures_label.setVisible(not self._failed_plugins)
-        self._failed_list.setVisible(bool(self._failed_plugins))
-
-    def _on_plugin_load_failed(self, event: PluginLoadFailedEvent) -> None:
-        self._failed_plugins[event.plugin_uuid] = event.error
-        self._refresh_failed_plugins()
 
     def _fail(self, tab: QWidget, message: str) -> bool:
         self._tabs.setCurrentWidget(tab)

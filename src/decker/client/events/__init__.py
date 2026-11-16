@@ -77,6 +77,31 @@ class PagesUpdatedEvent:
 
 
 @dataclass(frozen=True)
+class PluginInstallProgressEvent:
+    """A plugin install job reported a progress message."""
+
+    job_id: str
+    message: str
+
+
+@dataclass(frozen=True)
+class PluginInstallFinishedEvent:
+    """A plugin install job finished, successfully or not."""
+
+    job_id: str
+    ok: bool
+    plugin_id: str
+    version: str
+    previous_version: str
+    message: str
+
+
+@dataclass(frozen=True)
+class PluginsChangedEvent:
+    """The set of installed plugins changed on the server."""
+
+
+@dataclass(frozen=True)
 class ViewActivatedEvent:
     """A view became the active view in the main window."""
 
@@ -100,6 +125,9 @@ AppEvent = (
     | ActionListUpdatedEvent
     | KeyDisplayStatesUpdatedEvent
     | PagesUpdatedEvent
+    | PluginInstallProgressEvent
+    | PluginInstallFinishedEvent
+    | PluginsChangedEvent
     | ViewActivatedEvent
     | ViewDeactivatedEvent
 )
