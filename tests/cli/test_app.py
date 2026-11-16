@@ -141,35 +141,86 @@ class TestMain:
         assert_that(captured["port"]).is_equal_to(9999)
 
 
-class TestPluginSubcommand:
-    def test_plugin_command_does_not_open_connection(self):
-        with (
-            patch.object(sys, "argv", ["decker-cli", "plugin", "list"]),
-            patch("decker.cli.app.CliConnection") as mock_conn_cls,
-        ):
-            with pytest.raises(SystemExit):
-                main()
-        mock_conn_cls.assert_not_called()
+class _FakeConn:
+    def __init__(self, replies=None, error=None):
+        self.calls = []
+        self._replies = replies or {}
+        self._error = error
 
-    def test_plugin_list_exits_0(self, capsys, tmp_path, monkeypatch):
-        monkeypatch.setattr("decker.common.paths.plugins", lambda: tmp_path / "plugins")
-        with patch.object(sys, "argv", ["decker-cli", "plugin", "list"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-        assert_that(exc_info.value.code).is_equal_to(0)
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return None
+
+    def request(self, name, *args):
+        self.calls.append((name, args))
+        if self._error:
+            raise self._error
+        return self._replies.get(name)
+
+
+def _run(argv, conn):
+    with (
+        patch.object(sys, "argv", ["decker-cli", *argv]),
+        patch("decker.cli.app.CliConnection", return_value=conn),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+    return exc_info.value.code
+
+
+class TestPluginSubcommand:
+    def test_app_routes_plugin_subcommands(self, capsys, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        conn = _FakeConn({"plugins_list": [{"id": "com.x.y", "version": "1.0.0", "name": "Y", "bundled": False}]})
+        assert_that(_run(["plugin", "new", "com.x.y"], conn)).is_equal_to(0)
+        assert_that(_run(["plugin", "pack", "com.x.y"], conn)).is_equal_to(0)
+        package = tmp_path / "com.x.y-0.1.0.deckerplugin"
+        assert_that(package.exists()).is_true()
+        assert_that(conn.calls).is_empty()
+
+        assert_that(_run(["plugin", "list"], conn)).is_equal_to(0)
+        assert_that(capsys.readouterr().out).contains("com.x.y")
+        conn2 = _FakeConn({"plugin_install": "job1"})
+        assert_that(_run(["plugin", "install", str(package)], conn2)).is_equal_to(0)
+        assert_that(capsys.readouterr().out).contains("Install started (job job1)")
+        assert_that(conn2.calls[0][0]).is_equal_to("plugin_install")
+        assert_that(_run(["plugin", "remove", "com.x.y"], conn2)).is_equal_to(0)
+        assert_that(conn2.calls[-1]).is_equal_to(("plugin_uninstall", ("com.x.y",)))
+
+    def test_plugin_list_empty(self, capsys):
+        assert_that(_run(["plugin", "list"], _FakeConn({"plugins_list": []}))).is_equal_to(0)
         assert_that(capsys.readouterr().out).contains("No plugins installed")
 
-    def test_plugin_install_missing_path_exits_1(self):
-        with patch.object(sys, "argv", ["decker-cli", "plugin", "install"]):
+    def test_plugin_install_permission_denied(self, capsys, tmp_path):
+        package = tmp_path / "a.deckerplugin"
+        package.write_bytes(b"x")
+        assert_that(_run(["plugin", "install", str(package)], _FakeConn(error=PermissionError("no")))).is_equal_to(1)
+        assert_that(capsys.readouterr().out).contains("only allowed from the server's own machine")
+
+    def test_plugin_server_down(self, capsys):
+        with (
+            patch.object(sys, "argv", ["decker-cli", "plugin", "list"]),
+            patch("decker.cli.app.CliConnection", side_effect=ConnectionRefusedError),
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 main()
         assert_that(exc_info.value.code).is_equal_to(1)
+        assert_that(capsys.readouterr().out).contains("cannot connect")
+
+    def test_plugin_install_missing_path_exits_1(self):
+        assert_that(_run(["plugin", "install"], _FakeConn())).is_equal_to(1)
+
+    def test_plugin_new_pack_errors(self, capsys, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert_that(_run(["plugin", "new"], _FakeConn())).is_equal_to(1)
+        assert_that(_run(["plugin", "new", "Bad_Id"], _FakeConn())).is_equal_to(1)
+        assert_that(_run(["plugin", "pack"], _FakeConn())).is_equal_to(1)
+        assert_that(_run(["plugin", "pack", "nope"], _FakeConn())).is_equal_to(1)
 
     def test_plugin_unknown_subcommand_exits_1(self, capsys):
-        with patch.object(sys, "argv", ["decker-cli", "plugin", "bogus"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-        assert_that(exc_info.value.code).is_equal_to(1)
+        assert_that(_run(["plugin", "bogus"], _FakeConn())).is_equal_to(1)
         assert_that(capsys.readouterr().out).contains("unknown plugin subcommand")
 
 
