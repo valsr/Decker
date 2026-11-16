@@ -99,6 +99,11 @@ class FakeConnectionManager:
         return None
 
 
+def _drain(qapp):
+    for _ in range(10):
+        qapp.processEvents()
+
+
 def _manager():
     packs = [{"id": "com.x/p", "name": "Pack A", "description": "", "plugin_id": "com.x", "icon_count": 2}]
     return FakeConnectionManager(packs, {"com.x/p": ["a.svg", "b.svg"]})
@@ -109,7 +114,9 @@ class TestIconPackBrowserDialog:
         dialog = IconPackBrowserDialog(None, _manager())
 
         assert_that(dialog._pack_list.count()).is_equal_to(1)  # pylint: disable=protected-access
-        assert_that(dialog._pack_list.item(0).text())  # type: ignore[union-attr]  # noqa.is_equal_to("Pack A")  # pylint: disable=protected-access
+        item = dialog._pack_list.item(0)  # pylint: disable=protected-access
+        assert item is not None
+        assert_that(item.text()).is_equal_to("Pack A")
 
     def test_selecting_pack_lists_its_icons(self, qapp):  # pylint: disable=unused-argument
         dialog = IconPackBrowserDialog(None, _manager())
@@ -118,16 +125,59 @@ class TestIconPackBrowserDialog:
 
         assert_that(dialog._icon_list.count()).is_equal_to(2)  # pylint: disable=protected-access
 
-    def test_icons_are_loaded_lazily_and_cached(self, qapp):  # pylint: disable=unused-argument
+    def test_selecting_pack_does_not_block_on_icon_rpcs(self, qapp):
         cm = _manager()
         dialog = IconPackBrowserDialog(None, cm)
-        assert_that([c for c in cm.calls if c[0] == "iconpack_icon"]).is_empty()
 
         dialog._pack_list.setCurrentRow(0)  # pylint: disable=protected-access
+
+        assert_that(dialog._icon_list.count()).is_equal_to(2)  # pylint: disable=protected-access
+        assert_that([c for c in cm.calls if c[0] == "iconpack_icon"]).is_empty()
+        _drain(qapp)
+        assert_that([c for c in cm.calls if c[0] == "iconpack_icon"]).is_length(2)
+
+    def test_icons_are_cached_per_dialog(self, qapp):
+        cm = _manager()
+        dialog = IconPackBrowserDialog(None, cm)
+        dialog._pack_list.setCurrentRow(0)  # pylint: disable=protected-access
+        _drain(qapp)
+
         dialog._pack_list.setCurrentRow(-1)  # pylint: disable=protected-access
         dialog._pack_list.setCurrentRow(0)  # pylint: disable=protected-access
+        _drain(qapp)
 
         assert_that([c for c in cm.calls if c[0] == "iconpack_icon"]).is_length(2)
+
+    def test_loaded_icons_replace_placeholders(self, qapp):
+        dialog = IconPackBrowserDialog(None, _manager())
+        dialog._pack_list.setCurrentRow(0)  # pylint: disable=protected-access
+        item = dialog._icon_list.item(0)  # pylint: disable=protected-access
+        assert item is not None
+        before = item.icon().pixmap(64, 64).toImage()
+
+        _drain(qapp)
+
+        assert_that(item.icon().pixmap(64, 64).toImage()).is_not_equal_to(before)
+
+    def test_switching_packs_abandons_pending_loads(self, qapp):
+        cm = _manager()
+        dialog = IconPackBrowserDialog(None, cm)
+        dialog._pack_list.setCurrentRow(0)  # pylint: disable=protected-access
+
+        dialog._pack_list.setCurrentRow(-1)  # pylint: disable=protected-access
+        _drain(qapp)
+
+        assert_that([c for c in cm.calls if c[0] == "iconpack_icon"]).is_empty()
+
+    def test_closing_dialog_abandons_pending_loads(self, qapp):
+        cm = _manager()
+        dialog = IconPackBrowserDialog(None, cm)
+        dialog._pack_list.setCurrentRow(0)  # pylint: disable=protected-access
+
+        dialog.reject()
+        _drain(qapp)
+
+        assert_that([c for c in cm.calls if c[0] == "iconpack_icon"]).is_empty()
 
     def test_icon_choice_emits_pack_and_name(self, qapp):  # pylint: disable=unused-argument
         dialog = IconPackBrowserDialog(None, _manager())

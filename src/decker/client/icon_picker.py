@@ -2,10 +2,11 @@
 
 import json
 import shutil
+from collections import deque
 from pathlib import Path
 from typing import Any, Protocol
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
@@ -52,6 +53,7 @@ class IconPackBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods
         self.setWindowTitle("Choose icon from pack")
         self._cm = connection_manager
         self._pixmaps: dict[tuple[str, str], QPixmap | None] = {}
+        self._pending: deque[tuple[str, str, QListWidgetItem]] = deque()
 
         self._pack_list = QListWidget()
         self._icon_list = QListWidget()
@@ -97,6 +99,7 @@ class IconPackBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods
             self._pack_list.addItem(item)
 
     def _on_pack_selected(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
+        self._pending.clear()
         self._icon_list.clear()
         if current is None:
             return
@@ -106,17 +109,38 @@ class IconPackBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods
             self._status.setText("Couldn't load this pack's icons.")
             return
         self._status.setText("" if names else "This pack has no icons.")
+        self._pending.clear()
         for name in names:
-            item = QListWidgetItem(QIcon(self._pixmap(pack_id, str(name))), Path(str(name)).stem)
+            item = QListWidgetItem(QIcon(self._cached_or_placeholder(pack_id, str(name))), Path(str(name)).stem)
             item.setData(_DATA_ROLE, str(name))
             self._icon_list.addItem(item)
+            if (pack_id, str(name)) not in self._pixmaps:
+                self._pending.append((pack_id, str(name), item))
+        self._schedule_next_load()
 
-    def _pixmap(self, pack_id: str, name: str) -> QPixmap:
-        key = (pack_id, name)
-        if key not in self._pixmaps:
-            raw = self._cm.call("iconpack_icon", pack_id, name) if self._cm is not None else None
-            self._pixmaps[key] = decode_icon(raw) if isinstance(raw, str) else None
-        return self._pixmaps[key] or placeholder_pixmap(name, _THUMB_SIZE)
+    def _cached_or_placeholder(self, pack_id: str, name: str) -> QPixmap:
+        return self._pixmaps.get((pack_id, name)) or placeholder_pixmap(name, _THUMB_SIZE)
+
+    def _schedule_next_load(self) -> None:
+        if self._pending:
+            QTimer.singleShot(0, self._load_next_icon)
+
+    def _load_next_icon(self) -> None:
+        # One RPC per event-loop turn keeps the UI responsive over slow links.
+        if not self._pending or self._cm is None:
+            return
+        pack_id, name, item = self._pending.popleft()
+        raw = self._cm.call("iconpack_icon", pack_id, name)
+        pixmap = decode_icon(raw) if isinstance(raw, str) else None
+        self._pixmaps[(pack_id, name)] = pixmap
+        if pixmap is not None:
+            item.setIcon(QIcon(pixmap))
+        self._schedule_next_load()
+
+    def done(self, result: int) -> None:
+        """Close the dialog, abandoning any icon loads still queued."""
+        self._pending.clear()
+        super().done(result)
 
     def _on_icon_chosen(self, item: QListWidgetItem) -> None:
         pack_item = self._pack_list.currentItem()
