@@ -286,3 +286,41 @@ class TestSchemaFormChanged:  # pylint: disable=protected-access
         form.set_schema([{"key": "n", "type": "int"}, {"key": "t", "type": "text"}], {"n": 3, "t": "x"})
 
         assert_that(seen).is_empty()
+
+
+class TestChangedEmitsOncePerEdit:  # pylint: disable=protected-access
+    def _count(self, form, edit) -> int:
+        seen: list[bool] = []
+        form.changed.connect(lambda: seen.append(True))
+        edit()
+        return len(seen)
+
+    def test_a_spinbox_change_emits_once(self, qapp):  # pylint: disable=unused-argument
+        form = _form([{"key": "n", "type": "int", "default": 1}])
+        spin = form._fields["n"].widget
+
+        assert_that(self._count(form, lambda: spin.setValue(4))).is_equal_to(1)  # type: ignore[attr-defined]
+
+    def test_a_font_change_emits_once(self, qapp):  # pylint: disable=unused-argument
+        form = _form([{"key": "f", "type": "font"}])
+        combo = form._fields["f"].widget
+
+        assert_that(self._count(form, lambda: combo.setCurrentIndex(1))).is_equal_to(1)  # type: ignore[attr-defined]
+
+    def test_a_title_style_change_emits_once(self, qapp):  # pylint: disable=unused-argument
+        form = AppearanceForm()
+        form.set_schema([{"key": "title", "type": "text_style", "label": "Title"}], {})
+        edit = form._fields["title"].widget
+
+        count = self._count(form, lambda: edit._toolbar._size.setValue(30))  # type: ignore[attr-defined]
+
+        assert_that(count).is_equal_to(1)
+
+    def test_an_icon_colour_change_emits_once(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        form = AppearanceForm()
+        form.set_schema([{"key": "icon", "type": "icon", "label": "Icon"}], {})
+        edit = form._fields["icon"].widget
+
+        count = self._count(form, lambda: edit._on_colour_changed("#123456"))  # type: ignore[attr-defined]
+
+        assert_that(count).is_equal_to(1)

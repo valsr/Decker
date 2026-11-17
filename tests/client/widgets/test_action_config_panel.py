@@ -334,3 +334,79 @@ class TestLivePreview:  # pylint: disable=protected-access
         _show(panel)
 
         panel._request_preview()  # must not raise
+
+
+class TestPanelStateReset:  # pylint: disable=protected-access
+    def _dirty_panel(self):
+        panel = ActionConfigPanel()
+        _show(panel, {"step": 1})
+        panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
+        assert_that(panel.is_dirty).is_true()
+        return panel
+
+    def test_placeholder_stops_a_pending_preview(self, qapp):  # pylint: disable=unused-argument
+        panel = self._dirty_panel()
+        assert_that(panel._preview_timer.isActive()).is_true()
+
+        panel.show_placeholder()
+
+        assert_that(panel._preview_timer.isActive()).is_false()
+
+    def test_forget_loaded_stops_a_pending_preview(self, qapp):  # pylint: disable=unused-argument
+        panel = self._dirty_panel()
+
+        panel.forget_loaded()
+
+        assert_that(panel._preview_timer.isActive()).is_false()
+
+    def test_placeholder_clears_the_dirty_state(self, qapp):  # pylint: disable=unused-argument
+        panel = self._dirty_panel()
+
+        panel.show_placeholder()
+
+        assert_that(panel.is_dirty).is_false()
+        assert_that(panel._save_btn.property("dirty")).is_false()
+
+    def test_forget_loaded_clears_the_dirty_state(self, qapp):  # pylint: disable=unused-argument
+        panel = self._dirty_panel()
+
+        panel.forget_loaded()
+
+        assert_that(panel.is_dirty).is_false()
+
+    def test_failed_save_stays_dirty_and_a_retry_sends_again(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        outcomes = iter([False, True])
+        sent: list[dict] = []
+
+        def save(settings: dict, _appearance: dict) -> bool:
+            sent.append(settings)
+            return next(outcomes)
+
+        _show(panel, {"step": 1}, save=save)
+        panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
+
+        panel._on_save()
+        assert_that(panel.is_dirty).is_true()
+        assert_that(panel._save_btn.property("dirty")).is_true()
+
+        panel._on_save()
+        assert_that(panel.is_dirty).is_false()
+        assert_that(sent).is_length(2)
+
+    def test_failed_save_does_not_swallow_the_server_echo_of_old_values(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        _show(panel, {"step": 1}, save=lambda s, a: False)
+        panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
+        panel._on_save()
+
+        assert_that(panel._loaded[1]).is_equal_to({"step": 1})  # type: ignore[index]
+
+    def test_save_callback_returning_none_counts_as_saved(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        _show(panel, {"step": 1})
+        panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
+
+        panel._on_save()
+
+        assert_that(panel.is_dirty).is_false()

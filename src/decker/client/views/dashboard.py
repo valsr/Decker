@@ -422,21 +422,26 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             "appearance_defaults": dict(state.get("appearance_defaults") or {}),
         }
 
-    def _make_save_callback(self, key_index: int) -> "Callable[[dict[str, Any], dict[str, Any]], None]":
-        def _cb(settings: dict[str, Any], appearance: dict[str, Any]) -> None:
-            self._save_key_settings(key_index, settings)
-            self._save_key_appearance(key_index, appearance)
+    def _make_save_callback(self, key_index: int) -> "Callable[[dict[str, Any], dict[str, Any]], bool]":
+        def _cb(settings: dict[str, Any], appearance: dict[str, Any]) -> bool:
+            settings_saved = self._save_key_settings(key_index, settings)
+            appearance_saved = self._save_key_appearance(key_index, appearance)
+            return settings_saved and appearance_saved
 
         return _cb
 
-    def _save_key_settings(self, key_index: int, settings: dict[str, Any]) -> None:
-        if self._key_call("key_update_settings", key_index, settings) and key_index in self._key_slots:
+    def _save_key_settings(self, key_index: int, settings: dict[str, Any]) -> bool:
+        saved = self._key_call("key_update_settings", key_index, settings)
+        if saved and key_index in self._key_slots:
             self._key_slots[key_index]["settings"] = settings
+        return saved
 
-    def _save_key_appearance(self, key_index: int, appearance: dict[str, Any]) -> None:
-        if self._key_call("key_update_appearance", key_index, appearance) and key_index in self._key_slots:
+    def _save_key_appearance(self, key_index: int, appearance: dict[str, Any]) -> bool:
+        saved = self._key_call("key_update_appearance", key_index, appearance)
+        if saved and key_index in self._key_slots:
             slot = self._key_slots[key_index]
             slot["appearance"] = {**slot.get("appearance_defaults", {}), **appearance}
+        return saved
 
     def _preview_key(self, key_index: int, appearance: dict[str, Any]) -> str | None:
         device_id = AppContext.get().active_device_id
@@ -453,8 +458,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         cm = AppContext.get().connection_manager
         if not device_id or not page_id or cm is None:
             return False
-        cm.call(method, device_id, page_id, key_index, json.dumps(payload))
-        return True
+        return bool(cm.call(method, device_id, page_id, key_index, json.dumps(payload)))
 
     # ------------------------------------------------------------------
     # Other widget callbacks

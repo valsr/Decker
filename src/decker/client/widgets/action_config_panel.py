@@ -28,6 +28,7 @@ _PREVIEW_DEBOUNCE_MS = 150
 _TOP = Qt.AlignmentFlag.AlignTop
 
 PreviewProvider = Callable[[dict[str, Any]], str | None]
+SaveCallback = Callable[[dict[str, Any], dict[str, Any]], bool | None]  # False = the save failed
 
 
 class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-attributes
@@ -35,7 +36,7 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
 
     def __init__(self) -> None:
         super().__init__()
-        self._save_cb: Callable[[dict[str, Any], dict[str, Any]], None] | None = None
+        self._save_cb: SaveCallback | None = None
         self._loaded: tuple[Any, ...] | None = None
         self._appearance_defaults: dict[str, Any] = {}
         self._preview_provider: PreviewProvider | None = None
@@ -76,14 +77,19 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
 
     def show_placeholder(self) -> None:
         """Switch to the placeholder page."""
-        self._loaded = None
-        self._preview.set_image(None)
+        self._reset_editing()
         self.setCurrentIndex(_PAGE_PLACEHOLDER)
 
     def forget_loaded(self) -> None:
         """Treat the next values as a different key's, so edits made for the previous key are replaced."""
+        self._reset_editing()
+
+    def _reset_editing(self) -> None:
         self._loaded = None
+        self._baseline = None
+        self._preview_timer.stop()
         self._preview.set_image(None)
+        self._refresh_state()
 
     def show_action_config(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
@@ -91,7 +97,7 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         settings: dict[str, Any],
         appearance: dict[str, Any],
         appearance_defaults: dict[str, Any],
-        save_cb: Callable[[dict[str, Any], dict[str, Any]], None],
+        save_cb: SaveCallback,
         title: str = "",
     ) -> None:
         """Populate and show the forms; identical values re-sent while shown leave edits in progress alone."""
@@ -163,11 +169,13 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
 
     def _refresh_state(self) -> None:
         values = self._current_values()
-        self._dirty = self._baseline is not None and values != self._baseline
-        self._save_btn.setProperty("dirty", self._dirty)
-        if (style := self._save_btn.style()) is not None:
-            style.unpolish(self._save_btn)
-            style.polish(self._save_btn)
+        dirty = self._baseline is not None and values != self._baseline
+        if dirty != self._dirty or self._save_btn.property("dirty") != dirty:
+            self._dirty = dirty
+            self._save_btn.setProperty("dirty", dirty)
+            if (style := self._save_btn.style()) is not None:
+                style.unpolish(self._save_btn)
+                style.polish(self._save_btn)
         icon = self._appearance_form.values().get("icon")
         self._preview.set_has_icon(isinstance(icon, dict) and bool(icon.get("ref")))
 
@@ -197,8 +205,8 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
             return
         settings = self._settings_form.values()
         form_appearance = self._appearance_form.values()
-        appearance = self._draft_appearance()
-        # Record the saved state so the server's echo is recognised as identical and keeps later edits.
+        previous = (self._loaded, self._baseline)
+        # Record the saved state first so a synchronous echo of it is recognised as identical and keeps later edits.
         if self._loaded is not None:
             self._loaded = (
                 self._loaded[0],
@@ -207,8 +215,10 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
                 self._loaded[3],
             )
         self._baseline = self._current_values()
+        saved = self._save_cb(settings, self._draft_appearance())
+        if saved is False:
+            self._loaded, self._baseline = previous
         self._refresh_state()
-        self._save_cb(settings, appearance)
 
 
 def _merged(appearance: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:

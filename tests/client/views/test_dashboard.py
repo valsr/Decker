@@ -5,6 +5,7 @@ import json
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from assertpy import assert_that
 from PyQt6.QtWidgets import QMessageBox
 
@@ -964,3 +965,29 @@ class TestFinalReviewFixes:  # pylint: disable=protected-access
         view._on_key_edit_requested(1)
 
         assert_that(shown).contains("T1RIRVI=")
+
+
+class TestSaveResult:  # pylint: disable=protected-access
+    def setup_method(self):
+        AppContext._instance = None  # pylint: disable=protected-access
+
+    def _view(self, tmp_path, result):
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        cm = MagicMock()
+        cm.call.return_value = result
+        AppContext.get().connection_manager = cm
+        view._key_slots[2] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": "c", "settings": {}}
+        return view
+
+    def test_save_callback_reports_success(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = self._view(tmp_path, True)
+
+        assert_that(view._make_save_callback(2)({"step": 2}, {})).is_true()
+
+    @pytest.mark.parametrize("result", [False, None])
+    def test_save_callback_reports_failure(self, qapp, tmp_path, result):  # pylint: disable=unused-argument
+        view = self._view(tmp_path, result)
+
+        assert_that(view._make_save_callback(2)({"step": 2}, {})).is_false()
+        assert_that(view._key_slots[2]["settings"]).is_equal_to({})
