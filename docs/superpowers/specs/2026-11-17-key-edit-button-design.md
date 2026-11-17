@@ -26,7 +26,7 @@ right corner on hover and selects the key for editing; clicking the key itself o
 
 ## Design (decker, `client/widgets/button_grid.py`, `client/views/dashboard.py`)
 
-- `KeyButtonWidget` gets a child `QToolButton` (pencil, themed icon `document-edit` with a "✎" glyph fallback), 20 px, 4 px from
+- `KeyButtonWidget` gets a child `QToolButton` (pencil drawn from the shipped `src/decker/assets/edit.svg`, filled with the palette's text colour and redrawn on a palette change, with a "✎" glyph fallback if the file is unusable), 20 px, 4 px from
   the top-right corner, hidden until the pointer enters the key. `edit_clicked = pyqtSignal(int)` carries the key index.
   The pencil stays visible while the pointer is over the pencil itself (it is a child of the key).
 - `ButtonGridWidget`: new signals `key_pressed(int)` (from the key's `clicked`) and `key_edit_requested(int)` (from the pencil);
@@ -37,4 +37,4 @@ right corner on hover and selects the key for editing; clicking the key itself o
 
 ## Calls made without you
 
-- Pencil on all keys, not only assigned ones; "✎" glyph fallback when the icon theme has no `document-edit`.
+- Pencil on all keys, not only assigned ones; "✎" glyph only as a fallback when `edit.svg` is missing or unreadable.

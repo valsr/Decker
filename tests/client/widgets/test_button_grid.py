@@ -3,10 +3,11 @@ import json
 import pytest
 from assertpy import assert_that
 from PyQt6.QtCore import QByteArray, QEvent, QMimeData, QPointF, Qt
-from PyQt6.QtGui import QDropEvent, QEnterEvent, QFocusEvent
+from PyQt6.QtGui import QColor, QDropEvent, QEnterEvent, QFocusEvent, QPalette
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
+import decker.client.widgets.button_grid as button_grid_module
 from decker.client.themes import BUNDLED, render_stylesheet
 from decker.client.widgets.button_grid import ButtonGridWidget, KeyButtonWidget
 from decker.common.model import KeyInfo
@@ -291,3 +292,84 @@ class TestKeyboardAccessToEdit:  # pylint: disable=protected-access,unused-argum
         QApplication.sendEvent(button, QFocusEvent(QEvent.Type.FocusOut, Qt.FocusReason.TabFocusReason))
 
         assert_that(button._edit_button.isVisible()).is_true()
+
+
+class TestEditPencilIcon:  # pylint: disable=protected-access,unused-argument
+    def _ink(self, pencil) -> list[tuple[int, int, int]]:
+        image = pencil.icon().pixmap(14, 14).toImage()
+        pixels = []
+        for y in range(image.height()):
+            for x in range(image.width()):
+                colour = image.pixelColor(x, y)
+                if colour.alpha() > 200:
+                    pixels.append((colour.red(), colour.green(), colour.blue()))
+        return pixels
+
+    def test_the_shipped_svg_exists_and_is_an_svg(self, qapp):
+        assert_that(button_grid_module._EDIT_ICON.is_file()).is_true()
+        assert_that(button_grid_module._EDIT_ICON.read_bytes()).contains(b"<svg")
+
+    def test_pencil_uses_the_edit_svg_not_a_glyph(self, qapp):
+        pencil = _key()._edit_button
+
+        assert_that(pencil.icon().isNull()).is_false()
+        assert_that(pencil.text()).is_equal_to("")
+
+    def test_pencil_icon_is_filled_with_the_palette_text_colour(self, qapp):
+        button = _key()
+        palette = QPalette(button.palette())
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#00ff00"))
+        button.setPalette(palette)
+
+        ink = self._ink(button._edit_button)
+
+        assert_that(ink).is_not_empty()
+        assert_that(set(ink)).is_equal_to({(0, 255, 0)})
+
+    def test_pencil_icon_follows_a_palette_change(self, qapp):
+        button = _key()
+        for colour, expected in (("#ff0000", (255, 0, 0)), ("#0000ff", (0, 0, 255))):
+            palette = QPalette(button.palette())
+            palette.setColor(QPalette.ColorRole.ButtonText, QColor(colour))
+            button.setPalette(palette)
+
+            assert_that(set(self._ink(button._edit_button))).described_as(colour).is_equal_to({expected})
+
+    def test_missing_svg_falls_back_to_the_glyph(self, qapp, monkeypatch, tmp_path):
+        monkeypatch.setattr(button_grid_module, "_EDIT_ICON", tmp_path / "nope.svg")
+
+        pencil = _key()._edit_button
+
+        assert_that(pencil.text()).is_equal_to("✎")
+        assert_that(pencil.icon().isNull()).is_true()
+
+    def test_unreadable_svg_falls_back_to_the_glyph(self, qapp, monkeypatch, tmp_path):
+        broken = tmp_path / "edit.svg"
+        broken.write_bytes(b"this is not an svg")
+        monkeypatch.setattr(button_grid_module, "_EDIT_ICON", broken)
+
+        pencil = _key()._edit_button
+
+        assert_that(pencil.text()).is_equal_to("✎")
+
+    def test_palette_change_after_a_fallback_does_not_crash(self, qapp, monkeypatch, tmp_path):
+        monkeypatch.setattr(button_grid_module, "_EDIT_ICON", tmp_path / "nope.svg")
+        button = _key()
+
+        palette = QPalette(button.palette())
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ff0000"))
+        button.setPalette(palette)
+
+        assert_that(button._edit_button.text()).is_equal_to("✎")
+
+    @pytest.mark.parametrize("theme", ["dark", "light"])
+    def test_the_svg_pencil_still_fits_its_box_under_the_bundled_themes(self, qapp, theme):
+        button = _key()
+        button.setStyleSheet(render_stylesheet(BUNDLED[theme]))
+        button.show()
+        qapp.processEvents()
+
+        hint = button._edit_button.sizeHint()
+
+        assert_that(hint.width()).is_less_than_or_equal_to(20)
+        assert_that(hint.height()).is_less_than_or_equal_to(20)

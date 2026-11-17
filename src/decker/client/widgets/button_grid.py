@@ -2,6 +2,7 @@
 
 import base64
 import json
+from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QByteArray, QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
@@ -16,12 +17,30 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QGridLayout, QPushButton, QToolButton, QVBoxLayout, QWidget
 
+from decker.client.action_icons import decode_icon
 from decker.common.model import KeyInfo
 
 _LONG_PRESS_MS = 500
 _EDIT_SIZE = 20  # px, the hover pencil
+_EDIT_ICON_PX = 14  # px, the pencil drawing inside its 20 px button
+_EDIT_ICON = Path(__file__).resolve().parents[2] / "assets" / "edit.svg"
 _EDIT_MARGIN = 4  # px from the key's top-right corner
 _MIME_TYPE = "application/x-decker-action"
+
+
+def _edit_icon(color: str) -> QIcon | None:
+    """The shipped pencil drawing filled with ``color`` (rendered at 2x for crisp edges), or None if unusable."""
+    try:
+        raw = _EDIT_ICON.read_bytes()
+    except OSError:
+        return None
+    pixmap = decode_icon(base64.b64encode(raw).decode("ascii"), color)
+    if pixmap is None:
+        return None
+    size = _EDIT_ICON_PX * 2
+    return QIcon(
+        pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    )
 
 
 class KeyButtonWidget(QPushButton):
@@ -49,11 +68,7 @@ class KeyButtonWidget(QPushButton):
     def _build_edit_button(self) -> QToolButton:
         button = QToolButton(self)
         button.setObjectName("keyEditButton")
-        icon = QIcon.fromTheme("document-edit")
-        if icon.isNull():
-            button.setText("✎")
-        else:
-            button.setIcon(icon)
+        self._apply_edit_icon(button)
         button.setToolTip("Edit this key")
         button.setAutoRaise(True)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -63,6 +78,23 @@ class KeyButtonWidget(QPushButton):
         button.hide()
         button.move(self._edit_position())
         return button
+
+    def _apply_edit_icon(self, button: QToolButton) -> None:
+        """Draw the pencil from the shipped SVG in the palette's text colour; a "✎" glyph if the SVG is unusable."""
+        icon = _edit_icon(self.palette().buttonText().color().name())
+        if icon is None:
+            button.setIcon(QIcon())
+            button.setText("✎")
+        else:
+            button.setText("")
+            button.setIcon(icon)
+            button.setIconSize(QSize(_EDIT_ICON_PX, _EDIT_ICON_PX))
+
+    def changeEvent(self, e: QEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Redraw the pencil when the theme's palette changes."""
+        super().changeEvent(e)
+        if e is not None and e.type() == QEvent.Type.PaletteChange and hasattr(self, "_edit_button"):
+            self._apply_edit_icon(self._edit_button)
 
     def _edit_position(self) -> QPoint:
         return QPoint(self.width() - _EDIT_SIZE - _EDIT_MARGIN, _EDIT_MARGIN)
