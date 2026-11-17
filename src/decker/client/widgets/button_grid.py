@@ -21,34 +21,69 @@ from decker.client.action_icons import decode_icon
 from decker.common.model import KeyInfo
 
 _LONG_PRESS_MS = 500
-_EDIT_SIZE = 30  # px, the hover pencil
-_EDIT_ICON_PX = 21  # px, the pencil drawing inside its 30 px button
-_EDIT_ICON = Path(__file__).resolve().parents[2] / "assets" / "edit.svg"
-_EDIT_MARGIN = 4  # px from the key's top-right corner
+_RUN_SIZE = 30  # px, the hover play button
+_RUN_ICON_PX = 21  # px, the play-circle drawing inside its 30 px button
+_PLAY_ICON = Path(__file__).resolve().parents[2] / "assets" / "play-circle.svg"
+_RUN_MARGIN = 4  # px from the key's top-right corner
 _MIME_TYPE = "application/x-decker-action"
 
 
-def _edit_icon(color: str) -> QIcon | None:
-    """The shipped pencil drawing filled with ``color`` (rendered at 2x for crisp edges), or None if unusable."""
+def _play_icon(color: str) -> QIcon | None:
+    """The shipped play-circle drawing filled with ``color`` (rendered at 2x for crisp edges), or None if unusable."""
     try:
-        raw = _EDIT_ICON.read_bytes()
+        raw = _PLAY_ICON.read_bytes()
     except OSError:
         return None
     pixmap = decode_icon(base64.b64encode(raw).decode("ascii"), color)
     if pixmap is None:
         return None
-    size = _EDIT_ICON_PX * 2
+    size = _RUN_ICON_PX * 2
     return QIcon(
         pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
     )
 
 
+class _RunButton(QToolButton):
+    """The play button: a click runs the key, holding it for half a second is a long press (and no click)."""
+
+    long_pressed = pyqtSignal()
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._held = False
+        self._long_press_timer = QTimer(self)
+        self._long_press_timer.setSingleShot(True)
+        self._long_press_timer.setInterval(_LONG_PRESS_MS)
+        self._long_press_timer.timeout.connect(self._on_long_press_fired)
+
+    def mousePressEvent(self, e: QMouseEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Start timing the hold."""
+        self._held = False
+        self._long_press_timer.start()
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e: QMouseEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """A normal release clicks; the release after a long press does not."""
+        self._long_press_timer.stop()
+        if self._held:
+            self._held = False
+            self.setDown(False)
+            self.update()
+            return
+        super().mouseReleaseEvent(e)
+
+    def _on_long_press_fired(self) -> None:
+        self._held = True
+        self.long_pressed.emit()
+
+
 class KeyButtonWidget(QPushButton):
-    """Square button for one key: supports drag-and-drop assignment and long-press detection."""
+    """Square button for one key: a click selects it, its play button runs it, and it accepts action drops."""
 
     action_dropped = pyqtSignal(int, object)
     long_pressed = pyqtSignal(int)
     edit_clicked = pyqtSignal(int)
+    run_clicked = pyqtSignal(int)
 
     def __init__(self, index: int, key_info: KeyInfo) -> None:
         super().__init__()
@@ -58,12 +93,8 @@ class KeyButtonWidget(QPushButton):
         self._label: str = ""
         self._refresh_text()
         self.setAcceptDrops(True)
-        self._long_press_active = False
-        self._long_press_timer = QTimer(self)
-        self._long_press_timer.setSingleShot(True)
-        self._long_press_timer.setInterval(_LONG_PRESS_MS)
-        self._long_press_timer.timeout.connect(self._on_long_press_fired)
-        self._edit_button = self._build_edit_button()
+        self.clicked.connect(lambda _checked=False: self.edit_clicked.emit(self.index))
+        self._run_button = self._build_run_button()
         self.setProperty("selected", False)
 
     def set_selected(self, selected: bool) -> None:
@@ -73,74 +104,75 @@ class KeyButtonWidget(QPushButton):
             style.unpolish(self)
             style.polish(self)
 
-    def _build_edit_button(self) -> QToolButton:
-        button = QToolButton(self)
-        button.setObjectName("keyEditButton")
-        self._apply_edit_icon(button)
-        button.setToolTip("Edit this key")
+    def _build_run_button(self) -> _RunButton:
+        button = _RunButton(self)
+        button.setObjectName("keyRunButton")
+        self._apply_play_icon(button)
+        button.setToolTip("Run this key")
         button.setAutoRaise(True)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        button.setFixedSize(_EDIT_SIZE, _EDIT_SIZE)
-        button.setAcceptDrops(False)  # a drop on the pencil falls through to the key
-        button.clicked.connect(lambda _checked=False: self.edit_clicked.emit(self.index))
+        button.setFixedSize(_RUN_SIZE, _RUN_SIZE)
+        button.setAcceptDrops(False)  # a drop on the play button falls through to the key
+        button.clicked.connect(lambda _checked=False: self.run_clicked.emit(self.index))
+        button.long_pressed.connect(lambda: self.long_pressed.emit(self.index))
         button.hide()
-        button.move(self._edit_position())
+        button.move(self._run_position())
         return button
 
-    def _apply_edit_icon(self, button: QToolButton) -> None:
-        """Draw the pencil from the shipped SVG in the palette's text colour; a "✎" glyph if the SVG is unusable."""
-        icon = _edit_icon(self.palette().buttonText().color().name())
+    def _apply_play_icon(self, button: QToolButton) -> None:
+        """Draw the play-circle from the shipped SVG in the palette's text colour; a "▶" glyph if it is unusable."""
+        icon = _play_icon(self.palette().buttonText().color().name())
         if icon is None:
             button.setIcon(QIcon())
-            button.setText("✎")
+            button.setText("▶")
         else:
             button.setText("")
             button.setIcon(icon)
-            button.setIconSize(QSize(_EDIT_ICON_PX, _EDIT_ICON_PX))
+            button.setIconSize(QSize(_RUN_ICON_PX, _RUN_ICON_PX))
 
     def changeEvent(self, e: QEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """Redraw the pencil when the theme's palette changes."""
+        """Redraw the play icon when the theme's palette changes."""
         super().changeEvent(e)
-        if e is not None and e.type() == QEvent.Type.PaletteChange and hasattr(self, "_edit_button"):
-            self._apply_edit_icon(self._edit_button)
+        if e is not None and e.type() == QEvent.Type.PaletteChange and hasattr(self, "_run_button"):
+            self._apply_play_icon(self._run_button)
 
-    def _edit_position(self) -> QPoint:
-        return QPoint(self.width() - _EDIT_SIZE - _EDIT_MARGIN, _EDIT_MARGIN)
+    def _run_position(self) -> QPoint:
+        return QPoint(self.width() - _RUN_SIZE - _RUN_MARGIN, _RUN_MARGIN)
 
     def resizeEvent(self, a0: QResizeEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """Keep the pencil in the top-right corner."""
+        """Keep the play button in the top-right corner."""
         super().resizeEvent(a0)
-        self._edit_button.move(self._edit_position())
+        self._run_button.move(self._run_position())
 
     def enterEvent(self, event: QEnterEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """Show the edit pencil while the pointer is over the key."""
+        """Show the play button while the pointer is over the key."""
         super().enterEvent(event)
-        self._edit_button.show()
-        self._edit_button.raise_()
+        self._run_button.show()
+        self._run_button.raise_()
 
     def keyPressEvent(self, e: QKeyEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """F2 (or the Menu key) edits the key, so keyboard users can reach what the pencil does for the mouse."""
+        """F2 (or the Menu key) selects the key for editing, as clicking it does."""
         if e is not None and e.key() in (Qt.Key.Key_F2, Qt.Key.Key_Menu):
             self.edit_clicked.emit(self.index)
             return
         super().keyPressEvent(e)
 
     def focusInEvent(self, e: QFocusEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """Show the pencil while the key has keyboard focus, so the edit affordance is visible without a pointer."""
+        """Show the play button while the key has keyboard focus, so it is visible without a pointer."""
         super().focusInEvent(e)
-        self._edit_button.show()
+        self._run_button.show()
 
     def focusOutEvent(self, e: QFocusEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """Hide the pencil again unless the pointer is still on the key."""
+        """Hide the play button again unless the pointer is still on the key."""
         super().focusOutEvent(e)
         if not self.underMouse():
-            self._edit_button.hide()
+            self._run_button.hide()
 
     def leaveEvent(self, a0: QEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """Hide the pencil once the pointer is outside the key and its pencil."""
+        """Hide the play button once the pointer is outside the key and its button."""
         super().leaveEvent(a0)
         if not self.underMouse():
-            self._edit_button.hide()
+            self._run_button.hide()
 
     def set_label(self, label: str) -> None:
         """Update the display label (shows label if set, otherwise key number)."""
@@ -162,28 +194,6 @@ class KeyButtonWidget(QPushButton):
         self.setIcon(QIcon(pixmap))
         self.setIconSize(QSize(68, 68))
         self.setText("")
-
-    # ------------------------------------------------------------------
-    # Long-press override
-    # ------------------------------------------------------------------
-
-    def mousePressEvent(self, e: QMouseEvent | None) -> None:
-        self._long_press_active = False
-        self._long_press_timer.start()
-        super().mousePressEvent(e)
-
-    def mouseReleaseEvent(self, e: QMouseEvent | None) -> None:
-        self._long_press_timer.stop()
-        if self._long_press_active:
-            self._long_press_active = False
-            self.setDown(False)
-            self.update()
-            return
-        super().mouseReleaseEvent(e)
-
-    def _on_long_press_fired(self) -> None:
-        self._long_press_active = True
-        self.long_pressed.emit(self.index)
 
     # ------------------------------------------------------------------
     # Drag-and-drop target
@@ -247,7 +257,7 @@ class ButtonGridWidget(QWidget):
             key = self._key_info[index]
             row, col = key.row, key.col
             button = KeyButtonWidget(index, key)
-            button.clicked.connect(lambda _checked=False, i=index: self.key_pressed.emit(i))
+            button.run_clicked.connect(self.key_pressed.emit)
             button.edit_clicked.connect(self.key_edit_requested.emit)
             button.long_pressed.connect(self.key_long_pressed.emit)
             button.action_dropped.connect(self.action_dropped.emit)

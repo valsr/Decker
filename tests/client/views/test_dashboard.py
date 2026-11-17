@@ -457,7 +457,7 @@ class TestKeyInteractions:
         mock_cm.call.assert_called_once_with("key_simulate_long_press", "dev1", 3)
         assert_that(view._selected_key).is_none()  # pylint: disable=protected-access
 
-    def test_grid_pencil_reaches_the_dashboard_and_key_click_presses(  # pylint: disable=unused-argument
+    def test_grid_key_click_selects_and_the_play_button_presses(  # pylint: disable=unused-argument
         self, qapp, tmp_path
     ):
         view = _make_view(tmp_path)
@@ -473,12 +473,12 @@ class TestKeyInteractions:
         view._grid.build(_KEYS_6)  # pylint: disable=protected-access
         button = view._grid._buttons[3]  # pylint: disable=protected-access
 
-        button._edit_button.click()  # pylint: disable=protected-access
+        button.click()
         assert_that(view._selected_key).is_equal_to(3)  # pylint: disable=protected-access
         assert_that([c.args[0] for c in mock_cm.call.call_args_list]).does_not_contain("key_simulate_press")
 
         mock_cm.call.reset_mock()
-        button.click()
+        button._run_button.click()  # pylint: disable=protected-access
         mock_cm.call.assert_called_once_with("key_simulate_press", "dev1", 3)
 
     def test_key_long_pressed_simulates_long_press(self, qapp, tmp_path):  # pylint: disable=unused-argument
