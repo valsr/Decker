@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from decker.client.widgets.schema_form import SchemaForm
+from decker.client.widgets.schema_form import InlineSchemaForm, SchemaForm
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
 from decker.common.text_style import fold_legacy_title
 
@@ -35,7 +35,7 @@ class ActionConfigPanel(QStackedWidget):
         placeholder.setProperty("role", "muted")
         self.addWidget(placeholder)  # page 0
 
-        self._appearance_form = SchemaForm()
+        self._appearance_form = InlineSchemaForm()
         self._settings_form = SchemaForm()
         self.addWidget(self._build_form_page())  # page 1
 

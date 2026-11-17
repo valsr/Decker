@@ -43,7 +43,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
     def test_counter_schema_renders_step_double_step_max(self, qapp):  # pylint: disable=unused-argument
         panel = ActionConfigPanel()
         _show(panel, {"step": 5, "double_step": 10, "max": 20})
-        assert_that(_labels(panel)).contains("Background", "Step:", "Double step:", "Max:", "Counting")
+        assert_that(_labels(panel)).contains("Title:", "Background:", "Step:", "Double step:", "Max:", "Counting")
         assert_that(panel._settings_form.values()).is_equal_to({"step": 5, "double_step": 10, "max": 20})
         assert isinstance(panel._settings_form._fields["step"].widget, QSpinBox)
         assert isinstance(panel._settings_form._fields["double_step"].widget, QLineEdit)
@@ -133,3 +133,26 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         panel._on_save()
 
         assert_that(captured[0][1]).is_empty()
+
+    def test_title_and_background_share_one_row_above_the_settings(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        _show(panel, {"step": 1})
+
+        row = panel._appearance_form
+        title_y = row._fields["title"].widget.mapTo(panel, row._fields["title"].widget.rect().center()).y()
+        bg_y = row._fields["background"].widget.mapTo(panel, row._fields["background"].widget.rect().center()).y()
+        step = panel._settings_form._fields["step"].widget
+        step_y = step.mapTo(panel, step.rect().center()).y()
+
+        assert_that(abs(title_y - bg_y)).is_less_than(8)
+        assert_that(step_y).is_greater_than(title_y)
+
+    def test_background_alpha_survives_save(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        captured: list[tuple[dict, dict]] = []
+        _show(panel, {"step": 1}, save=lambda s, a: captured.append((s, a)))
+        panel._appearance_form._fields["background"].set("#11223380")
+
+        panel._on_save()
+
+        assert_that(captured[0][1]).is_equal_to({"background": "#11223380"})

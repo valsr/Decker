@@ -109,7 +109,7 @@ def _choice_field(entry: dict[str, Any]) -> _Field:
 
 
 def _color_field(entry: dict[str, Any]) -> _Field:
-    button = ColorButton(_DEFAULT_COLOR)
+    button = ColorButton(_DEFAULT_COLOR, alpha=bool(entry.get("alpha")))
     if not entry.get("optional"):
         return _Field(button, lambda: button.color, lambda v: button.set_color(str(v or _DEFAULT_COLOR)))
     check = QCheckBox()
@@ -152,6 +152,18 @@ _BUILDERS: dict[str, Callable[[dict[str, Any]], _Field]] = {
 }
 
 
+def _build_field(entry: dict[str, Any], values: dict[str, Any]) -> _Field | None:
+    """The filled widget for a schema field, or None for an unknown type."""
+    builder = _BUILDERS.get(str(entry.get("type")))
+    if builder is None:
+        return None
+    field = builder(entry)
+    field.set(values.get(entry["key"], entry.get("default")))
+    if entry.get("help"):
+        field.widget.setToolTip(str(entry["help"]))
+    return field
+
+
 class SchemaForm(QWidget):
     """Renders a settings schema as a form and reads the entered values back."""
 
@@ -170,16 +182,44 @@ class SchemaForm(QWidget):
             if "section" in entry:
                 self._layout.addRow(_section(str(entry["section"])))
                 continue
-            builder = _BUILDERS.get(str(entry.get("type")))
-            if builder is None:
+            field = _build_field(entry, values)
+            if field is None:
                 continue
-            field = builder(entry)
-            field.set(values.get(entry["key"], entry.get("default")))
-            if entry.get("help"):
-                field.widget.setToolTip(str(entry["help"]))
             self._fields[entry["key"]] = field
             label = entry.get("label", entry["key"])
             self._layout.addRow(f"{label}:", field.widget)
+
+    def values(self) -> dict[str, Any]:
+        """The values currently entered, keyed by schema key."""
+        return {key: field.get() for key, field in self._fields.items()}
+
+
+class InlineSchemaForm(QWidget):
+    """Renders schema fields side by side in one row as ``Label: [widget]``; sections are ignored."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._row = QHBoxLayout(self)
+        self._row.setContentsMargins(0, 0, 0, 0)
+        self._fields: dict[str, _Field] = {}
+
+    def set_schema(self, schema: list[dict[str, Any]], values: dict[str, Any]) -> None:
+        """Rebuild the row for ``schema``; the text style field takes the spare width."""
+        while self._row.count():
+            item = self._row.takeAt(0)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._fields = {}
+        for entry in schema:
+            field = None if "section" in entry else _build_field(entry, values)
+            if field is None:
+                continue
+            self._fields[entry["key"]] = field
+            label = entry.get("label", entry["key"])
+            self._row.addWidget(QLabel(f"{label}:"))
+            self._row.addWidget(field.widget, 1 if entry.get("type") == "text_style" else 0)
 
     def values(self) -> dict[str, Any]:
         """The values currently entered, keyed by schema key."""

@@ -19,7 +19,7 @@ and stored as `null`), `placeholder`, `help`.
 | `text` | `multiline` | string |
 | `bool` | | boolean |
 | `choice` | `options`: `[{ "label": "...", "value": ... }]` (non-empty) | one of the option values |
-| `color` | | `#rrggbb` |
+| `color` | `alpha` (boolean; when `true` the picker has an opacity slider and `#rrggbbaa` is also valid, alpha last) | `#rrggbb` (or `#rrggbbaa`) |
 | `font` | | font family name |
 | `icon` | | a file path (reserved for the icon library) |
 | `text_style` | | an object, see [Text style](#text-style); `default` may be partial |

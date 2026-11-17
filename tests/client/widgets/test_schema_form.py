@@ -1,9 +1,16 @@
 from typing import Any
 
 from assertpy import assert_that
-from PyQt6.QtWidgets import QCheckBox, QLabel, QLineEdit, QPlainTextEdit, QSpinBox
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QSpinBox,
+)
 
-from decker.client.widgets.schema_form import SchemaForm
+from decker.client.widgets.schema_form import InlineSchemaForm, SchemaForm
 from decker.client.widgets.text_style_edit import TextStyleEdit
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
 
@@ -133,3 +140,64 @@ class TestTextStyleField:  # pylint: disable=protected-access
     def test_row_label(self, qapp):  # pylint: disable=unused-argument
         form = _form([self._ENTRY])
         assert_that([lb.text() for lb in form.findChildren(QLabel)]).contains("Label:")
+
+
+class TestAlphaColorField:  # pylint: disable=protected-access
+    _ENTRY: dict[str, Any] = {"key": "bg", "type": "color", "default": "#000000", "alpha": True}
+
+    def test_rgba_round_trips(self, qapp):  # pylint: disable=unused-argument
+        form = _form([self._ENTRY], {"bg": "#11223380"})
+        assert_that(form.values()["bg"]).is_equal_to("#11223380")
+
+    def test_plain_color_field_ignores_rgba(self, qapp):  # pylint: disable=unused-argument
+        form = _form([{"key": "bg", "type": "color", "default": "#000000"}], {"bg": "#11223380"})
+        assert_that(form.values()["bg"]).is_equal_to("#000000")
+
+
+class TestInlineSchemaForm:  # pylint: disable=protected-access
+    _SCHEMA: list[dict[str, Any]] = [
+        {"section": "Ignored"},
+        {"key": "title", "type": "text_style", "label": "Title"},
+        {"key": "background", "type": "color", "label": "Background", "default": "#000000", "alpha": True},
+    ]
+
+    def test_lays_fields_out_in_one_row_in_schema_order(self, qapp):  # pylint: disable=unused-argument
+        form = InlineSchemaForm()
+        form.set_schema(self._SCHEMA, {})
+
+        layout = form.layout()
+        assert isinstance(layout, QHBoxLayout)
+        texts = [lb.text() for lb in form.findChildren(QLabel)]
+        assert_that(texts).is_equal_to(["Title:", "Background:"])
+        order = [layout.itemAt(i).widget() for i in range(layout.count()) if layout.itemAt(i) is not None]  # type: ignore[union-attr]
+        assert_that(order.index(form._fields["title"].widget)).is_less_than(
+            order.index(form._fields["background"].widget)
+        )
+
+    def test_values_round_trip(self, qapp):  # pylint: disable=unused-argument
+        form = InlineSchemaForm()
+        form.set_schema(self._SCHEMA, {"title": {"text": "Hi"}, "background": "#11223380"})
+
+        values = form.values()
+
+        assert_that(values["title"]["text"]).is_equal_to("Hi")
+        assert_that(values["background"]).is_equal_to("#11223380")
+
+    def test_text_field_takes_the_spare_width(self, qapp):  # pylint: disable=unused-argument
+        form = InlineSchemaForm()
+        form.set_schema(self._SCHEMA, {})
+        layout = form.layout()
+        assert isinstance(layout, QHBoxLayout)
+
+        title_index = layout.indexOf(form._fields["title"].widget)
+        bg_index = layout.indexOf(form._fields["background"].widget)
+
+        assert_that(layout.stretch(title_index)).is_greater_than(layout.stretch(bg_index))
+
+    def test_set_schema_twice_replaces_fields(self, qapp):  # pylint: disable=unused-argument
+        form = InlineSchemaForm()
+        form.set_schema(self._SCHEMA, {})
+        form.set_schema(self._SCHEMA[1:2], {})
+
+        assert_that(list(form.values())).is_equal_to(["title"])
+        assert_that([lb.text() for lb in form.findChildren(QLabel)]).is_equal_to(["Title:"])

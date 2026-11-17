@@ -2,6 +2,7 @@
 
 from assertpy import assert_that
 from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QColorDialog
 
 from decker.client.widgets.color_button import ColorButton
 
@@ -45,3 +46,45 @@ class TestColorButton:
 
         assert_that(emitted).is_empty()
         assert_that(button.color).is_equal_to("#000000")
+
+
+class TestColorButtonAlpha:
+    def test_shows_rgba_name(self, qapp):  # pylint: disable=unused-argument
+        button = ColorButton("#000000", alpha=True)
+
+        button.set_color("#11223380")
+
+        assert_that(button.color).is_equal_to("#11223380")
+        assert_that(button.text()).is_equal_to("#11223380")
+
+    def test_opaque_alpha_colour_is_six_digits(self, qapp):  # pylint: disable=unused-argument
+        assert_that(ColorButton("#112233", alpha=True).color).is_equal_to("#112233")
+
+    def test_pick_keeps_alpha_and_asks_for_alpha_channel(self, qapp, monkeypatch):  # pylint: disable=unused-argument
+        button = ColorButton("#000000", alpha=True)
+        emitted: list[str] = []
+        button.color_changed.connect(emitted.append)
+        seen: dict = {}
+
+        def fake(_initial, _parent, _title, options=None):
+            seen["options"] = options
+            return QColor(17, 34, 51, 128)
+
+        monkeypatch.setattr("decker.client.widgets.color_button.QColorDialog.getColor", fake)
+        button.click()
+
+        assert_that(emitted).is_equal_to(["#11223380"])
+        assert_that(bool(seen["options"] & QColorDialog.ColorDialogOption.ShowAlphaChannel)).is_true()
+
+    def test_opaque_button_rejects_rgba_names(self, qapp):  # pylint: disable=unused-argument
+        button = ColorButton("#112233")
+
+        button.set_color("#11223380")
+
+        assert_that(button.color).is_equal_to("#112233")
+
+    def test_swatch_icon_present_for_transparent_colour(self, qapp):  # pylint: disable=unused-argument
+        button = ColorButton("#00000000", alpha=True)
+
+        assert_that(button.icon().isNull()).is_false()
+        assert_that(button.color).is_equal_to("#00000000")
