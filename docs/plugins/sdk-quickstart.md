@@ -45,7 +45,8 @@ values for this key (return `None` to keep the manifest's list).
 
 Attributes: `context`, `action`, `device`, `key_index`, `column`, `row`, `settings`, `global_settings`, `state`.
 
-Methods: `set_image(data, format="png")`, `clear_image()`, `set_title(title)`, `set_state(n)`, `show_alert()`,
+Methods: `set_image(data, format="png")`, `set_icon(ref, color=None)` (show an icon from an installed icon pack, see
+[protocol](protocol.md#images)), `clear_image()`, `set_title(title)`, `set_state(n)`, `show_alert()`,
 `show_ok()`, `set_settings(dict)`, `set_global_settings(dict)`, `open_url(url)`, `log(message, level="info")`.
 
 The SDK accepts either `global_settings` or `settings` as the key in `global_settings_changed`; the server sends

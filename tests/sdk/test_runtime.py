@@ -272,3 +272,33 @@ def test_stray_fd1_writes_do_not_corrupt_protocol() -> None:
         assert_that(proc.stdout.read()).is_equal_to(b"")
         err = proc.stderr.read()
         assert_that(err).contains(b"junk-from-child").contains(b"junk-from-fd1").contains(b"junk-from-print")
+
+
+def _context(sent: list[tuple[str, str | None, dict[str, Any]]]) -> Any:
+    from decker_plugin_sdk import ActionContext
+
+    return ActionContext(
+        context="c1",
+        action="a",
+        device="d",
+        key_index=0,
+        column=0,
+        row=0,
+        _send=lambda event, context, payload: sent.append((event, context, payload)),
+    )
+
+
+def test_set_icon_emits_set_image_with_icon_and_color() -> None:
+    sent: list[tuple[str, str | None, dict[str, Any]]] = []
+
+    _context(sent).set_icon("pack:p/a.svg", "#ff0000")
+
+    assert_that(sent).is_equal_to([("set_image", "c1", {"icon": "pack:p/a.svg", "color": "#ff0000"})])
+
+
+def test_set_icon_without_color_omits_it() -> None:
+    sent: list[tuple[str, str | None, dict[str, Any]]] = []
+
+    _context(sent).set_icon("pack:p/a.svg")
+
+    assert_that(sent).is_equal_to([("set_image", "c1", {"icon": "pack:p/a.svg"})])

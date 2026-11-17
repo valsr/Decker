@@ -15,6 +15,7 @@ from decker.asset.iconpack import IconPackRegistry
 from decker.asset.renderer import AssetRenderer
 from decker.common import config
 from decker.common.manager import Manager
+from decker.common.text_style import is_color
 from decker.common.version import decker_version
 from decker.plugin.environment import stage_sdk
 from decker.plugin.events import PluginLoadFailedEvent
@@ -123,6 +124,8 @@ class _Live:
     settings: dict[str, Any]
     appearance: dict[str, Any] = field(default_factory=dict)
     plugin_image: bytes | None = None
+    plugin_icon_ref: str | None = None  # resolved at compose time, so an uninstalled pack drops the image
+    plugin_image_color: str | None = None
     plugin_title: str = ""
     state: int = 0
 
@@ -458,10 +461,15 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             spec = live.action
             state = spec.states[live.state] if 0 <= live.state < len(spec.states) else None
             image, plugin_title, stored = live.plugin_image, live.plugin_title, dict(live.appearance)
+            icon_ref, image_color = live.plugin_icon_ref, live.plugin_image_color
+        if icon_ref is not None:
+            image = self.icon_packs.read_ref(icon_ref)
         if image is None and state is not None and state.image:
             image = read_icon(plugin.plugin_dir, state.image) if plugin is not None else None
         title = plugin_title or (state.title if state is not None and state.title else "")
-        return compose_key_image(resolve_appearance(spec.appearance, stored), image, title)
+        return compose_key_image(
+            resolve_appearance(spec.appearance, stored), image, title, plugin_image_color=image_color
+        )
 
     def _notify_state(self, device_id: str, key_index: int) -> None:
         callback = self._state_changed_cb
@@ -585,16 +593,38 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._supervisor.send(plugin_id, Message("device_connected", payload={"device": device_id}))
 
     def _on_set_image(self, live: _Live, payload: dict[str, Any]) -> bool:
+        who = live.target.plugin_uuid
+        if "icon" in payload:
+            if payload.get("image") is not None:
+                logging.warning("[%s] set_image with both image and icon dropped", who)
+                return False
+            return self._set_icon(live, payload)
         image = payload.get("image")
+        live.plugin_icon_ref = live.plugin_image_color = None
         if image is None:
             live.plugin_image = None
             return True
         try:
             data = base64.b64decode(str(image), validate=True)
         except (binascii.Error, ValueError):
-            logging.warning("[%s] set_image with invalid base64 dropped", live.target.plugin_uuid)
+            logging.warning("[%s] set_image with invalid base64 dropped", who)
             return False
         live.plugin_image = data
+        return True
+
+    def _set_icon(self, live: _Live, payload: dict[str, Any]) -> bool:
+        who = live.target.plugin_uuid
+        ref, color = payload.get("icon"), payload.get("color")
+        live.plugin_image = None
+        live.plugin_icon_ref = live.plugin_image_color = None
+        if self.icon_packs.read_ref(ref) is None:
+            logging.warning("[%s] set_image icon %r is not a readable pack icon; image cleared", who, ref)
+            return True
+        live.plugin_icon_ref = ref
+        if color is not None and not is_color(color):
+            logging.warning("[%s] set_image color %r is not #rrggbb[aa]; icon left untinted", who, color)
+        elif color is not None:
+            live.plugin_image_color = color
         return True
 
     def _on_set_settings(self, live: _Live, payload: dict[str, Any]) -> None:

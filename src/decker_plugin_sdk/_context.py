@@ -43,6 +43,13 @@ class ActionContext:
         """Show an image (png, jpeg or svg bytes) on the key."""
         self._emit("set_image", {"image": base64.b64encode(data).decode("ascii"), "format": format})
 
+    def set_icon(self, ref: str, color: str | None = None) -> None:
+        """Show an icon from an installed icon pack (``pack:<pack id>/<path>``); SVGs are filled with ``color``."""
+        payload: dict[str, Any] = {"icon": ref}
+        if color is not None:
+            payload["color"] = color
+        self._emit("set_image", payload)
+
     def clear_image(self) -> None:
         """Remove any plugin-provided image from the key."""
         self._emit("set_image", {"image": None})
