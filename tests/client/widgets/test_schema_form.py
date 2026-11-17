@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 from decker.client.widgets.color_button import ColorButton
 from decker.client.widgets.schema_form import AppearanceForm, SchemaForm
 from decker.client.widgets.text_style_edit import TextStyleEdit
+from decker.common.model import DeviceHardwareInfo
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
 
 
@@ -336,3 +337,75 @@ class TestCompactIcon:  # pylint: disable=protected-access
 
         assert_that(appearance._fields["icon"].widget._compact).is_true()  # type: ignore[attr-defined]
         assert_that(regular._fields["icon"].widget._compact).is_false()  # type: ignore[attr-defined]
+
+
+class TestProfileFields:  # pylint: disable=protected-access
+    def setup_method(self):
+        from decker.client.context import AppContext
+
+        AppContext._instance = None
+        self.calls: list[tuple[Any, ...]] = []
+        outer = self
+
+        class _Rpc:
+            def call(self, method, *args):
+                import json
+
+                outer.calls.append((method, *args))
+                if method == "profiles_list":
+                    profiles = [{"profile_id": 0, "name": "Default"}, {"profile_id": 2, "name": "Work"}]
+                    return json.dumps({"device_id": "dev1", "profiles": profiles, "active_profile_id": 0})
+                pages = [("w1", "Docs")] if args[1:] == (2,) else [("p1", "Home"), ("p2", "More")]
+                return json.dumps({"pages": [{"page_id": i, "name": n} for i, n in pages]})
+
+        context = AppContext.get()
+        context.connection_manager = _Rpc()
+        context.active_device = DeviceHardwareInfo(id="dev1", type="Deck", vendor_id=0, product_id=0, num_keys=6)
+
+    _SCHEMA = [
+        {"key": "who", "type": "profile", "label": "Profile"},
+        {"key": "where", "type": "page", "label": "Page", "profile_field": "who"},
+    ]
+
+    def test_builds_a_profile_edit_and_round_trips(self, qapp):  # pylint: disable=unused-argument
+        from decker.client.widgets.profile_edit import ProfileEdit
+
+        form = _form(self._SCHEMA, {"who": "2", "where": "w1"})
+
+        assert_that(form.findChild(ProfileEdit)).is_not_none()
+        assert_that(form.values()).is_equal_to({"who": "2", "where": "w1"})
+
+    def test_the_page_list_follows_the_stored_profile_on_load(self, qapp):  # pylint: disable=unused-argument
+        from decker.client.widgets.page_edit import PageEdit
+
+        form = _form(self._SCHEMA, {"who": "2", "where": "w1"})
+        page = form.findChild(PageEdit)
+
+        assert_that([page.itemText(i) for i in range(page.count())]).is_equal_to(["(no page)", "Docs"])
+        assert_that(page.value()).is_equal_to("w1")
+
+    def test_changing_the_profile_reloads_and_clears_the_page_and_emits_changed(
+        self, qapp
+    ):  # pylint: disable=unused-argument
+        from decker.client.widgets.page_edit import PageEdit
+        from decker.client.widgets.profile_edit import ProfileEdit
+
+        form = _form(self._SCHEMA, {"who": "", "where": "p2"})
+        seen: list[bool] = []
+        form.changed.connect(lambda: seen.append(True))
+        profile, page = form.findChild(ProfileEdit), form.findChild(PageEdit)
+
+        profile.setCurrentIndex(2)
+        profile.activated.emit(2)
+
+        assert_that(profile.value()).is_equal_to("2")
+        assert_that(page.value()).is_equal_to("")
+        assert_that([page.itemText(i) for i in range(page.count())]).is_equal_to(["(no page)", "Docs"])
+        assert_that(seen).is_not_empty()
+
+    def test_profile_field_may_come_after_the_page_field(self, qapp):  # pylint: disable=unused-argument
+        from decker.client.widgets.page_edit import PageEdit
+
+        form = _form(list(reversed(self._SCHEMA)), {"who": "2", "where": "w1"})
+
+        assert_that(form.findChild(PageEdit).value()).is_equal_to("w1")

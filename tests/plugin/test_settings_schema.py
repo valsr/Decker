@@ -391,3 +391,12 @@ def test_page_profile_field_must_name_a_profile_field() -> None:
 def test_profile_field_only_valid_on_page() -> None:
     with pytest.raises(ValueError, match="profile_field"):
         parse_settings_schema([{"key": "t", "type": "text", "profile_field": "x"}], "here")
+
+
+def test_profile_field_survives_the_round_trip_to_clients() -> None:
+    data = [{"key": "who", "type": "profile"}, {"key": "p", "type": "page", "profile_field": "who"}]
+
+    sent = schema_to_json(parse_settings_schema(data, "here"))
+
+    assert_that(sent[1]["profile_field"]).is_equal_to("who")
+    assert_that(sent[0]["type"]).is_equal_to("profile")

@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from decker.client.widgets.color_button import ColorButton
 from decker.client.widgets.icon_edit import IconEdit
 from decker.client.widgets.page_edit import PageEdit
+from decker.client.widgets.profile_edit import ProfileEdit
 from decker.client.widgets.text_style_edit import TextStyleEdit
 
 _INT_LIMIT = 999_999_999
@@ -147,6 +148,11 @@ def _page_field(_entry: dict[str, Any]) -> _Field:
     return _Field(edit, edit.value, edit.set_value)
 
 
+def _profile_field(_entry: dict[str, Any]) -> _Field:
+    edit = ProfileEdit()
+    return _Field(edit, edit.value, edit.set_value)
+
+
 def _text_style_field(_entry: dict[str, Any]) -> _Field:
     edit = TextStyleEdit()
     return _Field(edit, edit.value, edit.set_value)
@@ -162,6 +168,7 @@ _BUILDERS: dict[str, Callable[[dict[str, Any]], _Field]] = {
     "font": _font_field,
     "icon": _icon_field,
     "page": _page_field,
+    "profile": _profile_field,
     "text_style": _text_style_field,
 }
 
@@ -180,7 +187,7 @@ def _build_field(entry: dict[str, Any], values: dict[str, Any]) -> _Field | None
 
 def _watch(widget: QWidget, slot: Callable[[], None]) -> None:
     """Call ``slot`` once per user edit of ``widget``; controls inside a composite or spin box are not watched twice."""
-    if isinstance(widget, (IconEdit, PageEdit, TextStyleEdit)):
+    if isinstance(widget, (IconEdit, PageEdit, ProfileEdit, TextStyleEdit)):
         widget.value_changed.connect(slot)
     elif isinstance(widget, ColorButton):
         widget.color_changed.connect(lambda _color: slot())
@@ -227,6 +234,21 @@ class SchemaForm(QWidget):
             _watch(field.widget, self.changed.emit)
             label = entry.get("label", entry["key"])
             self._layout.addRow(f"{label}:", field.widget)
+        self._link_profile_fields(schema)
+
+    def _link_profile_fields(self, schema: list[dict[str, Any]]) -> None:
+        """Make each page field list the pages of the profile chosen in its ``profile_field``."""
+        for entry in schema:
+            profile = self._fields.get(str(entry.get("profile_field", "")))
+            page = self._fields.get(str(entry.get("key"))) if profile is not None else None
+            if profile is None or page is None:
+                continue
+            profile_edit, page_edit = profile.widget, page.widget
+            if isinstance(profile_edit, ProfileEdit) and isinstance(page_edit, PageEdit):
+                page_edit.set_profile(profile_edit.value())
+                profile_edit.value_changed.connect(
+                    lambda pe=profile_edit, ge=page_edit: ge.set_profile(pe.value(), clear_missing=True)
+                )
 
     def values(self) -> dict[str, Any]:
         """The values currently entered, keyed by schema key."""

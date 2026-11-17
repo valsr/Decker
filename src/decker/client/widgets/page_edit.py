@@ -40,6 +40,7 @@ class PageEdit(QComboBox):
         self._device_id = device_id or _app_device_id
         self._rpc = rpc or _app_rpc
         self._value = ""
+        self._profile = ""  # a profile id as text; blank lists the pages of the current profile
         self._pages: list[tuple[str, str]] = []
         self.activated.connect(self._on_activated)
         self.reload()
@@ -53,6 +54,19 @@ class PageEdit(QComboBox):
         self._value = value if isinstance(value, str) else ""
         self._rebuild()
 
+    def set_profile(self, profile: Any, clear_missing: bool = False) -> None:
+        """List the pages of this profile id (blank or invalid: the current profile) instead.
+
+        With ``clear_missing`` (the user changed the profile) a chosen page that is not in the new list is dropped
+        and ``value_changed`` is emitted; otherwise the stored page stays and shows as deleted if it is not listed.
+        """
+        self._profile = profile if isinstance(profile, str) and profile.isascii() and profile.isdigit() else ""
+        self.reload()
+        if clear_missing and self._value and self._value not in {page_id for page_id, _name in self._pages}:
+            self._value = ""
+            self._rebuild()
+            self.value_changed.emit()
+
     def reload(self) -> None:
         """Re-read the device's pages from the server."""
         self._pages = self._fetch_pages()
@@ -63,7 +77,8 @@ class PageEdit(QComboBox):
         if not device_id or rpc is None:
             return []
         try:
-            data = json.loads(rpc.call("pages_list", device_id) or "null")
+            extra = (int(self._profile),) if self._profile else ()
+            data = json.loads(rpc.call("pages_list", device_id, *extra) or "null")
             return [(str(p["page_id"]), str(p["name"])) for p in data["pages"]]
         except Exception as exc:  # pylint: disable=broad-except
             logging.warning("Could not list pages for %s: %s", device_id, exc)
