@@ -3,6 +3,7 @@
 import functools
 import io
 import logging
+import re
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from decker.plugin.settings_schema import apply_schema, parse_settings_schema
 _BASE_SIZE = 72  # title sizes in settings are relative to a 72 px key
 _FALLBACK_FONT = "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
 _TITLE_MARGIN = 4
+_LINE_BREAKS = re.compile(r"\s*[\r\n\v\f\x85\u2028\u2029]+\s*")
 _BOLD_WEIGHT = 180  # fontconfig weight at or above which a face counts as really bold (FC_WEIGHT_BOLD is 200)
 _PARSED_SCHEMA = parse_settings_schema(APPEARANCE_SCHEMA, "appearance")
 _RENDERER = AssetRenderer()
@@ -139,6 +141,11 @@ def _draw_title(draw: ImageDraw.ImageDraw, text: str, style: Mapping[str, Any], 
         draw.rectangle(rect, fill=title.color)
 
 
+def _single_line(text: str) -> str:
+    """Titles are one line (Pillow can't anchor multi-line text at the top or bottom): breaks become one space."""
+    return _LINE_BREAKS.sub(" ", text)
+
+
 def compose_key_image(
     appearance: Mapping[str, Any], plugin_image: bytes | None, plugin_title: str, size: int = 144
 ) -> bytes:
@@ -154,8 +161,8 @@ def compose_key_image(
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logging.debug("skipping unreadable plugin image: %s", exc)
     style = appearance["title"]
-    text = style["text"] or plugin_title
-    if style["visible"] and text:
+    text = _single_line(style["text"] or plugin_title)
+    if style["visible"] and text.strip():
         layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         _draw_title(ImageDraw.Draw(layer), text, style, size)
         img.alpha_composite(layer)

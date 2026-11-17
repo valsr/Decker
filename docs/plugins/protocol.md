@@ -46,7 +46,7 @@ discarded.
 | `ready` | | none |
 | `pong` | | none |
 | `set_image` | yes | `{"image": "<base64>", "format": "png"}` (`png`, `jpeg` or `svg`), or `{"image": null}` to clear |
-| `set_title` | yes | `{"title": "text"}`, shown only when the user set no title |
+| `set_title` | yes | `{"title": "text"}`, shown only when the user set no title; titles are one line, so line breaks are drawn as a single space |
 | `set_state` | yes | `{"state": 1}`, an index into the action's `states` |
 | `show_alert`, `show_ok` | yes | none (accepted, no visible effect in v1) |
 | `set_settings` | yes | `{"settings": {...}}`, validated against the action's schema and saved |
