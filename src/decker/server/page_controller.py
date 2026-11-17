@@ -6,21 +6,23 @@ import threading
 from typing import TYPE_CHECKING
 
 from decker.common.manager import Manager
-from decker.common.model import DevicePages, PageInfo
+from decker.common.model import DevicePages, DeviceProfiles, PageInfo, ProfileInfo
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
 
 PAGES_CHANGED_EVENT = "pages_changed"
+PROFILES_CHANGED_EVENT = "profiles_changed"
 
 
 class PageController(Manager):
-    """Tracks which page each device shows and performs page lifecycle changes.
+    """Tracks which page and profile each device shows and performs page and profile lifecycle changes.
 
     Only the active page's actions are live: switching pages deactivates the old page's actions,
     redraws the hardware from the new page's cached images, then activates the new page's actions.
-    Every change pushes a pages_changed event so clients refresh. Active pages are held in memory;
-    each device starts on its default page.
+    Every change pushes a pages_changed event so clients refresh (profile changes also push profiles_changed). Active
+    pages are held in memory and always belong to the device's active profile, which the page store persists; each
+    device starts on its active profile's default page.
     """
 
     def __init__(self) -> None:
@@ -49,17 +51,21 @@ class PageController(Manager):
         locks, so taking the controller lock here would invert the lock order against page switches.
         """
         recorded = self._active.get(device_id)
-        if recorded is not None and self._ctx.page_store.get(device_id, recorded) is not None:
+        if recorded is not None and self._in_active_profile(device_id, recorded):
             return recorded
         with self._lock:
             page_id = self._active.get(device_id)
-            if page_id is None or self._ctx.page_store.get(device_id, page_id) is None:
+            if page_id is None or not self._in_active_profile(device_id, page_id):
                 page_id = self._ctx.page_store.default_page_id(device_id)
                 self._active[device_id] = page_id
             return page_id
 
+    def active_profile_id(self, device_id: str) -> int:
+        """The profile shown on the device."""
+        return self._ctx.page_store.active_profile_id(device_id)
+
     def device_pages(self, device_id: str) -> DevicePages:
-        """Return the device's pages, default page and active page."""
+        """Return the pages of the device's active profile, its default page and the active page."""
         with self._lock:
             store = self._ctx.page_store
             return DevicePages(
@@ -67,6 +73,17 @@ class PageController(Manager):
                 pages=store.list_pages(device_id),
                 default_page_id=store.default_page_id(device_id),
                 active_page_id=self.active_page_id(device_id),
+                profile_id=store.active_profile_id(device_id),
+            )
+
+    def device_profiles(self, device_id: str) -> DeviceProfiles:
+        """Return the device's profiles in dropdown order and its active profile."""
+        with self._lock:
+            store = self._ctx.page_store
+            return DeviceProfiles(
+                device_id=device_id,
+                profiles=store.list_profiles(device_id),
+                active_profile_id=store.active_profile_id(device_id),
             )
 
     def restore(self, device_id: str) -> None:
@@ -75,17 +92,80 @@ class PageController(Manager):
             self._show(device_id, self.active_page_id(device_id))
 
     def activate(self, device_id: str, page_id: str) -> bool:
-        """Switch the device to page_id. Returns False for an unknown page."""
+        """Switch the device to page_id, changing profile first if the page is in another one."""
         with self._lock:
-            if self._ctx.page_store.get(device_id, page_id) is None:
+            profile_id = self._ctx.page_store.profile_of_page(device_id, page_id)
+            if profile_id is None:
                 return False
-            current = self.active_page_id(device_id)
-            if current != page_id:
-                self._hide(device_id, current)
-                self._active[device_id] = page_id
-                self._show(device_id, page_id)
-        self._notify(device_id)
+            changed_profile = self._switch(device_id, page_id, profile_id)
+        self._notify(device_id, profiles=changed_profile)
         return True
+
+    def activate_profile(self, device_id: str, profile_id: int) -> bool:
+        """Switch the device to a profile's default page. Returns False for an unknown profile."""
+        with self._lock:
+            store = self._ctx.page_store
+            if store.get_profile(device_id, profile_id) is None:
+                return False
+            if store.active_profile_id(device_id) == profile_id:
+                return True
+            self._switch(device_id, store.default_page_id(device_id, profile_id), profile_id)
+        self._notify(device_id, profiles=True)
+        return True
+
+    def add_profile(self, device_id: str, name: str | None = None) -> ProfileInfo:
+        """Append a new profile with one page; it does not become active."""
+        profile = self._ctx.page_store.add_profile(device_id, name)
+        self._notify(device_id, profiles=True)
+        return profile
+
+    def rename_profile(self, device_id: str, profile_id: int, name: str) -> bool:
+        """Rename a profile. Returns False for an unknown profile or a blank name."""
+        renamed = self._ctx.page_store.rename_profile(device_id, profile_id, name)
+        if renamed:
+            self._notify(device_id, profiles=True)
+        return renamed
+
+    def set_profile_icon(self, device_id: str, profile_id: int, icon: str) -> bool:
+        """Set a profile's icon ref ("" = the Decker icon). Returns False for an unknown profile."""
+        updated = self._ctx.page_store.set_profile_icon(device_id, profile_id, icon)
+        if updated:
+            self._notify(device_id, profiles=True)
+        return updated
+
+    def delete_profile(self, device_id: str, profile_id: int) -> bool:
+        """Delete a profile with its pages, keys and cached state. Refuses the last profile.
+
+        Deleting the active profile first switches the device to the next profile (or the previous one if it
+        was the last).
+        """
+        with self._lock:
+            store = self._ctx.page_store
+            ids = [profile.profile_id for profile in store.list_profiles(device_id)]
+            if profile_id not in ids or len(ids) == 1:
+                return False
+            if store.active_profile_id(device_id) == profile_id:
+                position = ids.index(profile_id)
+                neighbour = ids[position + 1] if position + 1 < len(ids) else ids[position - 1]
+                self._switch(device_id, store.default_page_id(device_id, neighbour), neighbour)
+            for page_id in store.delete_profile(device_id, profile_id):
+                self._ctx.key_assignment_store.delete_page(device_id, page_id)
+                self._ctx.device_state_store.delete_page_state(device_id, page_id)
+        self._notify(device_id, profiles=True)
+        return True
+
+    def clone_profile(self, device_id: str, profile_id: int) -> ProfileInfo | None:
+        """Copy a profile with its pages and keys (new action instances); the copy does not become active."""
+        with self._lock:
+            cloned = self._ctx.page_store.clone_profile(device_id, profile_id)
+            if cloned is None:
+                return None
+            clone, mapping = cloned
+            for source, target in mapping.items():
+                self._ctx.key_assignment_store.copy_page(device_id, source, target)
+                self._ctx.device_state_store.copy_page_state(device_id, source, target)
+        self._notify(device_id, profiles=True)
+        return clone
 
     def add_page(self, device_id: str, name: str | None = None) -> PageInfo:
         """Append a new empty page; it does not become active."""
@@ -114,8 +194,11 @@ class PageController(Manager):
         if it was the last).
         """
         with self._lock:
-            ids = [page.page_id for page in self._ctx.page_store.list_pages(device_id)]
-            if page_id not in ids or len(ids) == 1:
+            profile_id = self._ctx.page_store.profile_of_page(device_id, page_id)
+            if profile_id is None:
+                return False
+            ids = [page.page_id for page in self._ctx.page_store.list_pages(device_id, profile_id)]
+            if len(ids) == 1:
                 return False
             if self.active_page_id(device_id) == page_id:
                 position = ids.index(page_id)
@@ -128,6 +211,23 @@ class PageController(Manager):
             self._ctx.page_store.delete_page(device_id, page_id)
         self._notify(device_id)
         return True
+
+    def _in_active_profile(self, device_id: str, page_id: str) -> bool:
+        store = self._ctx.page_store
+        return store.profile_of_page(device_id, page_id) == store.active_profile_id(device_id)
+
+    def _switch(self, device_id: str, page_id: str, profile_id: int) -> bool:
+        """Show page_id (of profile_id) on the device; returns whether the profile changed. Caller holds the lock."""
+        store = self._ctx.page_store
+        current = self.active_page_id(device_id)
+        changed_profile = store.active_profile_id(device_id) != profile_id
+        if current != page_id:
+            self._hide(device_id, current)
+            if changed_profile:
+                store.set_active_profile(device_id, profile_id)
+            self._active[device_id] = page_id
+            self._show(device_id, page_id)
+        return changed_profile
 
     def _hide(self, device_id: str, page_id: str) -> None:
         plugins = self._ctx.plugin_manager
@@ -143,6 +243,9 @@ class PageController(Manager):
             plugins.store_settings(target, assignment.settings)
             plugins.activate_action(target, assignment.appearance)
 
-    def _notify(self, device_id: str) -> None:
-        self._ctx.event_bus.push(PAGES_CHANGED_EVENT, json.dumps({"device_id": device_id}))
+    def _notify(self, device_id: str, profiles: bool = False) -> None:
+        payload = json.dumps({"device_id": device_id})
+        self._ctx.event_bus.push(PAGES_CHANGED_EVENT, payload)
+        if profiles:
+            self._ctx.event_bus.push(PROFILES_CHANGED_EVENT, payload)
         self._ctx.plugin_manager.refresh_page_dependent(device_id)
