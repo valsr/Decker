@@ -285,3 +285,80 @@ class TestDefaults:
 
         assert_that(icon_cache()).is_same_as(icon_cache())
         assert_that(icon_cache()).is_instance_of(IconThumbnailCache)
+
+
+class TestPruningNeverFollowsSymlinks:
+    """Pruning deletes cache directories; it must never delete anything a symlink points to."""
+
+    def test_a_symlinked_kept_pack_directory_is_not_descended_into(self, tmp_path, qapp):
+        elsewhere = tmp_path / "elsewhere"
+        (elsewhere / "precious").mkdir(parents=True)
+        (elsewhere / "precious" / "file.txt").write_text("keep me")
+        root = tmp_path / "cache"
+        root.mkdir()
+        (root / _PACK).symlink_to(elsewhere, target_is_directory=True)
+        cache = IconThumbnailCache(root)
+
+        cache.update_packs(_packs(version="1"))
+
+        assert_that((elsewhere / "precious" / "file.txt").read_text()).is_equal_to("keep me")
+        assert_that((root / _PACK).is_symlink()).is_true()
+
+    def test_a_symlinked_pack_that_was_uninstalled_loses_the_link_not_the_target(self, tmp_path, qapp):
+        elsewhere = tmp_path / "elsewhere"
+        (elsewhere / "precious").mkdir(parents=True)
+        root = tmp_path / "cache"
+        root.mkdir()
+        (root / "com.gone.pack").symlink_to(elsewhere, target_is_directory=True)
+        cache = IconThumbnailCache(root)
+
+        cache.update_packs(_packs())
+
+        assert_that((root / "com.gone.pack").exists()).is_false()
+        assert_that((root / "com.gone.pack").is_symlink()).is_false()
+        assert_that((elsewhere / "precious").is_dir()).is_true()
+
+    def test_a_symlinked_old_version_directory_loses_the_link_not_the_target(self, tmp_path, qapp):
+        elsewhere = tmp_path / "elsewhere"
+        (elsewhere / "precious").mkdir(parents=True)
+        root = tmp_path / "cache"
+        (root / _PACK).mkdir(parents=True)
+        (root / _PACK / "0.9.0").symlink_to(elsewhere, target_is_directory=True)
+        cache = IconThumbnailCache(root)
+
+        cache.update_packs(_packs(version="1.0.0"))
+
+        assert_that((root / _PACK / "0.9.0").is_symlink()).is_false()
+        assert_that((elsewhere / "precious").is_dir()).is_true()
+
+    def test_one_bad_entry_does_not_stop_the_rest_of_the_prune(self, tmp_path, qapp):
+        root = tmp_path / "cache"
+        root.mkdir()
+        (root / "a-stray-file").write_text("not ours")
+        (root / "com.gone.one").mkdir()
+        (root / "zz-link").symlink_to(tmp_path, target_is_directory=True)
+        (root / "com.gone.two").mkdir()
+        cache = IconThumbnailCache(root)
+
+        cache.update_packs(_packs())
+
+        assert_that((root / "com.gone.one").exists()).is_false()
+        assert_that((root / "com.gone.two").exists()).is_false()
+        assert_that((root / "a-stray-file").read_text()).is_equal_to("not ours")  # files are not ours to delete
+
+    def test_a_directory_that_cannot_be_removed_does_not_stop_the_others(self, tmp_path, qapp, monkeypatch):
+        root = tmp_path / "cache"
+        root.mkdir()
+        (root / "com.gone.one").mkdir()
+        (root / "com.gone.two").mkdir()
+        real = shutil.rmtree
+
+        def flaky(path, *args, **kwargs):
+            if Path(path).name == "com.gone.one":
+                raise OSError("busy")
+            real(path, *args, **kwargs)
+
+        monkeypatch.setattr(shutil, "rmtree", flaky)
+        IconThumbnailCache(root).update_packs(_packs())
+
+        assert_that((root / "com.gone.two").exists()).is_false()

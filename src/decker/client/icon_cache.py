@@ -137,15 +137,22 @@ class IconThumbnailCache:
         keep_packs = {_slug(pack_id) for pack_id in listed}
         keep_versions = {_slug(pack_id): _slug(version) for pack_id, version in versions.items()}
         try:
-            if not root.is_dir():
-                return
-            for pack_dir in root.iterdir():
-                if pack_dir.name not in keep_packs:
-                    shutil.rmtree(pack_dir, ignore_errors=False)
-                elif pack_dir.name in keep_versions:
-                    for version_dir in pack_dir.iterdir():
-                        if version_dir.name != keep_versions[pack_dir.name]:
-                            shutil.rmtree(version_dir, ignore_errors=False)
+            entries = list(root.iterdir()) if root.is_dir() else []
+        except OSError as exc:
+            self._note("prune", exc)
+            return
+        for entry in entries:
+            self._prune_pack(entry, keep_packs, keep_versions)
+
+    def _prune_pack(self, pack_dir: Path, keep_packs: set[str], keep_versions: dict[str, str]) -> None:
+        """Delete what an uninstall or update made stale below one pack directory; a failure stops only this pack."""
+        try:
+            if pack_dir.name not in keep_packs:
+                _remove(pack_dir)
+            elif pack_dir.name in keep_versions and not pack_dir.is_symlink() and pack_dir.is_dir():
+                for version_dir in list(pack_dir.iterdir()):
+                    if version_dir.name != keep_versions[pack_dir.name]:
+                        _remove(version_dir)
         except OSError as exc:
             self._note("prune", exc)
 
@@ -153,6 +160,14 @@ class IconThumbnailCache:
         if not self._warned:  # once, not once per icon: a broken cache directory would otherwise spam the log
             self._warned = True
             logger.debug("icon cache %s failed (further failures are not logged): %s", what, exc)
+
+
+def _remove(path: Path) -> None:
+    """Delete a cache directory, or just the link if it is a symlink (never follow it); anything else is not ours."""
+    if path.is_symlink():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
 
 
 _INSTANCE: IconThumbnailCache | None = None
