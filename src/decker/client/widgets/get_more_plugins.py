@@ -361,8 +361,16 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         self._status.setText(
             f"Installed {event.plugin_id} {event.version}." if event.ok else f"Install failed: {event.message}"
         )
+        if event.ok:
+            self._mark_installed(event.plugin_id, event.version)
         self._apply_filter()
         self._run(lambda m: to_plain(m.call("repository_catalog")), self._show_catalog_keep_status)
+
+    def _mark_installed(self, plugin_id: str | None, version: str | None) -> None:
+        # Until the server's fresh catalog arrives the rows would still offer "Install" for what was just installed.
+        for plugin in self._catalog:
+            if str(plugin["id"]) == plugin_id:
+                plugin["installed_version"] = version
 
     def _on_disconnected(self, _event: ServerDisconnectedEvent) -> None:
         if self._installing is None:
