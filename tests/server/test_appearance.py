@@ -219,3 +219,95 @@ def test_outline_alpha_blends_with_background() -> None:
     half = _open(compose_key_image(_appearance(title={**style, "outline": "#ff000080"}), None, ""))
     assert_that(_brightest(solid)).is_equal_to(255)
     assert_that(_brightest(half)).is_between(100, 160)
+
+
+_STYLE: dict[str, Any] = {"text": "WWWW", "position": "middle", "size": 24}
+
+
+def _styled(**overrides: Any) -> Image.Image:
+    return _open(compose_key_image(_appearance(title={**_STYLE, **overrides}), None, ""))
+
+
+def _lit(img: Image.Image) -> int:
+    return sum(1 for x in range(144) for y in range(144) if img.getpixel((x, y)) != (0, 0, 0))
+
+
+def _ink_bounds(img: Image.Image) -> tuple[int, int, int, int]:
+    box = img.getbbox()
+    assert box is not None
+    return box
+
+
+def _long_run_rows(img: Image.Image, min_run: int, color: tuple[int, int, int] = (255, 255, 255)) -> list[int]:
+    rows = []
+    for y in range(144):
+        run = best = 0
+        for x in range(144):
+            run = run + 1 if img.getpixel((x, y)) == color else 0
+            best = max(best, run)
+        if best >= min_run:
+            rows.append(y)
+    return rows
+
+
+def test_bold_differs_from_regular() -> None:
+    regular, bold = _styled(), _styled(bold=True)
+    assert_that(bold.tobytes()).is_not_equal_to(regular.tobytes())
+    assert_that(_lit(bold)).is_greater_than(_lit(regular))
+
+
+def test_italic_differs_from_regular() -> None:
+    assert_that(_styled(italic=True).tobytes()).is_not_equal_to(_styled().tobytes())
+
+
+def test_underline_adds_a_horizontal_run() -> None:
+    left, _, right, _ = _ink_bounds(_styled())
+    width = right - left
+    assert_that(_long_run_rows(_styled(), int(width * 0.9))).is_empty()
+    assert_that(_long_run_rows(_styled(underline=True), int(width * 0.9))).is_not_empty()
+
+
+def test_strike_row_is_through_the_text_middle() -> None:
+    plain = _styled()
+    left, top, right, bottom = _ink_bounds(plain)
+    rows = _long_run_rows(_styled(strike=True), int((right - left) * 0.9))
+    assert_that(rows).is_not_empty()
+    assert_that(rows[0]).is_greater_than(top)
+    assert_that(rows[-1]).is_less_than(bottom)
+
+
+def test_underline_sits_below_strike() -> None:
+    width = _ink_bounds(_styled())[2] - _ink_bounds(_styled())[0]
+    under = _long_run_rows(_styled(underline=True), int(width * 0.9))
+    strike = _long_run_rows(_styled(strike=True), int(width * 0.9))
+    assert_that(min(under)).is_greater_than(max(strike))
+
+
+def test_underline_outlined_only_when_outline_set() -> None:
+    width = _ink_bounds(_styled())[2] - _ink_bounds(_styled())[0]
+    styled = _styled(underline=True, outline="#ff0000", outline_width=2)
+    rows = _long_run_rows(styled, int(width * 0.9))
+    assert_that(rows).is_not_empty()
+    above, below = styled.getpixel((72, rows[0] - 1)), styled.getpixel((72, rows[-1] + 1))
+    assert_that(above[0] > 200 and above[1] < 50).is_true()
+    assert_that(below[0] > 200 and below[1] < 50).is_true()
+    plain = _styled(underline=True)
+    assert_that(any(p[0] > 200 and p[1] < 50 for p in (plain.getpixel((72, y)) for y in range(144)))).is_false()
+
+
+def test_outline_none_ignores_outline_width() -> None:
+    assert_that(_styled(outline_width=1).tobytes()).is_equal_to(_styled(outline_width=5).tobytes())
+
+
+def test_fake_bold_when_family_has_no_bold_face(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "decker.server.appearance._font_file", lambda *_a, **_k: ("/usr/share/fonts/TTF/DejaVuSans.ttf", False)
+    )
+    regular, bold = _styled(), _styled(bold=True)
+    assert_that(bold.tobytes()).is_not_equal_to(regular.tobytes())
+    assert_that(_lit(bold)).is_greater_than(_lit(regular))
+
+
+def test_all_styles_together_do_not_crash() -> None:
+    img = _styled(bold=True, italic=True, underline=True, strike=True, outline="#ff000080", outline_width=3)
+    assert_that(img.size).is_equal_to((144, 144))
