@@ -1,6 +1,7 @@
 """Icon picker: choose a local file or browse the icon packs installed on the server."""
 
 import json
+import logging
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -32,6 +33,7 @@ from PyQt6.QtWidgets import (
 
 from decker.asset.paths import ensure_asset_dirs, user_icons_dir
 from decker.client.action_icons import decode_icon, placeholder_pixmap
+from decker.client.icon_cache import IconThumbnailCache, icon_cache
 
 _IMAGE_FILE_FILTER = "Images (*.svg *.png *.jpg *.jpeg *.gif *.webp)"
 _THUMB_SIZE = 64
@@ -117,12 +119,19 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
 
     icon_chosen = pyqtSignal(str, str)
 
-    def __init__(self, parent: QWidget | None, connection_manager: "RpcCaller | None", tint: str | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None,
+        connection_manager: "RpcCaller | None",
+        tint: str | None = None,
+        cache: IconThumbnailCache | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Choose icon")
         self.resize(820, 520)
         self._cm = connection_manager
         self._tint = tint or self.palette().text().color().name()
+        self._cache = cache if cache is not None else icon_cache()
         self._packs: list[dict[str, Any]] = []
         self._names: dict[str, list[str]] = {}
         self._pixmaps: dict[tuple[str, str], QPixmap] = {}
@@ -192,6 +201,10 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
             self._status.setText("No icon packs are installed on the server.")
             return
         self._packs = [p for p in packs if isinstance(p, dict) and "id" in p]
+        try:
+            self._cache.update_packs(self._packs)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logging.warning("Icon thumbnail cache could not be updated", exc_info=True)
         everything = QTreeWidgetItem(["All icons"])
         everything.setData(0, _DATA_ROLE, ("all", ""))
         self._tree.addTopLevelItem(everything)
@@ -250,11 +263,28 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
         cached = self._pixmaps.get(key)
         if cached is not None:
             return cached
+        stored = self._cache_get(pack_id, name)
+        if stored is not None:
+            self._pixmaps[key] = stored
+            return stored
         if key not in self._queued:
             self._queued.add(key)
             self._pending.append(key)
             self._schedule_next_load()
         return self._blank
+
+    def _cache_get(self, pack_id: str, name: str) -> QPixmap | None:
+        try:
+            return self._cache.get(pack_id, name, _THUMB_SIZE, self._tint)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logging.warning("Icon thumbnail cache lookup failed", exc_info=True)
+            return None
+
+    def _cache_put(self, pack_id: str, name: str, pixmap: QPixmap) -> None:
+        try:
+            self._cache.put(pack_id, name, _THUMB_SIZE, self._tint, pixmap)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logging.warning("Icon thumbnail cache store failed", exc_info=True)
 
     def _cancel_pending(self) -> None:
         self._pending.clear()
@@ -274,16 +304,17 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
         self._queued.discard(key)
         raw = self._cm.call("iconpack_icon", *key)
         pixmap = decode_icon(raw, self._tint) if isinstance(raw, str) else None
-        self._pixmaps[key] = (
-            pixmap.scaled(
+        if pixmap is None:
+            self._pixmaps[key] = placeholder_pixmap(key[1], _THUMB_SIZE)  # a letter tile, never cached
+        else:
+            thumb = pixmap.scaled(
                 _THUMB_SIZE,
                 _THUMB_SIZE,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            if pixmap is not None
-            else placeholder_pixmap(key[1], _THUMB_SIZE)
-        )
+            self._pixmaps[key] = thumb
+            self._cache_put(key[0], key[1], thumb)
         self._model.refresh(key)
         self._schedule_next_load()
 

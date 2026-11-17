@@ -6,6 +6,7 @@ from pathlib import Path
 from assertpy import assert_that
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 
+from decker.client.icon_cache import IconThumbnailCache
 from decker.client.icon_picker import (
     IconBrowserDialog,
     IconPickerWidget,
@@ -86,9 +87,30 @@ _CURRENT = (
 )
 
 _PACKS = [
-    {"id": "com.x.p1", "name": "Pack A", "description": "", "plugin_id": "com.x", "plugin_name": "X Plugin"},
-    {"id": "com.x.p2", "name": "Pack B", "description": "", "plugin_id": "com.x", "plugin_name": "X Plugin"},
-    {"id": "com.y.p", "name": "Pack C", "description": "", "plugin_id": "com.y", "plugin_name": "Y Plugin"},
+    {
+        "id": "com.x.p1",
+        "plugin_version": "1.0.0",
+        "name": "Pack A",
+        "description": "",
+        "plugin_id": "com.x",
+        "plugin_name": "X Plugin",
+    },
+    {
+        "id": "com.x.p2",
+        "plugin_version": "1.0.0",
+        "name": "Pack B",
+        "description": "",
+        "plugin_id": "com.x",
+        "plugin_name": "X Plugin",
+    },
+    {
+        "id": "com.y.p",
+        "plugin_version": "1.0.0",
+        "name": "Pack C",
+        "description": "",
+        "plugin_id": "com.y",
+        "plugin_name": "Y Plugin",
+    },
 ]
 _ICONS = {
     "com.x.p1": ["a.svg", "b.svg"],
@@ -447,3 +469,127 @@ class TestIconBrowserTooltips:
         assert_that(tips[0]).is_equal_to("Pack A: a.svg")
         assert_that(tips[2]).is_equal_to("Pack B: house.svg")
         assert_that(tips[4]).is_equal_to("Pack C: Star.svg")
+
+
+def _red(pixmap) -> bool:
+    image = pixmap.toImage()
+    colour = image.pixelColor(image.width() // 2, image.height() // 2)
+    return colour.alpha() > 0 and colour.red() > 200 and colour.green() < 60
+
+
+def _versioned(version: str):
+    return [{**pack, "plugin_version": version} for pack in _PACKS]
+
+
+class TestIconBrowserCache:
+    def _dialog(self, root, cm=None, **kwargs):
+        return IconBrowserDialog(None, cm or _manager(), cache=IconThumbnailCache(root), **kwargs)
+
+    def test_second_dialog_shows_cached_thumbnails_without_any_icon_rpc(self, qapp, tmp_path):
+        first = self._dialog(tmp_path / "c")
+        _request(first, 0)
+        _request(first, 1)
+        _drain(qapp)
+        cm = _manager()
+
+        second = self._dialog(tmp_path / "c", cm)
+        thumb = _request(second, 0)
+        _drain(qapp)
+
+        assert_that(_red(thumb)).described_as("served from the cache at once").is_true()
+        assert_that(cm.icon_calls()).is_empty()
+
+    def test_cache_hit_survives_a_new_process(self, qapp, tmp_path):
+        first = self._dialog(tmp_path / "c")
+        _request(first, 0)
+        _drain(qapp)
+        cm = _manager()
+
+        fresh = IconBrowserDialog(None, cm, cache=IconThumbnailCache(tmp_path / "c"))
+        _request(fresh, 0)
+        _drain(qapp)
+
+        assert_that(cm.icon_calls()).is_empty()
+
+    def test_plugin_update_refetches_and_replaces_the_cache(self, qapp, tmp_path):
+        first = self._dialog(tmp_path / "c")
+        _request(first, 0)
+        _drain(qapp)
+        assert_that((tmp_path / "c" / "com.x.p1" / "1.0.0").is_dir()).is_true()
+        cm = FakeConnectionManager(_versioned("2.0.0"), _ICONS)
+
+        updated = IconBrowserDialog(None, cm, cache=IconThumbnailCache(tmp_path / "c"))
+        _request(updated, 0)
+        _drain(qapp)
+
+        assert_that(cm.icon_calls()).is_not_empty()
+        assert_that((tmp_path / "c" / "com.x.p1" / "1.0.0").exists()).is_false()
+        assert_that((tmp_path / "c" / "com.x.p1" / "2.0.0").is_dir()).is_true()
+
+    def test_unreadable_icon_is_not_cached(self, qapp, tmp_path):
+        cm = _manager()
+        cm.call = lambda m, *a: ("!!" if m == "iconpack_icon" else FakeConnectionManager.call(cm, m, *a))
+        dialog = self._dialog(tmp_path / "c", cm)
+
+        _request(dialog, 0)
+        _drain(qapp)
+
+        assert_that([p for p in (tmp_path / "c").rglob("*.png")]).is_empty()
+
+    def test_different_tint_is_a_different_cache_entry(self, qapp, tmp_path):
+        first = self._dialog(tmp_path / "c", tint="#ff0000")
+        _request(first, 0)
+        _drain(qapp)
+        cm = _manager()
+
+        other = self._dialog(tmp_path / "c", cm, tint="#00ff00")
+        _request(other, 0)
+        _drain(qapp)
+
+        assert_that(cm.icon_calls()).is_length(1)
+
+    def test_server_without_plugin_version_works_and_writes_no_files(self, qapp, tmp_path):
+        legacy = [{k: v for k, v in pack.items() if k != "plugin_version"} for pack in _PACKS]
+        cm = FakeConnectionManager(legacy, _ICONS)
+        dialog = IconBrowserDialog(None, cm, cache=IconThumbnailCache(tmp_path / "c"))
+
+        thumb = _request(dialog, 0)
+        _drain(qapp)
+
+        assert_that(len(cm.icon_calls())).is_equal_to(1)
+        assert_that(_red(_request(dialog, 0))).is_true()  # the dialog's own memory still serves it
+        assert_that(thumb).is_not_none()
+        assert_that(list((tmp_path / "c").rglob("*"))).is_empty()
+
+    def test_cache_failure_does_not_break_the_browser(self, qapp, tmp_path):
+        class Broken(IconThumbnailCache):
+            def get(self, *args, **kwargs):
+                raise OSError("disk on fire")
+
+            def put(self, *args, **kwargs):
+                raise OSError("disk on fire")
+
+            def update_packs(self, *args, **kwargs):
+                raise OSError("disk on fire")
+
+        cm = _manager()
+        dialog = IconBrowserDialog(None, cm, cache=Broken(tmp_path / "c"))
+
+        _request(dialog, 0)
+        _drain(qapp)
+
+        assert_that(_names(dialog)).is_length(5)
+        assert_that(_red(_request(dialog, 0))).is_true()
+        assert_that(cm.icon_calls()).is_length(1)
+
+    def test_a_hit_is_not_requested_over_the_network_again_within_the_dialog(self, qapp, tmp_path):
+        cm = _manager()
+        dialog = IconBrowserDialog(None, cm, cache=IconThumbnailCache(tmp_path / "c"))
+        _request(dialog, 0)
+        _drain(qapp)
+
+        _request(dialog, 0)
+        _request(dialog, 0)
+        _drain(qapp)
+
+        assert_that(cm.icon_calls()).is_length(1)
