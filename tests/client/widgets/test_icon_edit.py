@@ -382,3 +382,19 @@ class TestCompact:
         edit.mouseDoubleClickEvent(None)
 
         assert_that(opened).is_equal_to([True])
+
+
+def test_colour_swatch_can_be_hidden(qapp):
+    edit = IconEdit(rpc=lambda: None)
+    edit.set_value({"ref": "pack:a/b.svg", "color": "#ffffff"})
+    assert_that(edit._colour.isVisibleTo(edit)).is_true()
+
+    edit.set_show_colour(False)
+
+    assert_that(edit._colour.isVisibleTo(edit)).is_false()
+
+
+def test_thumbnail_is_the_preview_pixmap(qapp):
+    edit = IconEdit(rpc=lambda: None)
+
+    assert_that(edit.thumbnail().isNull()).is_false()

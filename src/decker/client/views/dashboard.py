@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QActionGroup
+from PyQt6.QtGui import QActionGroup, QIcon
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QMenu,
@@ -24,14 +24,17 @@ from decker.client.events import (
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     PagesUpdatedEvent,
+    ProfilesUpdatedEvent,
 )
 from decker.client.ui_state_store import UiStateStore
 from decker.client.views.base import BaseView
 from decker.client.widgets.action_config_panel import ActionConfigPanel
 from decker.client.widgets.button_grid import ButtonGridWidget
+from decker.client.widgets.icon_edit import IconEdit
 from decker.client.widgets.page_tab_bar import PageTabBar
+from decker.client.widgets.profile_edit_dialog import ProfileEditDialog
 from decker.client.widgets.sidebar import SidebarWidget
-from decker.common.model import DeviceHardwareInfo, DevicePages
+from decker.common.model import DeviceHardwareInfo, DevicePages, DeviceProfiles
 
 _DEFAULT_SIDEBAR_WIDTH = 240
 
@@ -52,6 +55,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self.resize(900, 700)
         self._last_expanded_sidebar_width = _DEFAULT_SIDEBAR_WIDTH
         self._pages: DevicePages | None = None  # the active device's pages, from the server
+        self._profiles: DeviceProfiles | None = None  # the active device's profiles, from the server
         self._devices: list[DeviceHardwareInfo] = []
         self._selected_key: int | None = None
         self._key_images: dict[int, str] = {}  # last composed image per key, to seed the editor preview
@@ -111,6 +115,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             self._on_display_states_updated(event.device_id, event.states)
         elif isinstance(event, PagesUpdatedEvent):
             self._on_pages_updated(event.pages)
+        elif isinstance(event, ProfilesUpdatedEvent):
+            self._on_profiles_updated(event.profiles)
         return None
 
     def save_state(self) -> None:
@@ -130,6 +136,11 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._page_tabs.delete_page_requested.connect(self._on_delete_page)
         self._page_tabs.rename_page_requested.connect(self._on_rename_page)
         self._page_tabs.set_default_page_requested.connect(self._on_set_default_page)
+        selector = self._page_tabs.profile_selector
+        selector.profile_selected.connect(self._on_profile_selected)
+        selector.add_requested.connect(self._on_add_profile)
+        selector.edit_requested.connect(self._on_edit_profile)
+        selector.rename_requested.connect(self._on_rename_profile)
         self._grid.key_pressed.connect(self._on_key_pressed)
         self._grid.key_edit_requested.connect(self._on_key_edit_requested)
         self._grid.key_long_pressed.connect(self._on_key_long_pressed)
@@ -194,7 +205,9 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._reset_key_selection()
         self._grid.build(device.keys if device is not None else [])
         self._pages = None
+        self._profiles = None
         self._render_page_tabs()
+        self._render_profiles()
         cm = AppContext.get().connection_manager
         if cm is not None and device_id is not None:
             cm.request_device_refresh()
@@ -254,6 +267,56 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
 
     def _on_set_default_page(self, page_id: str) -> None:
         self._page_call("page_set_default", page_id)
+
+    # ------------------------------------------------------------------
+    # Profiles
+    # ------------------------------------------------------------------
+
+    def _on_profiles_updated(self, profiles: DeviceProfiles) -> None:
+        if profiles.device_id != AppContext.get().active_device_id:
+            return
+        self._profiles = profiles
+        self._render_profiles()
+
+    def _render_profiles(self) -> None:
+        selector = self._page_tabs.profile_selector
+        if self._profiles is None:
+            selector.hide()
+            return
+        selector.set_profiles(self._profiles.profiles, self._profiles.active_profile_id, _profile_icon)
+        selector.show()
+
+    def _on_profile_selected(self, profile_id: int) -> None:
+        self._page_call("profile_activate", profile_id)
+
+    def _on_add_profile(self) -> None:
+        raw = self._page_call("profile_add")
+        try:
+            profile_id = json.loads(raw)["profile_id"] if raw else None
+        except (ValueError, TypeError, KeyError):
+            profile_id = None
+        if isinstance(profile_id, int):
+            self._page_call("profile_activate", profile_id)
+
+    def _on_rename_profile(self, profile_id: int, name: str) -> None:
+        self._page_call("profile_rename", profile_id, name)
+
+    def _on_edit_profile(self, profile_id: int) -> None:
+        profiles = self._profiles
+        profile = next((p for p in profiles.profiles if p.profile_id == profile_id), None) if profiles else None
+        if profiles is None or profile is None:
+            return
+        dialog = ProfileEditDialog(profile, can_delete=len(profiles.profiles) > 1, parent=self)
+        dialog.exec()
+        if dialog.outcome == "save":
+            if dialog.name() != profile.name:
+                self._page_call("profile_rename", profile_id, dialog.name())
+            if dialog.icon() != profile.icon:
+                self._page_call("profile_set_icon", profile_id, dialog.icon())
+        elif dialog.outcome == "delete":
+            self._page_call("profile_delete", profile_id)
+        elif dialog.outcome == "clone":
+            self._page_call("profile_clone", profile_id)
 
     def _reset_key_selection(self) -> None:
         self._key_slots = {}
@@ -471,6 +534,14 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         window = AppContext.get().window
         if window is not None:
             window.open_settings()
+
+
+def _profile_icon(ref: str) -> QIcon | None:
+    """The dropdown icon for a profile's icon ref, or None to fall back to the Decker icon."""
+    edit = IconEdit()
+    edit.set_value({"ref": ref})
+    pixmap = edit.thumbnail()
+    return None if pixmap.isNull() else QIcon(pixmap)
 
 
 def _confirm_delete_page(parent: QWidget, name: str) -> bool:
