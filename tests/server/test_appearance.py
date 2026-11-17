@@ -27,7 +27,19 @@ def _appearance(**overrides: Any) -> dict[str, Any]:
 
 def test_defaults_from_schema() -> None:
     result = resolve_appearance({}, {})
-    assert_that(result).is_equal_to({"background": "#000000", "title": dict(TEXT_STYLE_DEFAULTS)})
+    assert_that(result).is_equal_to(
+        {"background": "#000000", "title": dict(TEXT_STYLE_DEFAULTS), "icon": {"ref": "", "color": "#ffffff"}}
+    )
+
+
+def test_icon_is_an_appearance_key_and_survives_resolution() -> None:
+    from decker.common.appearance_schema import (
+        APPEARANCE_KEYS,  # pylint: disable=import-outside-toplevel
+    )
+
+    stored = {"icon": {"ref": "pack:a.b/x.svg", "color": "#ff0000"}}
+    assert_that(APPEARANCE_KEYS).contains("icon")
+    assert_that(resolve_appearance({}, stored)["icon"]).is_equal_to(stored["icon"])
 
 
 def test_action_defaults_override_schema_defaults() -> None:
@@ -149,7 +161,7 @@ def test_stored_title_merges_field_wise_over_action_defaults() -> None:
 
 def test_legacy_keys_removed_from_resolved_appearance() -> None:
     result = resolve_appearance({}, {"title_size": 9, "show_title": True})
-    assert_that(result).contains_only("background", "title")
+    assert_that(result).contains_only("background", "icon", "title")
 
 
 def test_manifest_default_legacy_keys_still_accepted() -> None:

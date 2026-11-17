@@ -499,11 +499,17 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             icon_ref, image_color = live.plugin_icon_ref, live.plugin_image_color
         if icon_ref is not None:
             image = self.icon_packs.read_ref(icon_ref)
+        appearance = resolve_appearance(spec.appearance, stored)
+        if image is None and icon_ref is None:
+            override = appearance["icon"]
+            image = self.icon_packs.read_ref(override["ref"])
+            if image is not None:
+                icon_ref, image_color = override["ref"], override["color"]
         if image is None and state is not None and state.image:
             image = read_icon(plugin.plugin_dir, state.image) if plugin is not None else None
         title = plugin_title or (state.title if state is not None and state.title else "")
         return compose_key_image(
-            self._expanded_appearance(live.target.device_id, resolve_appearance(spec.appearance, stored)),
+            self._expanded_appearance(live.target.device_id, appearance),
             image,
             title,
             plugin_image_color=image_color,
