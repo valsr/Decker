@@ -280,3 +280,80 @@ class TestCopyPage:
 
         assert_that(copied[0][1].settings).is_equal_to({"where": "p2", "other": "px", "n": 3})
         assert_that(store.get("dev1", "p1", 0).settings["where"]).is_equal_to("p1")
+
+
+class TestMoveAndCopyKey:
+    @staticmethod
+    def _seed(store):
+        store.assign("dev1", "p1", 0, _target(key_index=0, ctx="c0"), {"n": 1})
+        store.update_appearance("dev1", "p1", 0, {"background": {"color": "#ff0000"}})
+
+    def test_move_rekeys_the_row_and_keeps_its_context_id(self, store):
+        self._seed(store)
+
+        assert_that(store.move("dev1", "p1", 0, 3)).is_true()
+
+        moved = store.get("dev1", "p1", 3)
+        assert moved is not None
+        assert_that(moved.target.context_id).is_equal_to("c0")
+        assert_that(moved.target.key_index).is_equal_to(3)
+        assert_that(moved.settings).is_equal_to({"n": 1})
+        assert_that(moved.appearance).is_equal_to({"background": {"color": "#ff0000"}})
+        assert_that(store.get("dev1", "p1", 0)).is_none()
+
+    def test_move_replaces_an_occupied_target(self, store):
+        self._seed(store)
+        store.assign("dev1", "p1", 5, _target(key_index=5, ctx="c5"), {})
+
+        assert_that(store.move("dev1", "p1", 0, 5)).is_true()
+
+        contexts = [a.target.context_id for _, a in store.all_for_page("dev1", "p1")]
+        assert_that(contexts).is_equal_to(["c0"])
+        assert_that(store.get("dev1", "p1", 5).target.context_id).is_equal_to("c0")
+
+    def test_move_refuses_an_empty_source_and_the_same_slot(self, store):
+        self._seed(store)
+
+        assert_that(store.move("dev1", "p1", 7, 8)).is_false()
+        assert_that(store.move("dev1", "p1", 0, 0)).is_false()
+
+        assert_that(store.get("dev1", "p1", 0).target.context_id).is_equal_to("c0")
+
+    def test_move_is_scoped_to_the_device_and_page(self, store):
+        self._seed(store)
+        store.assign("dev2", "p1", 0, _target(device_id="dev2", key_index=0, ctx="other-device"), {})
+        store.assign("dev1", "p2", 0, _target(key_index=0, ctx="other-page"), {})
+
+        store.move("dev1", "p1", 0, 3)
+
+        assert_that(store.get("dev2", "p1", 0).target.context_id).is_equal_to("other-device")
+        assert_that(store.get("dev1", "p2", 0).target.context_id).is_equal_to("other-page")
+
+    def test_copy_key_adds_a_row_with_the_new_context_id_and_keeps_the_source(self, store):
+        self._seed(store)
+
+        copied = store.copy_key("dev1", "p1", 0, 3, "new-ctx")
+
+        assert copied is not None
+        assert_that(copied.target.context_id).is_equal_to("new-ctx")
+        assert_that(copied.target.key_index).is_equal_to(3)
+        assert_that(copied.settings).is_equal_to({"n": 1})
+        assert_that(copied.appearance).is_equal_to({"background": {"color": "#ff0000"}})
+        assert_that(store.get("dev1", "p1", 3)).is_equal_to(copied)
+        assert_that(store.get("dev1", "p1", 0).target.context_id).is_equal_to("c0")
+
+    def test_copy_key_replaces_an_occupied_target(self, store):
+        self._seed(store)
+        store.assign("dev1", "p1", 5, _target(key_index=5, ctx="c5"), {})
+
+        store.copy_key("dev1", "p1", 0, 5, "new-ctx")
+
+        contexts = sorted(a.target.context_id for _, a in store.all_for_page("dev1", "p1"))
+        assert_that(contexts).is_equal_to(["c0", "new-ctx"])
+
+    def test_copy_key_refuses_an_empty_source_and_the_same_slot(self, store):
+        self._seed(store)
+
+        assert_that(store.copy_key("dev1", "p1", 7, 8, "x")).is_none()
+        assert_that(store.copy_key("dev1", "p1", 0, 0, "x")).is_none()
+        assert_that(store.all_for_page("dev1", "p1")).is_length(1)
