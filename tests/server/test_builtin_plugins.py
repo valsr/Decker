@@ -63,7 +63,7 @@ def test_blank_is_loaded_and_listed(env):
 
 def test_blank_key_draws_background_and_title_only(env):
     images: list[bytes] = []
-    env.dm.set_image_bytes = lambda _d, _k, image: images.append(image)  # type: ignore[method-assign]
+    env.dm.set_image_bytes = lambda _d, _k, image: images.append(image)
     appearance = {"background": "#ff0000", "title": {"text": "Hi", "position": "middle"}}
 
     env.manager.activate_action(ActionTarget(BLANK, BLANK_ACTION, "ctx-b", "dev-1", 0), appearance)
