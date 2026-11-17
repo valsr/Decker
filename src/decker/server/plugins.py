@@ -46,6 +46,7 @@ from decker.server.page_vars import (
     deliver_settings,
     has_dynamic_fields,
     page_variables,
+    resolve_switch_target,
     stored_page_ids,
 )
 
@@ -650,6 +651,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._on_set_settings(live, message.payload)
         elif message.event == "set_gestures":
             self._on_set_gestures(live, message.payload)
+        elif message.event == "switch_page":
+            self._on_switch_page(live, message.payload)
 
     def _apply_sink_event(self, live: _Live, message: Message) -> tuple[bool, bool]:
         """Update the instance (caller holds the lock); returns (handled, needs a recompose)."""
@@ -729,6 +732,18 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self.store_settings(live.target, settings)
         if self.settings_persister is not None:
             self.settings_persister(live.target, settings)
+
+    def _on_switch_page(self, live: _Live, payload: dict[str, Any]) -> None:
+        """Switch the key's device; runs without the manager lock because a switch deactivates actions."""
+        if self._page_controller is None:
+            return
+        device_id = live.target.device_id
+        pages, active = self._device_pages(device_id)
+        target = resolve_switch_target(pages, active, payload)
+        if target is None:
+            logging.info("[%s] switch_page %r has no target", live.target.plugin_uuid, payload)
+            return
+        self._page_controller.activate(device_id, target)
 
     def _on_set_global_settings(self, plugin_id: str, payload: dict[str, Any]) -> None:
         raw = payload.get("settings")

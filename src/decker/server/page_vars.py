@@ -61,3 +61,28 @@ def stored_page_ids(schema: Sequence[SettingEntry], raw: Mapping[str, Any]) -> d
             if isinstance(value, dict):
                 result[entry.key] = value.get("page_id", "")
     return result
+
+
+_RELATIVE = frozenset({"next", "previous", "first", "last"})
+
+
+def resolve_switch_target(pages: Sequence[PageInfo], active_page_id: str, payload: Mapping[str, Any]) -> str | None:
+    """The page id a `switch_page` request leads to, or None when it is invalid or would stay put."""
+    ids = [page.page_id for page in pages]
+    if "page_id" in payload:
+        wanted = payload["page_id"]
+        return wanted if isinstance(wanted, str) and wanted in ids and wanted != active_page_id else None
+    direction = payload.get("to")
+    if direction not in _RELATIVE or active_page_id not in ids or len(ids) < 2:
+        return None
+    here = ids.index(active_page_id)
+    wrap = payload.get("wrap") is True
+    if direction == "first":
+        target = 0
+    elif direction == "last":
+        target = len(ids) - 1
+    else:
+        target = here + (1 if direction == "next" else -1)
+        if not 0 <= target < len(ids):
+            target = target % len(ids) if wrap else here
+    return ids[target] if target != here else None
