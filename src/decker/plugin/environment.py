@@ -12,11 +12,11 @@ import tempfile
 import threading
 from collections import deque
 from collections.abc import Callable, Sequence
-from importlib import metadata
 from pathlib import Path
 
 import decker_plugin_sdk
 from decker.common import paths
+from decker.common.version import decker_version
 from decker.plugin.manifest import RuntimeSpec
 
 _TIMEOUT_SECONDS = 300
@@ -28,13 +28,6 @@ _SPECIFIER = re.compile(r"^[<>=!~]")
 
 class EnvironmentBuildError(Exception):
     """Raised when a plugin environment cannot be built."""
-
-
-def _decker_version() -> str:
-    try:
-        return metadata.version("decker")
-    except metadata.PackageNotFoundError:
-        return "0"
 
 
 def _sdk_digest(source: Path) -> str:
@@ -64,7 +57,7 @@ def stage_sdk(dest_root: Path | None = None) -> Path:
     """Copy the plugin SDK to ``<root>/<decker version>/`` and return that directory (the PYTHONPATH entry)."""
     root = dest_root if dest_root is not None else paths.sdk()
     source = Path(decker_plugin_sdk.__file__).parent
-    version_dir = root / f"{_decker_version()}-{_sdk_digest(source)}"
+    version_dir = root / f"{decker_version()}-{_sdk_digest(source)}"
     target = version_dir / "decker_plugin_sdk"
     if target.exists():
         return version_dir
