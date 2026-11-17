@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from decker.client.widgets.color_button import ColorButton
 from decker.client.widgets.icon_edit import IconEdit
+from decker.client.widgets.page_edit import PageEdit
 from decker.client.widgets.text_style_edit import TextStyleEdit
 
 _INT_LIMIT = 999_999_999
@@ -140,6 +141,11 @@ def _icon_field(_entry: dict[str, Any]) -> _Field:
     return _Field(edit, edit.value, edit.set_value)
 
 
+def _page_field(_entry: dict[str, Any]) -> _Field:
+    edit = PageEdit()
+    return _Field(edit, edit.value, edit.set_value)
+
+
 def _text_style_field(_entry: dict[str, Any]) -> _Field:
     edit = TextStyleEdit()
     return _Field(edit, edit.value, edit.set_value)
@@ -154,6 +160,7 @@ _BUILDERS: dict[str, Callable[[dict[str, Any]], _Field]] = {
     "color": _color_field,
     "font": _font_field,
     "icon": _icon_field,
+    "page": _page_field,
     "text_style": _text_style_field,
 }
 
