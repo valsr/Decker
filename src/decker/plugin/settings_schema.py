@@ -2,11 +2,12 @@
 
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from decker.common.icon_ref import normalize_icon_value
 from decker.common.text_style import TEXT_STYLE_DEFAULTS, normalize_text_style
 
 FIELD_TYPES = frozenset({"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style"})
@@ -27,8 +28,13 @@ _ZERO_VALUES: dict[str, Any] = {
     "bool": False,
     "color": "#000000",
     "font": "",
-    "icon": "",
+    "icon": {"ref": "", "color": "#ffffff"},
     "text_style": dict(TEXT_STYLE_DEFAULTS),
+}
+# Object-valued types: normalised field by field against the field default (never rejected as a whole).
+_OBJECT_NORMALIZERS: dict[str, Callable[..., dict[str, Any]]] = {
+    "text_style": normalize_text_style,
+    "icon": normalize_icon_value,
 }
 _MISSING = object()
 
@@ -113,8 +119,8 @@ def _coerce(type_: str, value: Any, extra: Mapping[str, Any]) -> Any:
     elif type_ == "choice":
         allowed = [o["value"] for o in extra["options"]]
         result = next((o for o in allowed if type(o) is type(value) and o == value), _MISSING)
-    elif type_ == "text_style":
-        result = normalize_text_style(value)
+    elif type_ in _OBJECT_NORMALIZERS:
+        result = _OBJECT_NORMALIZERS[type_](value)
     elif isinstance(value, str):
         result = value
     if type_ in ("int", "float") and result is not _MISSING and not _in_range(result, extra):
@@ -155,10 +161,10 @@ def _parse_default(type_: str, data: dict[str, Any], optional: bool, extra: Mapp
             return None
         return extra["options"][0]["value"] if type_ == "choice" else _copy(_ZERO_VALUES[type_])
     raw = data["default"]
-    if type_ == "text_style":
+    if type_ in _OBJECT_NORMALIZERS:
         if not isinstance(raw, dict):
             raise ValueError(f"{where}: default {raw!r} is not valid for type '{type_}'")
-        return normalize_text_style(raw)
+        return _OBJECT_NORMALIZERS[type_](raw)
     # A JSON float with an int-like value (e.g. 1.0) is not a valid int default.
     value = _MISSING if type_ == "int" and not isinstance(raw, (int, str)) else _coerce(type_, raw, extra)
     if value is _MISSING or (type_ in ("int", "float") and isinstance(raw, str)):
@@ -223,8 +229,8 @@ def apply_schema(schema: Sequence[SettingEntry], values: Mapping[str, Any]) -> d
         raw = values.get(entry.key, _MISSING)
         if raw is _MISSING:
             result[entry.key] = _copy(entry.default)
-        elif entry.type == "text_style":
-            result[entry.key] = normalize_text_style(raw, entry.default or TEXT_STYLE_DEFAULTS)
+        elif entry.type in _OBJECT_NORMALIZERS:
+            result[entry.key] = _OBJECT_NORMALIZERS[entry.type](raw, entry.default or _ZERO_VALUES[entry.type])
         elif entry.optional and (raw is None or raw == ""):
             result[entry.key] = None
         else:

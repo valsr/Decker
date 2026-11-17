@@ -245,3 +245,62 @@ def test_color_alpha_round_trips_through_schema_to_json() -> None:
 def test_color_alpha_garbage_falls_back_to_default() -> None:
     schema = _color_schema(alpha=True, default="#112233")
     assert_that(apply_schema(schema, {"c": "#1122334"})["c"]).is_equal_to("#112233")
+
+
+def _icon_schema(default: Any = None) -> tuple[Any, ...]:
+    entry: dict[str, Any] = {"key": "glyph", "type": "icon", "label": "Glyph"}
+    if default is not None:
+        entry["default"] = default
+    return parse_settings_schema([entry], "t")
+
+
+def test_icon_default_is_empty_ref_and_white() -> None:
+    assert_that(_icon_schema()[0].default).is_equal_to({"ref": "", "color": "#ffffff"})
+
+
+def test_icon_default_completed_from_partial() -> None:
+    assert_that(_icon_schema({"color": "#ff0000"})[0].default).is_equal_to({"ref": "", "color": "#ff0000"})
+
+
+def test_icon_non_dict_default_rejected() -> None:
+    with pytest.raises(ValueError, match="default"):
+        _icon_schema("pack:p/a.svg")
+
+
+def test_apply_schema_icon_invalid_fields_fall_back_per_field() -> None:
+    result = apply_schema(_icon_schema(), {"glyph": {"ref": "pack:p/../x", "color": "#112233"}})
+    assert_that(result["glyph"]).is_equal_to({"ref": "", "color": "#112233"})
+
+
+def test_apply_schema_icon_non_dict_uses_default() -> None:
+    assert_that(apply_schema(_icon_schema(), {"glyph": "pack:p/a.svg"})["glyph"]).is_equal_to(
+        {"ref": "", "color": "#ffffff"}
+    )
+
+
+def test_apply_schema_icon_missing_uses_default() -> None:
+    schema = _icon_schema({"color": "#00ff00"})
+    assert_that(apply_schema(schema, {})["glyph"]).is_equal_to({"ref": "", "color": "#00ff00"})
+
+
+def test_apply_schema_icon_invalid_field_falls_back_to_field_default() -> None:
+    schema = _icon_schema({"color": "#00ff00"})
+    assert_that(apply_schema(schema, {"glyph": {"color": "red"}})["glyph"]["color"]).is_equal_to("#00ff00")
+
+
+def test_apply_schema_icon_returns_copy() -> None:
+    schema = _icon_schema()
+    apply_schema(schema, {})["glyph"]["ref"] = "pack:p/a.svg"
+    assert_that(apply_schema(schema, {})["glyph"]["ref"]).is_equal_to("")
+    assert_that(schema[0].default["ref"]).is_equal_to("")
+
+
+def test_icon_round_trips_through_schema_to_json() -> None:
+    schema = _icon_schema({"color": "#ff0000"})
+    assert_that(parse_settings_schema(schema_to_json(schema), "t")).is_equal_to(schema)
+
+
+def test_icon_accepts_rgba_colour() -> None:
+    assert_that(apply_schema(_icon_schema(), {"glyph": {"color": "#11223380"}})["glyph"]["color"]).is_equal_to(
+        "#11223380"
+    )
