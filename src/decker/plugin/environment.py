@@ -1,8 +1,11 @@
 """Per-plugin Python environments (built with uv) and SDK staging."""
 
 import logging
+import hashlib
 import os
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -18,6 +21,9 @@ from decker.plugin.manifest import RuntimeSpec
 
 _TIMEOUT_SECONDS = 300
 _TAIL_LINES = 20
+_MIN_PYTHON = (3, 10)
+_PLAIN_VERSION = re.compile(r"^\d+(\.\d+)*$")
+_SPECIFIER = re.compile(r"^[<>=!~]")
 
 
 class EnvironmentBuildError(Exception):
@@ -31,14 +37,37 @@ def _decker_version() -> str:
         return "0"
 
 
+def _sdk_digest(source: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(source.rglob("*")):
+        if path.is_file() and "__pycache__" not in path.parts:
+            digest.update(str(path.relative_to(source)).encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+def _python_request(python: str | None) -> str:
+    """Return the ``uv venv --python`` request, never allowing an interpreter older than the SDK supports."""
+    floor = ".".join(str(n) for n in _MIN_PYTHON)
+    if python is None:
+        return sys.executable
+    if _PLAIN_VERSION.match(python):
+        if tuple(int(n) for n in python.split("."))[:2] < _MIN_PYTHON:
+            raise EnvironmentBuildError(f"runtime.python {python!r} is older than the supported minimum {floor}")
+        return python
+    if _SPECIFIER.match(python):
+        return f"{python},>={floor}"
+    return python
+
+
 def stage_sdk(dest_root: Path | None = None) -> Path:
     """Copy the plugin SDK to ``<root>/<decker version>/`` and return that directory (the PYTHONPATH entry)."""
     root = dest_root if dest_root is not None else paths.sdk()
-    version_dir = root / _decker_version()
+    source = Path(decker_plugin_sdk.__file__).parent
+    version_dir = root / f"{_decker_version()}-{_sdk_digest(source)}"
     target = version_dir / "decker_plugin_sdk"
     if target.exists():
         return version_dir
-    source = Path(decker_plugin_sdk.__file__).parent
     version_dir.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=".sdk-", dir=version_dir))
     try:
@@ -54,15 +83,27 @@ def stage_sdk(dest_root: Path | None = None) -> Path:
     return version_dir
 
 
+def _kill_group(proc: "subprocess.Popen[str]") -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def _run(command: list[str], progress: Callable[[str], None]) -> None:
     tail: deque[str] = deque(maxlen=_TAIL_LINES)
     try:
         proc = subprocess.Popen(  # pylint: disable=consider-using-with
-            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            start_new_session=True,
         )
     except OSError as exc:
         raise EnvironmentBuildError(f"cannot run {command[0]}: {exc}") from exc
-    timer = threading.Timer(_TIMEOUT_SECONDS, proc.kill)
+    timer = threading.Timer(_TIMEOUT_SECONDS, _kill_group, args=(proc,))
     timer.start()
     try:
         assert proc.stdout is not None
@@ -74,7 +115,7 @@ def _run(command: list[str], progress: Callable[[str], None]) -> None:
         timed_out = not timer.is_alive()
     finally:
         timer.cancel()
-        proc.kill()
+        _kill_group(proc)
         proc.wait()
         if proc.stdout is not None:
             proc.stdout.close()
@@ -94,7 +135,7 @@ def build_environment(
 ) -> None:
     """Create ``<plugin_dir>/.venv`` and install the declared requirements into it."""
     venv = plugin_dir / ".venv"
-    python = runtime.python if runtime.python is not None else sys.executable
+    python = _python_request(runtime.python)
     _run([uv, "venv", "--relocatable", str(venv), "--python", python], progress)
     if runtime.requirements:
         _run(

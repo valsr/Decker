@@ -105,3 +105,26 @@ def test_venv_is_built_relocatable(tmp_path: Path) -> None:
     build_environment(tmp_path, _runtime(), lambda _: None, uv=str(fake))
 
     assert_that(argv_log.read_text()).starts_with("venv --relocatable ")
+
+
+def test_timeout_kills_the_whole_process_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(environment, "_TIMEOUT_SECONDS", 1)
+    import time
+
+    start = time.monotonic()
+    with pytest.raises(EnvironmentBuildError, match="timed out"):
+        environment._run(["sh", "-c", "sleep 30 & sleep 30"], lambda _line: None)
+    assert_that(time.monotonic() - start).is_less_than(10)
+
+
+def test_stage_sdk_is_keyed_on_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    first = stage_sdk(tmp_path)
+    monkeypatch.setattr(environment, "_sdk_digest", lambda _source: "changed")
+    assert_that(stage_sdk(tmp_path)).is_not_equal_to(first)
+
+
+def test_python_request_enforces_minimum() -> None:
+    assert_that(environment._python_request("3.12")).is_equal_to("3.12")
+    assert_that(environment._python_request(">=3.8")).is_equal_to(">=3.8,>=3.10")
+    with pytest.raises(EnvironmentBuildError, match="older"):
+        environment._python_request("3.9")

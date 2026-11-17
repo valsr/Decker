@@ -164,3 +164,9 @@ def test_stderr_without_newline_is_read_in_bounded_chunks(
     assert_that(wait_for(lambda: len(h.messages) == 1)).is_true()
     assert_that(wait_for(lambda: sum(len(r.getMessage()) for r in caplog.records) > 2 * 1024 * 1024)).is_true()
     assert_that(max(len(r.getMessage()) for r in caplog.records)).is_less_than(16 * 1024)
+
+
+def test_exit_is_reported_even_when_a_helper_keeps_the_pipes_open(make: Callable[[str], Harness]) -> None:
+    h = make("leaves_helper.py")
+    h.proc.start()
+    assert_that(wait_for(lambda: h.exits == [0], timeout=8)).is_true()
