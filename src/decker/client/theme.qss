@@ -83,6 +83,10 @@ QPushButton:focus {
     border-color: $accent_line;
 }
 
+KeyButtonWidget[selected="true"] {
+    border: 2px solid $accent_line;
+}
+
 QPushButton:disabled {
     background-color: $surface;
     color: $text_disabled;

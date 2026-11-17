@@ -257,6 +257,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     def _reset_key_selection(self) -> None:
         self._key_slots = {}
         self._selected_key = None
+        self._grid.set_selected(None)
         self._config_panel.show_placeholder()
 
     # ------------------------------------------------------------------
@@ -303,6 +304,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if index != self._selected_key:
             self._config_panel.forget_loaded()
         self._selected_key = index
+        self._grid.set_selected(index)
         self._refresh_config_panel()
 
     def _on_key_pressed(self, index: int) -> None:
