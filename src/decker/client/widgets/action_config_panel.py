@@ -31,7 +31,7 @@ class ActionConfigPanel(QStackedWidget):
         self._loaded: tuple[Any, ...] | None = None
         self._appearance_defaults: dict[str, Any] = {}
 
-        placeholder = QLabel("Select a key to configure")
+        placeholder = QLabel("Hover a key and click ✎ (or focus it and press F2) to configure it")
         placeholder.setProperty("role", "muted")
         self.addWidget(placeholder)  # page 0
 

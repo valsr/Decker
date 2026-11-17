@@ -5,7 +5,15 @@ import json
 from typing import Any
 
 from PyQt6.QtCore import QByteArray, QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QEnterEvent, QIcon, QMouseEvent, QPixmap, QResizeEvent
+from PyQt6.QtGui import (
+    QEnterEvent,
+    QFocusEvent,
+    QIcon,
+    QKeyEvent,
+    QMouseEvent,
+    QPixmap,
+    QResizeEvent,
+)
 from PyQt6.QtWidgets import QGridLayout, QPushButton, QToolButton, QVBoxLayout, QWidget
 
 from decker.common.model import KeyInfo
@@ -69,6 +77,24 @@ class KeyButtonWidget(QPushButton):
         super().enterEvent(event)
         self._edit_button.show()
         self._edit_button.raise_()
+
+    def keyPressEvent(self, e: QKeyEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """F2 (or the Menu key) edits the key, so keyboard users can reach what the pencil does for the mouse."""
+        if e is not None and e.key() in (Qt.Key.Key_F2, Qt.Key.Key_Menu):
+            self.edit_clicked.emit(self.index)
+            return
+        super().keyPressEvent(e)
+
+    def focusInEvent(self, e: QFocusEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Show the pencil while the key has keyboard focus, so the edit affordance is visible without a pointer."""
+        super().focusInEvent(e)
+        self._edit_button.show()
+
+    def focusOutEvent(self, e: QFocusEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Hide the pencil again unless the pointer is still on the key."""
+        super().focusOutEvent(e)
+        if not self.underMouse():
+            self._edit_button.hide()
 
     def leaveEvent(self, a0: QEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
         """Hide the pencil once the pointer is outside the key and its pencil."""
