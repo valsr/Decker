@@ -400,3 +400,9 @@ def test_profile_field_survives_the_round_trip_to_clients() -> None:
 
     assert_that(sent[1]["profile_field"]).is_equal_to("who")
     assert_that(sent[0]["type"]).is_equal_to("profile")
+
+
+def test_profile_value_with_a_trailing_newline_is_not_an_id() -> None:
+    schema = parse_settings_schema([{"key": "p", "type": "profile"}], "here")
+
+    assert_that(apply_schema(schema, {"p": "1\n"})).is_equal_to({"p": ""})

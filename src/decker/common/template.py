@@ -3,7 +3,7 @@
 import re
 from collections.abc import Mapping
 
-TEMPLATE_VARIABLES: tuple[str, ...] = ("page_name", "page_index", "page_count")
+TEMPLATE_VARIABLES: tuple[str, ...] = ("page_name", "page_index", "page_count", "current_profile", "profile_id")
 
 _TOKEN = re.compile(r"\{\{|\}\}|\{([a-z_][a-z0-9_]*)\}")
 

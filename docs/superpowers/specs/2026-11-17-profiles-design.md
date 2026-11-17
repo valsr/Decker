@@ -43,7 +43,7 @@ single unnamed profile; this story names it and lets the user add more.
   (the current profile when it is blank), and the resolved value gains `profile_id`. Both are action settings only.
 - **Protocol / SDK:** plugin to server `switch_page` accepts a page of any profile of the device (`{"page_id"}` already
   identifies the profile; the server switches profile first when needed). New `switch_profile`:
-  `{"to": "next"|"previous"|"first"|"last", "wrap": false}` or `{"profile_id": "<id>"}`. SDK: `ctx.switch_profile(to=..., wrap=...)`,
+  `{"to": "next"|"previous"|"first"|"last", "wrap": false}` or `{"profile_id": 2}` (an integer). SDK: `ctx.switch_profile(to=..., wrap=...)`,
   `ctx.go_to_profile(profile_id)`. Interrogation uses the resolved `profile`/`page` setting values above (the same mechanism
   as pages today); there is no free-form query RPC for plugins.
 - **`com.decker.pages`** gains optional *Profile* settings on **Go to page** (default: current profile).
@@ -106,7 +106,7 @@ single unnamed profile; this story names it and lets the user add more.
   `ctx.switch_profile`, `ctx.go_to_profile`); `plugins.py` `_on_switch_profile` (same re-entrancy and lock-order care as
   `_on_switch_page`).
 - **RPC** (`server/service.py`): `profiles_list(device_id)`, `profile_add(device_id, name="")`, `profile_rename`,
-  `profile_set_icon`, `profile_delete`, `profile_clone`, `profile_activate`; `pages_list(device_id, profile_id="")` (blank =
+  `profile_set_icon`, `profile_delete`, `profile_clone`, `profile_activate`; `pages_list(device_id, profile_id=-1)` (negative =
   active profile). Page RPCs keep working unchanged on the active profile. Key RPCs are untouched.
 - **Client:** `ConnectionManager` parses `profiles_list`; a `ProfileSelector` widget (dropdown with in-place rename editing,
   current marker, Add / Edit entries) left of the settings button; a `ProfileEditDialog` (name, `IconEdit` for the icon with the

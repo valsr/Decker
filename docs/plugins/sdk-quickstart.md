@@ -48,7 +48,7 @@ Attributes: `context`, `action`, `device`, `key_index`, `column`, `row`, `settin
 Methods: `set_image(data, format="png")`, `set_icon(ref, color=None)` (show an icon from an installed icon pack, see
 [protocol](protocol.md#images)), `clear_image()`, `set_title(title)`, `set_state(n)`, `show_alert()`,
 `show_ok()`, `set_settings(dict)` (send only the keys you changed), `set_global_settings(dict)`, `switch_page(to="next", wrap=False)`
-(`next`, `previous`, `first`, `last`), `go_to_page(page_id)` (see [Pages](protocol.md#pages)), `open_url(url)`, `log(message, level="info")`.
+(`next`, `previous`, `first`, `last`), `go_to_page(page_id)` (see [Pages](protocol.md#pages)), `switch_profile(to="next", wrap=False)`, `go_to_profile(profile_id)` (see [Profiles](protocol.md#profiles)), `open_url(url)`, `log(message, level="info")`.
 
 The SDK accepts either `global_settings` or `settings` as the key in `global_settings_changed`; the server sends
 `global_settings`.

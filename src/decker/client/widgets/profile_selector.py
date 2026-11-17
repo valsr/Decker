@@ -67,6 +67,7 @@ class ProfileSelector(QToolButton):  # pylint: disable=too-many-instance-attribu
         self._profiles: dict[int, str] = {}
         self._active_id = -1
         self._pending_id: int | None = None
+        self._shown: tuple[tuple[ProfileInfo, ...], int] | None = None
         self._rename_id: int | None = None
         self._rename_edit: RenameEdit | None = None
         self._popup = _Popup(self, lambda: self._finish_rename(commit=True))
@@ -95,7 +96,14 @@ class ProfileSelector(QToolButton):  # pylint: disable=too-many-instance-attribu
     def set_profiles(
         self, profiles: list[ProfileInfo], active_profile_id: int, icon_for: IconProvider | None = None
     ) -> None:
-        """Rebuild the list in the given order and show the active profile on the button."""
+        """Rebuild the list in the given order and show the active profile on the button.
+
+        An identical list changes nothing, so a rename in progress survives refreshes caused by page changes.
+        """
+        signature = (tuple(profiles), active_profile_id)
+        if signature == self._shown:
+            return
+        self._shown = signature
         self._finish_rename(commit=False)
         self.popup_list.blockSignals(True)
         self.popup_list.clear()

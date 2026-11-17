@@ -231,10 +231,11 @@ class SchemaForm(QWidget):
             if field is None:
                 continue
             self._fields[entry["key"]] = field
-            _watch(field.widget, self.changed.emit)
             label = entry.get("label", entry["key"])
             self._layout.addRow(f"{label}:", field.widget)
         self._link_profile_fields(schema)
+        for field in self._fields.values():  # after linking, so a profile change clears the page before `changed`
+            _watch(field.widget, self.changed.emit)
 
     def _link_profile_fields(self, schema: list[dict[str, Any]]) -> None:
         """Make each page field list the pages of the profile chosen in its ``profile_field``."""

@@ -721,3 +721,8 @@ class TestProfileRpcs:
             "profile.clone",
             "profile.activate",
         )
+
+    @pytest.mark.parametrize("name", [5, None, True, ["x"]])
+    def test_non_string_names_fail_without_raising(self, service, name):
+        assert_that(json.loads(service.profile_add("dev1", name))).is_none()
+        assert_that(service.profile_rename("dev1", 0, name)).is_false()

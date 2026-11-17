@@ -4,6 +4,7 @@ import json
 import sqlite3
 import threading
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -185,14 +186,19 @@ class KeyAssignmentStore(Manager):
             self._db.execute(f"DELETE FROM {_TABLE} WHERE device_id = ? AND page_id = ?", (device_id, page_id))
             self._db.commit()
 
-    def copy_page(self, device_id: str, source_page_id: str, target_page_id: str) -> list[tuple[int, KeyAssignment]]:
-        """Copy every assignment of a page onto another page, giving each copy a new context id."""
+    def copy_page(
+        self, device_id: str, source_page_id: str, target_page_id: str, page_map: Mapping[str, str] | None = None
+    ) -> list[tuple[int, KeyAssignment]]:
+        """Copy every assignment of a page onto another page, giving each copy a new context id.
+
+        Settings values that are exactly an id in ``page_map`` (a copied page) are rewritten to its copy.
+        """
         with self._lock:
             rows = self._db.execute(
                 f"SELECT {_COLUMNS} FROM {_TABLE} WHERE device_id = ? AND page_id = ? ORDER BY key_index",
                 (device_id, source_page_id),
             ).fetchall()
-            copies = [(*row[:3], uuid.uuid4().hex, *row[4:]) for row in rows]
+            copies = [(*row[:3], uuid.uuid4().hex, _remap_pages(row[4], page_map or {}), row[5]) for row in rows]
             self._db.executemany(
                 f"INSERT INTO {_TABLE} (device_id, page_id, {_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [(device_id, target_page_id, *copy) for copy in copies],
@@ -246,6 +252,13 @@ class KeyAssignmentStore(Manager):
                 ),
             )
         self._db.execute("INSERT INTO key_assignment_meta (name) VALUES (?)", (_COUNTER_APPEARANCE_MIGRATION,))
+
+
+def _remap_pages(settings_json: str, page_map: Mapping[str, str]) -> str:
+    settings = json.loads(settings_json)
+    if not page_map or not isinstance(settings, dict):
+        return settings_json
+    return json.dumps({k: page_map.get(v, v) if isinstance(v, str) else v for k, v in settings.items()})
 
 
 def _to_assignment(device_id: str, row: tuple[Any, ...]) -> tuple[int, KeyAssignment]:

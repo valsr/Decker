@@ -14,7 +14,7 @@ FIELD_TYPES = frozenset(
     {"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style", "page", "profile"}
 )
 
-_PROFILE_ID_PATTERN = re.compile(r"^[0-9]*$")
+_PROFILE_ID_PATTERN = re.compile(r"[0-9]*\Z")
 _COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 _RGBA_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
