@@ -69,6 +69,35 @@ _REC_MANIFEST = {
     },
 }
 
+_STATIC_MANIFEST = {
+    "format": 1,
+    "id": "com.t.static",
+    "name": "Static",
+    "version": "1.0.0",
+    "author": "Decker",
+    "contributes": {
+        "actions": [
+            {
+                "id": "com.t.static.preset",
+                "name": "Preset",
+                "static": True,
+                "appearance": {"background": "#336699", "title": {"text": "Hi", "position": "middle"}},
+            }
+        ]
+    },
+}
+_MIXED_MANIFEST = {
+    **_REC_MANIFEST,
+    "id": "com.t.mixed",
+    "contributes": {
+        "actions": [
+            {"id": "com.t.mixed.live", "name": "Live"},
+            {"id": "com.t.mixed.preset", "name": "Preset", "static": True, "appearance": {"background": "#336699"}},
+        ]
+    },
+}
+_STATIC_ACTION = "com.t.static.preset"
+
 _FIXTURE_DIR = Path(__file__).parents[1] / "fixtures" / "plugins" / "com.decker.testfixture"
 _COUNTER = "com.decker.testfixture"
 _COUNTER_ACTION = "com.decker.testfixture.counter"
@@ -83,6 +112,8 @@ def _target(plugin: str, action: str, context: str = "ctx-1", key: int = 0) -> A
 
 COUNTER_TARGET = _target(_COUNTER, _COUNTER_ACTION)
 REC_TARGET = _target("com.decker.rec", _REC_ACTION)
+STATIC_TARGET = _target("com.t.static", _STATIC_ACTION, "ctx-static", 1)
+MIXED_STATIC_TARGET = _target("com.t.mixed", "com.t.mixed.preset", "ctx-mixed", 2)
 
 
 class FakeDevice:
@@ -169,6 +200,11 @@ class Env:
         script.write_text(_RECORDER)
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
         shutil.copytree(_FIXTURE_DIR, self.plugins_dir / _COUNTER)
+        (self.plugins_dir / "com.t.static").mkdir()
+        (self.plugins_dir / "com.t.static" / "manifest.json").write_text(json.dumps(_STATIC_MANIFEST))
+        self.mixed_dir = self.plugins_dir / "com.t.mixed"
+        shutil.copytree(self.rec_dir, self.mixed_dir)
+        (self.mixed_dir / "manifest.json").write_text(json.dumps(_MIXED_MANIFEST))
         self.dm = FakeDeviceManager()
         self.bus = FakeBus()
         self.persisted: list[tuple[ActionTarget, dict]] = []
@@ -248,7 +284,7 @@ class TestListing:
     def test_installed_plugins_are_loaded(self, env):
         plugins = {p.manifest.id for p in env.manager.plugins()}
 
-        assert_that(plugins).is_equal_to({_COUNTER, "com.decker.rec"})
+        assert_that(plugins).is_equal_to({_COUNTER, "com.decker.rec", "com.t.static", "com.t.mixed"})
         assert_that(env.manager.load_failures()).is_empty()
 
     def test_key_for_missing_plugin_keeps_assignment_and_label(self, env):
@@ -1039,3 +1075,70 @@ class TestLockDiscipline:
         env.manager.update_global_settings("com.decker.rec", {})
         assert _wait_for(lambda: env.received("global_settings_changed"))
         assert_that(env.received("global_settings_changed")[0]["payload"]).contains_key("global_settings")
+
+
+class TestStaticActions:
+    def test_static_action_draws_its_appearance(self, env):
+        env.manager.activate_action(STATIC_TARGET)
+
+        image = env.image(1)
+        assert_that(_pixel(image, 2, 2)).is_equal_to((0x33, 0x66, 0x99))
+        assert_that(image).is_not_equal_to(
+            compose_key_image(resolve_appearance({"background": "#336699"}, {}), None, "")
+        )
+
+    def test_static_action_starts_no_process_and_sends_nothing(self, env):
+        env.manager.activate_action(MIXED_STATIC_TARGET)
+
+        entry = env.manager._supervisor._entries.get("com.t.mixed")  # pylint: disable=protected-access
+        assert_that(entry is None or entry.process is None).is_true()
+        assert_that(env.mixed_dir.joinpath("received.log").exists()).is_false()
+        assert_that(env.image(2)).is_not_none()
+
+    def test_press_and_long_press_on_a_static_key_do_nothing(self, env):
+        env.manager.activate_action(MIXED_STATIC_TARGET)
+
+        env.manager.dispatch_key_down(MIXED_STATIC_TARGET)
+        env.manager.dispatch_key_up(MIXED_STATIC_TARGET)
+        env.manager.dispatch_key_down(MIXED_STATIC_TARGET)
+        time.sleep(0.8)
+        env.manager.dispatch_key_up(MIXED_STATIC_TARGET)
+
+        assert_that(env.mixed_dir.joinpath("received.log").exists()).is_false()
+
+    def test_deactivating_a_static_key_does_not_touch_the_supervisor(self, env):
+        env.manager.activate_action(MIXED_STATIC_TARGET)
+        env.manager._supervisor.release = MagicMock(side_effect=AssertionError("released"))  # type: ignore[method-assign]
+
+        env.manager.deactivate_action(MIXED_STATIC_TARGET)
+
+        assert_that(env.manager._live).does_not_contain_key("ctx-mixed")  # pylint: disable=protected-access
+
+    def test_user_appearance_overrides_the_static_defaults(self, env):
+        env.manager.activate_action(STATIC_TARGET, {"background": "#ff0000"})
+
+        assert_that(_pixel(env.image(1), 2, 2)).is_equal_to((255, 0, 0))
+
+    def test_static_action_in_a_runtime_plugin_does_not_start_the_process(self, env):
+        env.manager.activate_action(MIXED_STATIC_TARGET)
+        env.manager.dispatch_settings_changed(MIXED_STATIC_TARGET)
+        time.sleep(0.3)
+
+        assert_that(env.mixed_dir.joinpath("received.log").exists()).is_false()
+
+    def test_ready_plugin_does_not_send_will_appear_for_its_static_key(self, env):
+        mixed_live = _target("com.t.mixed", "com.t.mixed.live", "ctx-live", 3)
+        env.manager.activate_action(MIXED_STATIC_TARGET)
+        env.manager.activate_action(mixed_live)
+
+        assert_that(_wait_for(lambda: env.mixed_dir.joinpath("received.log").exists())).is_true()
+        time.sleep(0.3)
+        log = [json.loads(x) for x in env.mixed_dir.joinpath("received.log").read_text().splitlines()]
+        contexts = [m.get("context") for m in log if m["event"] == "will_appear"]
+        assert_that(contexts).is_equal_to(["ctx-live"])
+
+    def test_static_action_listed_in_list_actions(self, env):
+        actions = {a["action_uuid"]: a for a in env.manager.list_actions()}
+
+        assert_that(actions).contains_key(_STATIC_ACTION)
+        assert_that(actions[_STATIC_ACTION]["settings_schema"]).is_equal_to([])
