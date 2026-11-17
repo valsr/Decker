@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-FIELD_TYPES = frozenset({"int", "float", "text", "bool", "choice", "color", "font", "icon"})
+from decker.common.text_style import TEXT_STYLE_DEFAULTS, normalize_text_style
+
+FIELD_TYPES = frozenset({"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style"})
 
 _COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
@@ -24,6 +26,7 @@ _ZERO_VALUES: dict[str, Any] = {
     "color": "#000000",
     "font": "",
     "icon": "",
+    "text_style": dict(TEXT_STYLE_DEFAULTS),
 }
 _MISSING = object()
 
@@ -106,6 +109,8 @@ def _coerce(type_: str, value: Any, extra: Mapping[str, Any]) -> Any:
     elif type_ == "choice":
         allowed = [o["value"] for o in extra["options"]]
         result = next((o for o in allowed if type(o) is type(value) and o == value), _MISSING)
+    elif type_ == "text_style":
+        result = normalize_text_style(value)
     elif isinstance(value, str):
         result = value
     if type_ in ("int", "float") and result is not _MISSING and not _in_range(result, extra):
@@ -136,12 +141,20 @@ def _coerce_float(value: Any) -> Any:
     return result if math.isfinite(result) else _MISSING
 
 
+def _copy(value: Any) -> Any:
+    return dict(value) if isinstance(value, dict) else value
+
+
 def _parse_default(type_: str, data: dict[str, Any], optional: bool, extra: Mapping[str, Any], where: str) -> Any:
     if data.get("default") is None:
         if optional:
             return None
-        return extra["options"][0]["value"] if type_ == "choice" else _ZERO_VALUES[type_]
+        return extra["options"][0]["value"] if type_ == "choice" else _copy(_ZERO_VALUES[type_])
     raw = data["default"]
+    if type_ == "text_style":
+        if not isinstance(raw, dict):
+            raise ValueError(f"{where}: default {raw!r} is not valid for type '{type_}'")
+        return normalize_text_style(raw)
     # A JSON float with an int-like value (e.g. 1.0) is not a valid int default.
     value = _MISSING if type_ == "int" and not isinstance(raw, (int, str)) else _coerce(type_, raw, extra)
     if value is _MISSING or (type_ in ("int", "float") and isinstance(raw, str)):
@@ -205,7 +218,9 @@ def apply_schema(schema: Sequence[SettingEntry], values: Mapping[str, Any]) -> d
             continue
         raw = values.get(entry.key, _MISSING)
         if raw is _MISSING:
-            result[entry.key] = entry.default
+            result[entry.key] = _copy(entry.default)
+        elif entry.type == "text_style":
+            result[entry.key] = normalize_text_style(raw, entry.default or TEXT_STYLE_DEFAULTS)
         elif entry.optional and (raw is None or raw == ""):
             result[entry.key] = None
         else:
