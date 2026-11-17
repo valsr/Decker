@@ -7,6 +7,8 @@ from xml.etree.ElementTree import ParseError
 import cairosvg  # type: ignore[import-untyped]
 from PIL import Image, UnidentifiedImageError
 
+from decker.asset.tint import tint_svg
+
 MAX_RASTER_PIXELS = 4096 * 4096
 _SVG_SNIFF_BYTES = 64 * 1024
 
@@ -40,15 +42,15 @@ class AssetRenderer:
             return self._render_svg(path.read_bytes(), width, height)
         return _open_raster(path).convert("RGBA").resize((width, height))
 
-    def render_bytes(self, data: bytes, width: int, height: int) -> Image.Image | None:
-        """Render raw image bytes (SVG or raster) to a width x height RGBA image.
+    def render_bytes(self, data: bytes, width: int, height: int, color: str | None = None) -> Image.Image | None:
+        """Render raw image bytes (SVG or raster) to a width x height RGBA image; ``color`` tints SVG input only.
 
         Returns None if data is not a recognizable image format — callers should treat
         that as already-native hardware bytes and pass them through unchanged.
         """
         if _looks_like_svg(data):
             try:
-                return self._render_svg(data, width, height)
+                return self._render_svg(tint_svg(data, color) if color else data, width, height)
             except ParseError:
                 return None
         try:

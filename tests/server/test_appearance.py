@@ -369,3 +369,23 @@ def test_newline_in_user_title_does_not_crash() -> None:
 def test_title_of_only_line_breaks_draws_nothing() -> None:
     img = _open(compose_key_image(_appearance(title={"text": "\n\n"}), None, ""))
     assert_that(_has_title_pixels(img)).is_false()
+
+
+_ICON_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path fill="currentColor" d="M0 0h10v10H0z"/></svg>'
+)
+
+
+def test_plugin_icon_colour_tints_the_plugin_svg() -> None:
+    img = _open(compose_key_image(_appearance(background="#0000ff"), _ICON_SVG, "", plugin_image_color="#ff0000"))
+    assert_that(_pixel(img, 72, 72)).is_equal_to((255, 0, 0))
+
+
+def test_plugin_icon_without_colour_is_unchanged() -> None:
+    img = _open(compose_key_image(_appearance(background="#0000ff"), _ICON_SVG, ""))
+    assert_that(_pixel(img, 72, 72)).is_equal_to((0, 0, 0))
+
+
+def test_translucent_plugin_icon_colour_blends_with_background() -> None:
+    img = _open(compose_key_image(_appearance(background="#000000"), _ICON_SVG, "", plugin_image_color="#ffffff80"))
+    assert_that(_pixel(img, 72, 72)[0]).is_between(120, 135)
