@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from assertpy import assert_that
 
 from decker.asset.iconpack import IconPackRegistry
@@ -37,7 +38,16 @@ def test_list_icons_finds_images(tmp_path):
     registry.register(_plugin(tmp_path))
     assert_that(registry.list_icons("com.t.p.icons")).is_equal_to(["a.png", "sub/b.svg"])
     assert_that(registry.list_packs()).is_equal_to(
-        [{"id": "com.t.p.icons", "name": "Pack", "description": "", "plugin_id": "com.t.p", "icon_count": 2}]
+        [
+            {
+                "id": "com.t.p.icons",
+                "name": "Pack",
+                "description": "",
+                "plugin_id": "com.t.p",
+                "plugin_name": "T",
+                "icon_count": 2,
+            }
+        ]
     )
 
 
@@ -122,3 +132,50 @@ def test_read_icon_with_nul_byte_returns_none(tmp_path):
     registry = IconPackRegistry()
     registry.register(_plugin(tmp_path))
     assert_that(registry.read_icon("com.t.p.icons", "a\0.png")).is_none()
+
+
+def _registry(tmp_path) -> IconPackRegistry:
+    _pack(tmp_path)
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    return registry
+
+
+def test_read_ref_returns_icon_bytes(tmp_path):
+    registry = _registry(tmp_path)
+    assert_that(registry.read_ref("pack:com.t.p.icons/a.png")).is_equal_to(b"png-a")
+    assert_that(registry.read_ref("pack:com.t.p.icons/sub/b.svg")).is_equal_to(b"<svg/>")
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "",
+        "pack:",
+        "pack:com.t.p.icons",
+        "pack:com.t.p.icons/",
+        "pack:com.t.p.icons/missing.png",
+        "pack:unknown/a.png",
+        "pack:com.t.p.icons/../../etc/passwd",
+        "pack:com.t.p.icons//etc/passwd",
+        "pack:com.t.p.icons/notes.txt",
+        "pack:com.t.p.icons/sub/../../manifest.json",
+        "file:com.t.p.icons/a.png",
+        None,
+        5,
+    ],
+)
+def test_read_ref_rejects_bad_references(tmp_path, ref):
+    assert_that(_registry(tmp_path).read_ref(ref)).is_none()
+
+
+def test_read_ref_respects_size_cap(tmp_path):
+    registry = _registry(tmp_path)
+    (tmp_path / "pack" / "big.png").write_bytes(b"x" * (MAX_ICON_BYTES + 1))
+    assert_that(registry.read_ref("pack:com.t.p.icons/big.png")).is_none()
+
+
+def test_read_ref_after_unregister_is_none(tmp_path):
+    registry = _registry(tmp_path)
+    registry.unregister("com.t.p")
+    assert_that(registry.read_ref("pack:com.t.p.icons/a.png")).is_none()
