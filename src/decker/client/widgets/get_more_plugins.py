@@ -29,8 +29,10 @@ from decker.client.events import (
     PluginInstallFinishedEvent,
     PluginInstallProgressEvent,
     PluginsChangedEvent,
+    ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
+from decker.client.widgets.plugins_tab import NOT_ALLOWED_TOOLTIP, install_allowed
 
 ALL_CATEGORIES = "All categories"
 _THUMB_SIZE = 40
@@ -54,7 +56,7 @@ def button_state(plugin: dict[str, Any]) -> tuple[str, bool]:
     installed = plugin.get("installed_version")
     if not latest:
         versions = plugin.get("versions") or []
-        required = versions[-1].get("decker", "") if versions else ""
+        required = versions[0].get("decker", "") if versions else ""
         return (f"Requires Decker {required}".strip(), False)
     if not installed:
         return ("Install", True)
@@ -123,7 +125,7 @@ class _PluginRow(QWidget):
 
 
 class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
-    """Non-modal catalog browser; every RPC except icon fetches runs on a worker thread."""
+    """Non-modal catalog browser; every RPC (icon fetches included) runs on a worker thread."""
 
     _finished = pyqtSignal(object, object)
 
@@ -140,6 +142,8 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         self._early_finished: PluginInstallFinishedEvent | None = None
         self._progress: str = ""
         self._worker: threading.Thread | None = None
+        self._icon_worker: threading.Thread | None = None
+        self._icon_busy: bool = False
 
         self._search: QLineEdit = QLineEdit()
         self._category: QComboBox = QComboBox()
@@ -152,6 +156,7 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         em.subscribe(PluginInstallProgressEvent, self._on_progress)
         em.subscribe(PluginInstallFinishedEvent, self._on_finished)
         em.subscribe(PluginsChangedEvent, self._on_plugins_changed)
+        em.subscribe(ServerDisconnectedEvent, self._on_disconnected)
         self.refresh()
 
     def refresh(self) -> None:
@@ -166,6 +171,7 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         em.unsubscribe(PluginInstallProgressEvent, self._on_progress)
         em.unsubscribe(PluginInstallFinishedEvent, self._on_finished)
         em.unsubscribe(PluginsChangedEvent, self._on_plugins_changed)
+        em.unsubscribe(ServerDisconnectedEvent, self._on_disconnected)
         super().done(result)
 
     def _build(self) -> None:
@@ -219,7 +225,7 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         if not isinstance(catalog, list):
             self._status.setText("Could not load the plugin catalog from the server.")
             return
-        self._catalog = sorted(catalog, key=lambda p: str(p.get("name") or p.get("id")).lower())
+        self._catalog = _visible_catalog(catalog)
         self._status.setText("" if self._catalog else "No plugins are available from the configured repositories.")
         chosen = self._category.currentText()
         self._category.blockSignals(True)
@@ -267,20 +273,26 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
             self._pending.append(plugin_id)
 
     def _schedule_next_load(self) -> None:
-        if self._pending:
-            QTimer.singleShot(0, self._load_next_icon)
-
-    def _load_next_icon(self) -> None:
-        # One RPC per event-loop turn keeps the UI responsive over slow links.
+        # One icon at a time on a worker: the server may have to fetch it over the network.
         manager = AppContext.get().connection_manager
-        if not self._pending or manager is None:
+        if self._icon_busy or not self._pending or manager is None:
             return
+        self._icon_busy = True
         plugin_id = self._pending.popleft()
-        try:
-            raw = manager.call("repository_icon", plugin_id)
-        except Exception:  # pylint: disable=broad-exception-caught
-            logging.exception("Could not load icon for %s", plugin_id)
-            raw = None
+
+        def target() -> None:
+            try:
+                raw = manager.call("repository_icon", plugin_id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                logging.exception("Could not load icon for %s", plugin_id)
+                raw = None
+            self._finished.emit(lambda result: self._icon_loaded(plugin_id, result), raw)
+
+        self._icon_worker = threading.Thread(target=target, daemon=True)
+        self._icon_worker.start()
+
+    def _icon_loaded(self, plugin_id: str, raw: Any) -> None:
+        self._icon_busy = False
         pixmap = decode_icon(raw) if isinstance(raw, str) else None
         self._icons[plugin_id] = pixmap
         row = self._rows.get(plugin_id)
@@ -297,13 +309,15 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         self._details.setText(_details_html(plugin) if plugin is not None else "Select a plugin to see its details.")
 
     def _apply_busy(self) -> None:
+        allowed = install_allowed()
         for plugin_id, row in self._rows.items():
-            row.button.setEnabled(row.actionable and self._installing is None)
+            row.button.setEnabled(row.actionable and allowed and self._installing is None)
+            row.button.setToolTip("" if allowed or not row.actionable else NOT_ALLOWED_TOOLTIP)
             if self._installing is not None and plugin_id == self._installing:
                 row.button.setText(self._progress or "Installing…")
 
     def _on_install(self, plugin_id: str) -> None:
-        if self._installing is not None:
+        if self._installing is not None or not install_allowed():
             return
         self._installing = plugin_id
         self._job_id = None
@@ -350,6 +364,16 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         self._apply_filter()
         self._run(lambda m: to_plain(m.call("repository_catalog")), self._show_catalog_keep_status)
 
+    def _on_disconnected(self, _event: ServerDisconnectedEvent) -> None:
+        if self._installing is None:
+            return
+        interrupted = self._installing
+        self._installing = None
+        self._job_id = None
+        self._early_finished = None
+        self._apply_filter()
+        self._status.setText(f"Install of {interrupted} was interrupted: the connection to the server was lost.")
+
     def _on_plugins_changed(self, _event: PluginsChangedEvent) -> None:
         # Plugins changed elsewhere (e.g. "Update all"); an own job reloads the catalog when it finishes.
         if self._installing is None:
@@ -362,10 +386,20 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
             self._status.setText(status)
 
 
+def _visible_catalog(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop shadowed duplicates, noting on the winning entry which repositories also offer it."""
+    also: dict[str, list[str]] = {}
+    for plugin in catalog:
+        if plugin.get("shadowed_by"):
+            also.setdefault(str(plugin["id"]), []).append(str(plugin.get("repository") or ""))
+    winners = [{**p, "also_offered_by": also.get(str(p["id"]), [])} for p in catalog if not p.get("shadowed_by")]
+    return sorted(winners, key=lambda p: str(p.get("name") or p.get("id")).lower())
+
+
 def _details_html(plugin: dict[str, Any]) -> str:
     versions = plugin.get("versions") or []
     latest = plugin.get("latest_compatible")
-    chosen = next((v for v in versions if v.get("version") == latest), versions[-1] if versions else {})
+    chosen = next((v for v in versions if v.get("version") == latest), versions[0] if versions else {})
     contributes = chosen.get("contributes") or {}
     name, description = escape(_text(plugin, "name") or str(plugin["id"])), escape(_text(plugin, "description"))
     lines = [
@@ -384,4 +418,6 @@ def _details_html(plugin: dict[str, Any]) -> str:
         size, decker = human_size(int(chosen.get("size") or 0)), escape(_text(chosen, "decker") or "any")
         lines.append(f"<p>Size: {size}</p><p>Requires Decker: {decker}</p>")
     lines.append("<p>Repository: " + escape(_text(plugin, "repository")) + "</p>")
+    for other in plugin.get("also_offered_by") or []:
+        lines.append(f"<p>Also offered by {escape(str(other))} (not used)</p>")
     return "".join(lines)
