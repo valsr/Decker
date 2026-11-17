@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -28,7 +28,7 @@ REPOSITORY_TRUST_WARNING = (
     "Only add repositories you trust."
 )
 SCHEDULES = ("Daily", "Weekly", "Monthly", "Manual")
-_URL_ROLE = 0x0100  # Qt.ItemDataRole.UserRole
+_URL_ROLE = Qt.ItemDataRole.UserRole
 
 
 def _describe(repo: dict[str, Any]) -> str:
@@ -80,7 +80,7 @@ class RepositoriesSection(QWidget):  # pylint: disable=too-many-instance-attribu
         for widget in (self._add_btn, self._remove_btn, self._check_btn):
             buttons.addWidget(widget)
         buttons.addStretch()
-        buttons.addWidget(QLabel("Check for updates:"))
+        buttons.addWidget(QLabel("Update check:"))
         buttons.addWidget(self._schedule)
 
         layout = QVBoxLayout(self)
@@ -104,6 +104,7 @@ class RepositoriesSection(QWidget):  # pylint: disable=too-many-instance-attribu
         manager = AppContext.get().connection_manager
         if manager is None:
             self._status.setText("Not connected to the server.")
+            self._check_btn.setEnabled(True)
             return
 
         def target() -> None:
@@ -137,7 +138,9 @@ class RepositoriesSection(QWidget):  # pylint: disable=too-many-instance-attribu
         url = url.strip()
         if not ok or not url:
             return
-        answer = QMessageBox.question(self, "Add repository", REPOSITORY_TRUST_WARNING)
+        answer = QMessageBox.question(
+            self, "Add repository", REPOSITORY_TRUST_WARNING, defaultButton=QMessageBox.StandardButton.No
+        )
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._status.setText(f"Adding {url}…")
@@ -148,7 +151,9 @@ class RepositoriesSection(QWidget):  # pylint: disable=too-many-instance-attribu
         if item is None:
             return
         url = str(item.data(_URL_ROLE))
-        answer = QMessageBox.question(self, "Remove repository", f"Remove {url}?")
+        answer = QMessageBox.question(
+            self, "Remove repository", f"Remove {url}?", defaultButton=QMessageBox.StandardButton.No
+        )
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._run(
@@ -160,8 +165,15 @@ class RepositoriesSection(QWidget):  # pylint: disable=too-many-instance-attribu
         name = self._schedule.currentText().lower()
         self._run(
             lambda m: m.call("update_check_set_schedule", name),
-            lambda ok: self._status.setText("" if ok else "Could not change the schedule."),
+            self._after_schedule,
         )
+
+    def _after_schedule(self, ok: Any) -> None:
+        if ok:
+            self._status.setText("")
+            return
+        self._status.setText("Could not change the schedule.")
+        self.refresh()
 
     def _on_check(self) -> None:
         self._status.setText("Checking for updates…")
