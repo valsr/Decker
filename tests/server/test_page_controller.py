@@ -9,7 +9,11 @@ from assertpy import assert_that
 from decker.plugin.target import ActionTarget
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.key_assignments import KeyAssignmentStore
-from decker.server.page_controller import PAGES_CHANGED_EVENT, PageController
+from decker.server.page_controller import (
+    PAGES_CHANGED_EVENT,
+    PROFILES_CHANGED_EVENT,
+    PageController,
+)
 from decker.server.pages import PageStore, initial_page_id
 from decker.server.server_context import ServerContext
 
@@ -234,3 +238,170 @@ class TestNotifyRefreshesPlugins:
 
         assert_that(manager.refresh_page_dependent.call_args_list).is_equal_to([call(DEV)])
         assert_that(lock_free).is_equal_to([True])
+
+
+def _names(events):
+    return [name for name, _ in events]
+
+
+class TestProfiles:
+    def test_activate_profile_shows_its_default_page_and_hides_old_actions(self, context):
+        profile = context.page_controller.add_profile(DEV)
+        page = context.page_store.list_pages(DEV, profile.profile_id)[0]
+        old, new = _target(0, "old"), _target(0, "new")
+        context.key_assignment_store.assign(DEV, PAGE1, 0, old, {})
+        context.key_assignment_store.assign(DEV, page.page_id, 0, new, {"n": 1})
+        context.event_bus.push.reset_mock()
+
+        assert_that(context.page_controller.activate_profile(DEV, profile.profile_id)).is_true()
+
+        context.plugin_manager.deactivate_action.assert_called_once_with(old)
+        context.device_manager.show_page.assert_called_with(DEV, page.page_id)
+        context.plugin_manager.activate_action.assert_called_once_with(new, {})
+        assert_that(context.page_controller.active_profile_id(DEV)).is_equal_to(profile.profile_id)
+        assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(page.page_id)
+        assert_that(_names(_events(context))).contains(PAGES_CHANGED_EVENT, PROFILES_CHANGED_EVENT)
+
+    def test_activating_the_active_profile_is_a_no_op(self, context):
+        context.event_bus.push.reset_mock()
+
+        assert_that(context.page_controller.activate_profile(DEV, 0)).is_true()
+
+        context.device_manager.show_page.assert_not_called()
+        context.event_bus.push.assert_not_called()
+
+    def test_activate_unknown_profile_returns_false(self, context):
+        assert_that(context.page_controller.activate_profile(DEV, 9)).is_false()
+        context.event_bus.push.assert_not_called()
+
+    def test_activate_page_in_other_profile_switches_profile(self, context):
+        profile = context.page_controller.add_profile(DEV)
+        page = context.page_store.add_page(DEV, "Second", profile_id=profile.profile_id)
+
+        assert_that(context.page_controller.activate(DEV, page.page_id)).is_true()
+
+        assert_that(context.page_controller.active_profile_id(DEV)).is_equal_to(profile.profile_id)
+        assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(page.page_id)
+        assert_that(_names(_events(context))).contains(PROFILES_CHANGED_EVENT)
+
+    def test_active_page_follows_active_profile_when_store_changes(self, context):
+        profile = context.page_store.add_profile(DEV)
+        context.page_controller.active_page_id(DEV)  # records PAGE1
+        context.page_store.set_active_profile(DEV, profile.profile_id)
+
+        assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(
+            context.page_store.default_page_id(DEV, profile.profile_id)
+        )
+
+    def test_device_pages_snapshot_is_the_active_profiles(self, context):
+        profile = context.page_controller.add_profile(DEV)
+        context.page_controller.activate_profile(DEV, profile.profile_id)
+
+        snapshot = context.page_controller.device_pages(DEV)
+
+        assert_that(snapshot.profile_id).is_equal_to(profile.profile_id)
+        assert_that(len(snapshot.pages)).is_equal_to(1)
+        assert_that(snapshot.active_page_id).is_equal_to(snapshot.pages[0].page_id)
+
+    def test_device_profiles_snapshot(self, context):
+        profile = context.page_controller.add_profile(DEV, "Media")
+
+        snapshot = context.page_controller.device_profiles(DEV)
+
+        assert_that([p.name for p in snapshot.profiles]).is_equal_to(["Default", "Media"])
+        assert_that(snapshot.active_profile_id).is_equal_to(0)
+        assert_that(profile.profile_id).is_equal_to(1)
+
+    def test_add_rename_icon_notify_both_events_and_refresh(self, context):
+        profile = context.page_controller.add_profile(DEV)
+        assert_that(context.page_controller.rename_profile(DEV, profile.profile_id, "Work")).is_true()
+        assert_that(context.page_controller.set_profile_icon(DEV, profile.profile_id, "decker:logo")).is_true()
+
+        names = _names(_events(context))
+        assert_that(names.count(PAGES_CHANGED_EVENT)).is_equal_to(3)
+        assert_that(names.count(PROFILES_CHANGED_EVENT)).is_equal_to(3)
+        assert_that(context.plugin_manager.refresh_page_dependent.call_count).is_equal_to(3)
+
+    def test_failed_profile_edits_do_not_notify(self, context):
+        assert_that(context.page_controller.rename_profile(DEV, 9, "x")).is_false()
+        assert_that(context.page_controller.set_profile_icon(DEV, 9, "")).is_false()
+        context.event_bus.push.assert_not_called()
+
+    def test_delete_active_profile_switches_to_next_and_cleans_up(self, context):
+        second = context.page_controller.add_profile(DEV)
+        third = context.page_controller.add_profile(DEV)
+        context.page_controller.activate_profile(DEV, second.profile_id)
+        page = context.page_store.list_pages(DEV, second.profile_id)[0]
+        live = _target(0, "live")
+        context.key_assignment_store.assign(DEV, page.page_id, 0, live, {})
+        context.device_state_store.save_key_label(DEV, page.page_id, 0, "x")
+
+        assert_that(context.page_controller.delete_profile(DEV, second.profile_id)).is_true()
+
+        context.plugin_manager.deactivate_action.assert_called_once_with(live)
+        assert_that(context.page_controller.active_profile_id(DEV)).is_equal_to(third.profile_id)
+        assert_that(context.key_assignment_store.all_for_page(DEV, page.page_id)).is_empty()
+        assert_that(context.device_state_store.get_all_key_labels(DEV, page.page_id)).is_empty()
+        assert_that(context.page_store.get(DEV, page.page_id)).is_none()
+
+    def test_delete_active_last_profile_switches_to_previous(self, context):
+        second = context.page_controller.add_profile(DEV)
+        context.page_controller.activate_profile(DEV, second.profile_id)
+
+        context.page_controller.delete_profile(DEV, second.profile_id)
+
+        assert_that(context.page_controller.active_profile_id(DEV)).is_equal_to(0)
+        assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(PAGE1)
+
+    def test_deleting_an_inactive_profile_leaves_the_active_page_alone(self, context):
+        second = context.page_controller.add_profile(DEV)
+        context.device_manager.show_page.reset_mock()
+
+        assert_that(context.page_controller.delete_profile(DEV, second.profile_id)).is_true()
+
+        context.device_manager.show_page.assert_not_called()
+        context.plugin_manager.deactivate_action.assert_not_called()
+        assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(PAGE1)
+
+    def test_cannot_delete_last_or_unknown_profile(self, context):
+        assert_that(context.page_controller.delete_profile(DEV, 0)).is_false()
+        context.page_controller.add_profile(DEV)
+        assert_that(context.page_controller.delete_profile(DEV, 7)).is_false()
+
+    def test_clone_copies_keys_with_new_contexts_and_does_not_activate(self, context):
+        original = _target(0, "orig")
+        context.key_assignment_store.assign(DEV, PAGE1, 0, original, {"n": 1})
+        context.device_state_store.save_key_label(DEV, PAGE1, 0, "lbl")
+        context.device_manager.show_page.reset_mock()
+
+        clone = context.page_controller.clone_profile(DEV, 0)
+
+        assert_that(clone.name).is_equal_to("Default copy")
+        copied_page = context.page_store.list_pages(DEV, clone.profile_id)[0]
+        copied = context.key_assignment_store.all_for_page(DEV, copied_page.page_id)
+        assert_that(copied[0][1].settings).is_equal_to({"n": 1})
+        assert_that(copied[0][1].target.context_id).is_not_equal_to("orig")
+        assert_that(context.device_state_store.get_key_label(DEV, copied_page.page_id, 0)).is_equal_to("lbl")
+        assert_that(context.page_controller.active_profile_id(DEV)).is_equal_to(0)
+        context.device_manager.show_page.assert_not_called()
+        assert_that(context.key_assignment_store.all_for_page(DEV, PAGE1)[0][1].target.context_id).is_equal_to("orig")
+
+    def test_clone_unknown_profile_returns_none(self, context):
+        assert_that(context.page_controller.clone_profile(DEV, 9)).is_none()
+
+    def test_restore_shows_active_profiles_default_page(self, context):
+        profile = context.page_store.add_profile(DEV)
+        context.page_store.set_active_profile(DEV, profile.profile_id)
+        page = context.page_store.list_pages(DEV, profile.profile_id)[0]
+
+        context.page_controller.restore(DEV)
+
+        context.device_manager.show_page.assert_called_once_with(DEV, page.page_id)
+
+    def test_deleting_pages_in_an_inactive_profile_keeps_the_active_page(self, context):
+        profile = context.page_controller.add_profile(DEV)
+        extra = context.page_store.add_page(DEV, profile_id=profile.profile_id)
+
+        assert_that(context.page_controller.delete_page(DEV, extra.page_id)).is_true()
+
+        assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(PAGE1)
