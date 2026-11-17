@@ -18,6 +18,7 @@ from assertpy import assert_that
 from PIL import Image
 
 from decker.common.model import DeviceHardwareInfo, KeyInfo
+from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.gestures import Gesture
 from decker.plugin.manifest import StateSpec
 from decker.plugin.protocol import Message
@@ -257,6 +258,27 @@ class TestListing:
         assert_that(env.label()).is_equal_to("Plugin missing")
         assert_that(env.dm.cleared).contains(0)
         assert_that(env.manager.live_targets("com.example.gone")).is_empty()
+
+    def test_missing_label_is_cleared_when_the_plugin_is_installed(self, env):
+        removed = next(p for p in env.manager.plugins() if p.manifest.id == "com.decker.rec")
+        env.manager.remove_plugin("com.decker.rec")
+        env.manager.activate_action(REC_TARGET)
+        assert_that(env.label()).is_equal_to("Plugin missing")
+
+        env.manager.add_plugin(removed)
+        env.manager.activate_action(REC_TARGET)
+
+        assert_that(env.label()).is_equal_to("")
+        assert _wait_for(lambda: env.received("will_appear"))
+
+    def test_key_of_plugin_that_failed_to_load_says_failed(self, env):
+        env.manager._failures.append(
+            PluginLoadFailedEvent("com.example.broken", "bad manifest")
+        )  # pylint: disable=protected-access
+
+        env.manager.activate_action(_target("com.example.broken", "com.example.broken.act"))
+
+        assert_that(env.label()).is_equal_to("Plugin failed")
 
     def test_complete_settings_fills_defaults(self, env):
         assert_that(env.manager.complete_settings(REC_TARGET, {"n": "3", "junk": 1})).is_equal_to({"n": 3, "t": "x"})
@@ -601,6 +623,7 @@ class TestFailure:
         assert _wait_for(lambda: env.received("will_appear"))
         assert_that(env.received("will_appear")[0]["payload"]["settings"]["n"]).is_equal_to(2)
         assert_that(env.manager.load_failures()).is_empty()
+        assert _wait_for(lambda: env.label() == "")
 
 
 class TestPluginRequests:
