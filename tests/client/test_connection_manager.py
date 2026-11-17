@@ -23,6 +23,7 @@ from decker.client.events import (
     PluginInstallProgressEvent,
     PluginLoadFailedEvent,
     PluginsChangedEvent,
+    PluginUpdatesAvailableEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
@@ -591,3 +592,24 @@ class TestPageRefresh:  # pylint: disable=protected-access
 
         assert_that([e for e in EventManager.get().drain() if isinstance(e, PagesUpdatedEvent)]).is_length(1)
         self.manager._close_connection()
+
+    def test_updates_event_routed(self):
+        payload = {"updates": [{"id": "a.b", "name": "B", "installed": "1", "available": "2"}], "missing": []}
+        self.manager._on_server_event(
+            "plugin_updates_available", json.dumps(payload)
+        )  # pylint: disable=protected-access
+        (event,) = EventManager.get().drain()
+        assert isinstance(event, PluginUpdatesAvailableEvent)
+        assert_that(event.updates).is_equal_to(payload["updates"])
+        assert_that(event.missing).is_equal_to([])
+
+    def test_updates_fetched_on_connect(self):
+        conn = _healthy_conn()
+        conn.root.plugin_updates.return_value = {"updates": [], "missing": [{"id": "m"}]}
+        with patch("rpyc.utils.factory.connect", return_value=conn), patch(
+            "decker.client.connection_manager.BgServingThread"
+        ):
+            self.manager._try_connect()  # pylint: disable=protected-access
+        events = [e for e in EventManager.get().drain() if isinstance(e, PluginUpdatesAvailableEvent)]
+        assert_that(events).is_length(1)
+        assert_that(events[0].missing).is_equal_to([{"id": "m"}])

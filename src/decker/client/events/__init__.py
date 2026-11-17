@@ -102,6 +102,14 @@ class PluginsChangedEvent:
 
 
 @dataclass(frozen=True)
+class PluginUpdatesAvailableEvent:
+    """Installed plugins have updates, or repository plugins are missing from this machine."""
+
+    updates: list[dict[str, Any]]
+    missing: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
 class ViewActivatedEvent:
     """A view became the active view in the main window."""
 
@@ -128,6 +136,7 @@ AppEvent = (
     | PluginInstallProgressEvent
     | PluginInstallFinishedEvent
     | PluginsChangedEvent
+    | PluginUpdatesAvailableEvent
     | ViewActivatedEvent
     | ViewDeactivatedEvent
 )

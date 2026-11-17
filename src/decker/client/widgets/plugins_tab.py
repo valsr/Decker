@@ -125,6 +125,8 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
 
         self._plugin_list: QListWidget = QListWidget()
         self._install_btn: QPushButton = QPushButton("Install…")
+        self._get_more_btn: QPushButton = QPushButton("Get More Plugins…")
+        self._repositories: Any = None
         self._uninstall_btn: QPushButton = QPushButton("Uninstall")
         self._status_label: QLabel = QLabel()
         self._settings_form: SchemaForm = SchemaForm()
@@ -155,6 +157,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         self._install_btn.setEnabled(allowed)
         self._install_btn.setToolTip("" if allowed else NOT_ALLOWED_TOOLTIP)
         self._show_selection()
+        self._repositories.refresh()
 
     def set_failed_plugins(self, failures: dict[str, str]) -> None:
         """Replace the failed-plugin list (plugin UUID → error message)."""
@@ -162,6 +165,11 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         self._refresh_failed_plugins()
 
     def _build(self) -> None:
+        from decker.client.widgets.repositories_section import (  # pylint: disable=import-outside-toplevel,cyclic-import
+            RepositoriesSection,
+        )
+
+        self._repositories = RepositoriesSection()
         self._plugin_list.setIconSize(self._plugin_list.iconSize() * 2)
         self._plugin_list.currentItemChanged.connect(self._on_selection_changed)
         self._install_btn.clicked.connect(self._on_install_clicked)
@@ -178,11 +186,13 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         buttons.addWidget(self._install_btn)
         buttons.addWidget(self._uninstall_btn)
         buttons.addStretch()
+        buttons.addWidget(self._get_more_btn)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._plugin_list, 2)
         layout.addLayout(buttons)
         layout.addWidget(self._status_label)
+        layout.addWidget(self._repositories)
         layout.addWidget(self._settings_title)
         layout.addWidget(self._settings_form)
         layout.addWidget(self._apply_settings_btn)
