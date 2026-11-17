@@ -25,6 +25,9 @@ if TYPE_CHECKING:
 PLUGIN_INSTALL_PROGRESS_EVENT = "plugin_install_progress"
 PLUGIN_INSTALL_FINISHED_EVENT = "plugin_install_finished"
 PLUGINS_CHANGED_EVENT = "plugins_changed"
+_UNINSTALL_WAIT_S = 2.0
+_MAX_JOBS = 20
+_BUSY = "busy: another plugin install or uninstall is in progress; try again when it has finished"
 
 
 class PluginInstallError(Exception):
@@ -57,31 +60,66 @@ class PluginInstaller:
         self._context = context
         self._decker_version = decker_version
         self._op_lock = threading.Lock()
+        self._jobs: dict[str, dict[str, Any]] = {}
+        self._jobs_lock = threading.Lock()
 
     def install(self, filename: str, data: bytes) -> str:
-        """Start installing a package in the background and return the job id its events carry."""
+        """Start installing a package in the background and return the job id; raises if one is already running."""
+        if not self._op_lock.acquire(blocking=False):
+            raise PluginInstallError(_BUSY)
         job_id = uuid.uuid4().hex
-        threading.Thread(target=self._run_install, args=(job_id, filename, data), daemon=True).start()
+        try:
+            self._update_job(job_id, state="running", message=f"Checking {filename}")
+            threading.Thread(target=self._run_install, args=(job_id, filename, data), daemon=True).start()
+        except BaseException:
+            self._op_lock.release()
+            raise
         return job_id
 
+    def status(self, job_id: str) -> dict[str, Any]:
+        """Return an install job's state: running, succeeded or failed (unknown for an id the server never saw)."""
+        with self._jobs_lock:
+            job = self._jobs.get(job_id)
+            return dict(job) if job is not None else {"job_id": job_id, "state": "unknown", "message": "unknown job"}
+
     def uninstall(self, plugin_id: str) -> None:
-        """Remove a user-installed plugin, its key assignments, settings and folder."""
-        with self._op_lock:
-            plugin = self._find(plugin_id)
-            if plugin is None:
-                raise PluginInstallError(f"plugin {plugin_id} is not installed")
-            if plugin.bundled:
-                raise PluginInstallError(f"{plugin_id} is bundled with Decker and cannot be uninstalled")
-            plugins = self._context.plugin_manager
-            for target in plugins.live_targets(plugin_id):
-                plugins.deactivate_action(target)
-            plugins.remove_plugin(plugin_id)
-            devices = self._clear_assignments(plugin_id)
-            plugins.delete_plugin_settings(plugin_id)
-            shutil.rmtree(plugin.plugin_dir, ignore_errors=True)
+        """Remove a user-installed plugin (or a broken plugin folder), its key assignments, settings and folder."""
+        if not self._op_lock.acquire(timeout=_UNINSTALL_WAIT_S):
+            raise PluginInstallError(_BUSY)
+        try:
+            devices = self._uninstall_locked(plugin_id)
+        finally:
+            self._op_lock.release()
         self._push(PLUGINS_CHANGED_EVENT, {})
         for device_id in sorted(devices):
             self._push(PAGES_CHANGED_EVENT, {"device_id": device_id})
+
+    def _uninstall_locked(self, plugin_id: str) -> set[str]:
+        plugin = self._find(plugin_id)
+        plugins = self._context.plugin_manager
+        if plugin is None:
+            folder = self._broken_folder(plugin_id)
+            if folder is None:
+                raise PluginInstallError(f"plugin {plugin_id} is not installed")
+            plugins.remove_plugin(plugin_id)
+            shutil.rmtree(folder, ignore_errors=True)
+            return set()
+        if plugin.bundled:
+            raise PluginInstallError(f"{plugin_id} is bundled with Decker and cannot be uninstalled")
+        for target in plugins.live_targets(plugin_id):
+            plugins.deactivate_action(target)
+        plugins.remove_plugin(plugin_id)
+        devices = self._clear_assignments(plugin_id)
+        plugins.delete_plugin_settings(plugin_id)
+        shutil.rmtree(plugin.plugin_dir, ignore_errors=True)
+        return devices
+
+    def _broken_folder(self, name: str) -> Path | None:
+        """A user plugin folder that failed to load (it has no registered plugin), addressed by folder name."""
+        if not name or name.startswith(".") or "/" in name or "\\" in name or "\0" in name:
+            return None
+        folder = self._plugins_dir / name
+        return folder if folder.is_dir() and not folder.is_symlink() else None
 
     def usage(self, plugin_id: str) -> int:
         """Return how many keys, across all devices and pages, use the plugin's actions."""
@@ -93,19 +131,22 @@ class PluginInstaller:
 
     def _run_install(self, job_id: str, filename: str, data: bytes) -> None:
         def progress(message: str) -> None:
+            self._update_job(job_id, message=message)
             self._push("plugin_install_progress", {"job_id": job_id, "message": message})
 
-        with self._op_lock:
-            try:
-                progress(f"Checking {filename}")
-                outcome = self._install(job_id, data, progress)
-            except (PackageError, EnvironmentBuildError, PluginInstallError, OSError) as exc:
-                self._finish(job_id, None, str(exc))
-                return
-            except Exception:  # pylint: disable=broad-except
-                logging.exception("Unexpected failure installing %s", filename)
-                self._finish(job_id, None, "unexpected error while installing the plugin")
-                return
+        try:
+            progress(f"Checking {filename}")
+            outcome = self._install(job_id, data, progress)
+        except (PackageError, EnvironmentBuildError, PluginInstallError, OSError) as exc:
+            self._op_lock.release()
+            self._finish(job_id, None, str(exc))
+            return
+        except Exception:  # pylint: disable=broad-except
+            logging.exception("Unexpected failure installing %s", filename)
+            self._op_lock.release()
+            self._finish(job_id, None, "unexpected error while installing the plugin")
+            return
+        self._op_lock.release()
         self._finish(job_id, outcome, f"Installed {outcome.plugin_id} {outcome.version}")
         self._push(PLUGINS_CHANGED_EVENT, {})
 
@@ -237,7 +278,21 @@ class PluginInstaller:
             devices.add(device_id)
         return devices
 
+    def _update_job(self, job_id: str, **fields: Any) -> None:
+        with self._jobs_lock:
+            job = self._jobs.setdefault(job_id, {"job_id": job_id})
+            job.update(fields)
+            while len(self._jobs) > _MAX_JOBS:
+                self._jobs.pop(next(iter(self._jobs)))
+
     def _finish(self, job_id: str, outcome: _Outcome | None, message: str) -> None:
+        self._update_job(
+            job_id,
+            state="succeeded" if outcome is not None else "failed",
+            message=message,
+            plugin_id=outcome.plugin_id if outcome else None,
+            version=outcome.version if outcome else None,
+        )
         self._push(
             PLUGIN_INSTALL_FINISHED_EVENT,
             {

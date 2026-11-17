@@ -20,7 +20,7 @@ from decker.plugin.environment import stage_sdk
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.gestures import Gesture, GestureRecognizer
 from decker.plugin.icons import read_icon
-from decker.plugin.loader import InstalledPlugin, PluginLoader
+from decker.plugin.loader import InstalledPlugin, PluginLoader, recover_interrupted_installs
 from decker.plugin.manifest import ActionSpec
 from decker.plugin.protocol import Message
 from decker.plugin.runtime.launcher import launch_command, launch_env
@@ -178,6 +178,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._sdk_path = stage_sdk()
         except OSError:
             logging.exception("Could not stage the plugin SDK; installed plugins will not be able to start")
+        recover_interrupted_installs(self._user_loader.plugins_dir)
         bundled = self._bundled_loader.scan()
         user = self._user_loader.scan()
         with self._lock:

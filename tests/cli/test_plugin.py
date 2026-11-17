@@ -52,3 +52,39 @@ def test_list_non_list_reply_is_empty():
 def test_remove_permission_error():
     with pytest.raises(plugin_cli.PluginCliError, match="only allowed"):
         plugin_cli.remove(FakeConn(error=PermissionError("denied")), "com.x.y")
+
+
+class _SequenceConn(FakeConn):
+    def __init__(self, replies):
+        super().__init__()
+        self._queue = list(replies)
+
+    def request(self, name, *args):
+        self.calls.append((name, args))
+        return self._queue.pop(0) if len(self._queue) > 1 else self._queue[0]
+
+
+def test_wait_for_install_reports_progress_until_finished():
+    conn = _SequenceConn(
+        [
+            {"state": "running", "message": "Extracting package"},
+            {"state": "running", "message": "Extracting package"},
+            {"state": "running", "message": "Building the plugin environment"},
+            {"state": "succeeded", "message": "Installed a.b 1.0.0"},
+        ]
+    )
+    lines: list[str] = []
+
+    status = plugin_cli.wait_for_install(conn, "j", lines.append, sleep=lambda _s: None)
+
+    assert_that(status["state"]).is_equal_to("succeeded")
+    assert_that(lines).is_equal_to(["Extracting package", "Building the plugin environment", "Installed a.b 1.0.0"])
+
+
+def test_wait_for_install_times_out():
+    conn = _SequenceConn([{"state": "running", "message": "Building"}])
+
+    status = plugin_cli.wait_for_install(conn, "j", lambda _m: None, timeout=0.0, sleep=lambda _s: None)
+
+    assert_that(status["state"]).is_equal_to("failed")
+    assert_that(status["message"]).contains("timed out")

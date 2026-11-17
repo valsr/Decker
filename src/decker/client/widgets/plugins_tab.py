@@ -36,7 +36,8 @@ MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 TRUST_NOTICE = "Plugins run with your user's permissions. Only install plugins from authors you trust."
 NOT_ALLOWED_TOOLTIP = "Installing plugins is only allowed from the server's own machine"
 _FAILURE_HINT = (
-    "Installing and uninstalling is only allowed from the server's own machine; otherwise check the connection."
+    "Installing and uninstalling is only allowed from the server's own machine, and only one at a time; "
+    "otherwise check the connection."
 )
 _PLUGIN_ID_ROLE = Qt.ItemDataRole.UserRole
 

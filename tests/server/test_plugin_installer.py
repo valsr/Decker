@@ -2,6 +2,7 @@ import io
 import json
 import stat
 import sys
+import threading
 import time
 import zipfile
 from types import SimpleNamespace
@@ -427,6 +428,14 @@ class TestServiceRules:
         with pytest.raises(PermissionError):
             service.plugin_uninstall("com.example.tool")
 
+    def test_install_status_rpc_returns_json_and_is_gated(self, env, tmp_path):
+        remote = self._service(env, "192.168.1.20")
+        with pytest.raises(PermissionError):
+            remote.plugin_install_status("x")
+        service = self._service(env, "127.0.0.1")
+
+        assert_that(json.loads(service.plugin_install_status("x"))["state"]).is_equal_to("unknown")
+
     def test_remote_install_allowed_by_config(self, env, tmp_path):
         config.set("server.allow_remote_plugin_install", True)
         service = self._service(env, "192.168.1.20")
@@ -493,3 +502,50 @@ class TestServiceRules:
         env.assign()
 
         assert_that(self._service(env, "127.0.0.1").plugin_usage("com.example.tool")).is_equal_to(1)
+
+
+def test_status_reports_the_job_outcome(env, tmp_path):
+    job = env.installer.install("tool.deckerplugin", _package(tmp_path / "v1.log"))
+    assert _wait_for(lambda: env.installer.status(job)["state"] != "running")
+
+    status = env.installer.status(job)
+
+    assert_that(status).contains_entry({"state": "succeeded"}, {"plugin_id": "com.example.tool"}, {"version": "1.0.0"})
+    failed = env.install(b"not a zip")
+    assert_that(env.installer.status(failed["job_id"])["state"]).is_equal_to("failed")
+    assert_that(env.installer.status("nope")["state"]).is_equal_to("unknown")
+
+
+def test_second_install_while_one_runs_is_rejected_and_uninstall_reports_busy(env, tmp_path, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+
+    def _slow(*_args, **_kwargs):
+        started.set()
+        release.wait(10)
+
+    monkeypatch.setattr(installer_module, "build_environment", _slow)
+    monkeypatch.setattr(installer_module, "_UNINSTALL_WAIT_S", 0.05)
+    manifest = _manifest(runtime={"type": "python", "entry": "tool.py"})
+    job = env.installer.install("tool.deckerplugin", _package(tmp_path / "x.log", manifest))
+    assert started.wait(10)
+
+    with pytest.raises(PluginInstallError, match="busy"):
+        env.installer.install("again.deckerplugin", b"x")
+    with pytest.raises(PluginInstallError, match="busy"):
+        env.installer.uninstall("com.example.tool")
+    assert_that(env.installer.status(job)["state"]).is_equal_to("running")
+    release.set()
+    assert _wait_for(lambda: env.installer.status(job)["state"] != "running")
+    env.installer.install("later.deckerplugin", b"x")
+
+
+def test_uninstall_removes_a_folder_whose_manifest_failed_to_load(env):
+    broken = env.plugins_dir / "broken-plugin"
+    broken.mkdir(parents=True)
+    (broken / "manifest.json").write_text("{not json")
+
+    env.installer.uninstall("broken-plugin")
+
+    assert_that(broken.exists()).is_false()
+    with pytest.raises(PluginInstallError, match="not installed"):
+        env.installer.uninstall("../escape")

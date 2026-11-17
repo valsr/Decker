@@ -330,6 +330,26 @@ class TestConnectionManager:
         mock_conn.root.some_method.assert_called_once_with("arg1", 42)
         assert_that(result).is_equal_to("result")
 
+    def test_upload_call_waits_up_to_120_seconds(self, monkeypatch):
+        seen: dict = {}
+
+        class FakeResult:
+            value = "job-1"
+
+            def set_expiry(self, timeout):
+                seen["timeout"] = timeout
+
+        monkeypatch.setattr(
+            "decker.client.connection_manager.async_", lambda fn: lambda *a: (seen.update(args=a), FakeResult())[1]
+        )
+        self.manager._conn = MagicMock()  # pylint: disable=protected-access
+
+        result = self.manager.call("plugin_install", "x.deckerplugin", b"data")
+
+        assert_that(result).is_equal_to("job-1")
+        assert_that(seen["timeout"]).is_equal_to(120.0)
+        assert_that(seen["args"]).is_equal_to(("x.deckerplugin", b"data"))
+
     def test_call_returns_none_when_not_connected(self):
         result = self.manager.call("some_method")
         assert_that(result).is_none()

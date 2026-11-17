@@ -196,9 +196,12 @@ def _cmd_plugin_install(conn: CliConnection, args: list[str]) -> int:
         print(f"Error: {e}")
         return 1
     except Exception as e:  # pylint: disable=broad-except
-        print(f"Error: install failed: {e}")
+        print(f"Error: install failed: {_rpc_error(e)}")
         return 2
-    print(f"Install started (job {job_id}); progress appears in the client and the server log")
+    status = plugin_cli.wait_for_install(conn, job_id, print)
+    if status.get("state") != "succeeded":
+        print(f"Error: install failed: {status.get('message', 'unknown error')}")
+        return 1
     return 0
 
 
@@ -221,7 +224,11 @@ def _cmd_plugin_remove(conn: CliConnection, args: list[str]) -> int:
         print(f"Error: {e}")
         return 1
     except Exception as e:  # pylint: disable=broad-except
-        print(f"Error: remove failed: {e}")
+        print(f"Error: remove failed: {_rpc_error(e)}")
         return 2
     print(f"Removed plugin {args[0]}.")
     return 0
+
+
+def _rpc_error(exc: Exception) -> str:
+    return str(exc).strip().splitlines()[-1] if str(exc).strip() else type(exc).__name__
