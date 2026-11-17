@@ -33,6 +33,7 @@ def context(tmp_path):
     controller = PageController()
     device_manager = MagicMock()
     device_manager.show_page.return_value = True
+    device_manager.get_device_state.return_value.has_image.return_value = False
     ctx = ServerContext(
         device_manager=device_manager,
         plugin_manager=MagicMock(),
@@ -102,8 +103,10 @@ class TestActivate:
             [
                 call.pm.deactivate_action(old),
                 call.dm.show_page(DEV, page2.page_id),
+                call.dm.get_device_state(DEV),
                 call.pm.store_settings(new, {"step": 2}),
-                call.pm.activate_action(new, {}),
+                call.dm.get_device_state().has_image(0),
+                call.pm.activate_action(new, {}, draw=True),
                 call.pm.refresh_page_dependent(DEV),
             ]
         )
@@ -136,7 +139,7 @@ class TestRestore:
 
         context.device_manager.show_page.assert_called_once_with(DEV, PAGE1)
         context.plugin_manager.store_settings.assert_called_once_with(target, {"x": 1})
-        context.plugin_manager.activate_action.assert_called_once_with(target, {})
+        context.plugin_manager.activate_action.assert_called_once_with(target, {}, draw=True)
 
 
 class TestEditing:
@@ -257,7 +260,7 @@ class TestProfiles:
 
         context.plugin_manager.deactivate_action.assert_called_once_with(old)
         context.device_manager.show_page.assert_called_with(DEV, page.page_id)
-        context.plugin_manager.activate_action.assert_called_once_with(new, {})
+        context.plugin_manager.activate_action.assert_called_once_with(new, {}, draw=True)
         assert_that(context.page_controller.active_profile_id(DEV)).is_equal_to(profile.profile_id)
         assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(page.page_id)
         assert_that(_names(_events(context))).contains(PAGES_CHANGED_EVENT, PROFILES_CHANGED_EVENT)
@@ -426,3 +429,27 @@ class TestProfiles:
 
         assert_that(finished).is_true()
         assert_that(result).is_equal_to([expected])
+
+
+class TestShowWithoutBareRedraw:
+    def test_keys_with_a_cached_image_are_activated_without_drawing(self, context):
+        cached, fresh = _target(0, "cached"), _target(1, "fresh")
+        context.key_assignment_store.assign(DEV, PAGE1, 0, cached, {})
+        context.key_assignment_store.assign(DEV, PAGE1, 1, fresh, {})
+        context.device_manager.get_device_state.return_value.has_image.side_effect = lambda key: key == 0
+
+        context.page_controller.restore(DEV)
+
+        assert_that(context.plugin_manager.activate_action.call_args_list).is_equal_to(
+            [call(cached, {}, draw=False), call(fresh, {}, draw=True)]
+        )
+
+    def test_an_unavailable_device_always_draws(self, context):
+        target = _target(0, "c")
+        context.key_assignment_store.assign(DEV, PAGE1, 0, target, {})
+        context.device_manager.show_page.return_value = False
+        context.device_manager.get_device_state.return_value.has_image.return_value = True
+
+        context.page_controller.restore(DEV)
+
+        context.plugin_manager.activate_action.assert_called_once_with(target, {}, draw=True)

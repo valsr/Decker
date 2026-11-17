@@ -91,7 +91,7 @@ class DeviceManager(Manager):
             return False
         state.switch_page(page_id)
         images = dict(state.get_all_images())
-        for key_index in range(device.get_hw_info().num_keys):
+        for key_index in range(device.key_count):
             image = images.get(key_index)
             if image is not None:
                 device.set_image_bytes(key_index, image)

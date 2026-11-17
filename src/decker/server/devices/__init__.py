@@ -19,12 +19,16 @@ _HELD_THRESHOLD_S: float = 0.5
 _MULTI_TAP_WINDOW_S: float = 0.35
 
 
+_UNKNOWN: object = object()  # what a key shows before Decker has drawn on it
+
+
 class _KeyTracker:
     """Per-key state machine tracking press gestures and the last rendered image."""
 
     def __init__(self) -> None:
         self.state: KeyPressState = KeyPressState.UP
         self.image: bytes | None = None  # cached PNG of the last image pushed to this key
+        self.shown: object = _UNKNOWN  # what the hardware shows: the PNG sent, None when blanked, or _UNKNOWN
         self._tap_count: int = 0
         self._last_up: float = 0.0
         self._held_timer: threading.Timer | None = None
@@ -109,6 +113,21 @@ class Device:
         self._renderer = AssetRenderer()
         self._notify_on_closed = notify_on_closed
         self._key_trackers: dict[int, _KeyTracker] = {}
+        self._layout: tuple[int, int] | None = None
+
+    @property
+    def key_count(self) -> int:
+        """How many keys the device has."""
+        return int(self._device.key_count())
+
+    def key_position(self, key_index: int) -> tuple[int, int] | None:
+        """``(column, row)`` of a key from the cached layout (no hardware query), or None outside the layout."""
+        if self._layout is None:
+            self._layout = tuple(self._device.key_layout())
+        rows, cols = self._layout
+        if not 0 <= key_index < rows * cols:
+            return None
+        return key_index % cols, key_index // cols
 
     def validate(self) -> None:
         """Raise DeckNotOpenedError if the device can no longer be reached."""
@@ -196,27 +215,36 @@ class Device:
         """Render image bytes (SVG/PNG/JPEG) and push to the hardware key."""
         try:
             pil_image = self._renderer.render_bytes(image, self._device.KEY_PIXEL_WIDTH, self._device.KEY_PIXEL_HEIGHT)
+            tracker = self._key_trackers.setdefault(key_index, _KeyTracker())
+            shown: object = _UNKNOWN
             if pil_image is not None:
                 scaled = PILHelper.create_scaled_key_image(self._device, pil_image)
                 buf = io.BytesIO()
                 scaled.save(buf, format="PNG")
-                self._key_trackers.setdefault(key_index, _KeyTracker()).image = buf.getvalue()
+                shown = tracker.image = buf.getvalue()
+                if shown == tracker.shown:
+                    return  # the key already shows exactly this
                 native = PILHelper.to_native_key_format(self._device, scaled)
             else:
                 native = image
             self._try_open()
+            tracker.shown = _UNKNOWN
             self._device.set_key_image(key_index, native)
+            tracker.shown = shown
         except Exception as exc:  # pylint: disable=broad-except
             logging.error("Device.set_image_bytes failed for %s[%d]: %s", self.id, key_index, exc)
 
     def clear_key_image(self, key_index: int) -> None:
         """Blank the hardware key and forget its cached rendered image."""
         try:
-            tracker = self._key_trackers.get(key_index)
-            if tracker is not None:
-                tracker.image = None
+            tracker = self._key_trackers.setdefault(key_index, _KeyTracker())
+            tracker.image = None
+            if tracker.shown is None:
+                return  # already blank
             self._try_open()
+            tracker.shown = _UNKNOWN
             self._device.set_key_image(key_index, None)
+            tracker.shown = None
         except Exception as exc:  # pylint: disable=broad-except
             logging.error("Device.clear_key_image failed for %s[%d]: %s", self.id, key_index, exc)
 

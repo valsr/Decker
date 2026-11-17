@@ -139,6 +139,11 @@ class FakeDevice:
         keys = [KeyInfo(row=i // 3, col=i % 3, pixel_width=72, pixel_height=72, type="key") for i in range(6)]
         return DeviceHardwareInfo(id="dev-1", type="StreamDeck", vendor_id=1, product_id=2, num_keys=6, keys=keys)
 
+    key_count = 6
+
+    def key_position(self, key_index: int) -> tuple[int, int] | None:
+        return (key_index % 3, key_index // 3) if 0 <= key_index < 6 else None
+
     def clear_key_image(self, key_index: int) -> None:
         self._manager.cleared.append(key_index)
 
@@ -1710,3 +1715,24 @@ class TestSwitchProfile:
         self._send(env, "switch_page", {"page_id": "w1"})
 
         assert_that(env.pages.activations).is_equal_to([("dev-1", "w1")])
+
+
+class TestActivationWithoutRedraw:
+    def test_draw_false_leaves_the_key_untouched_until_the_plugin_draws(self, env):
+        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "x"}}, draw=False)
+
+        assert_that(env.dm.hardware_images).is_empty()
+
+    def test_draw_false_still_starts_the_action_and_later_changes_draw(self, env):
+        env.manager.activate_action(REC_TARGET, draw=False)
+        assert _wait_for(lambda: env.received("will_appear"))
+        assert_that(env.dm.hardware_images).is_empty()
+
+        env.manager.set_appearance(REC_TARGET, {"background": "#ff0000"})
+
+        assert_that(env.dm.hardware_images).is_not_empty()
+
+    def test_the_default_still_draws_at_once(self, env):
+        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "x"}})
+
+        assert_that(env.dm.hardware_images).is_not_empty()
