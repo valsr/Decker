@@ -11,6 +11,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -47,7 +48,7 @@ for line in sys.stdin:
         break
 """
 
-_REC_MANIFEST = {
+_REC_MANIFEST: dict[str, Any] = {
     "format": 1,
     "id": "com.decker.rec",
     "name": "Recorder",
@@ -81,7 +82,7 @@ _REC_MANIFEST["contributes"]["actions"].append(
         ],
     }
 )
-_STATIC_MANIFEST = {
+_STATIC_MANIFEST: dict[str, Any] = {
     "format": 1,
     "id": "com.t.static",
     "name": "Static",
@@ -1142,7 +1143,7 @@ class TestStaticActions:
 
     def test_deactivating_a_static_key_does_not_touch_the_supervisor(self, env):
         env.manager.activate_action(MIXED_STATIC_TARGET)
-        env.manager._supervisor.release = MagicMock(side_effect=AssertionError("released"))  # type: ignore[method-assign]
+        env.manager._supervisor.release = MagicMock(side_effect=AssertionError("released"))
 
         env.manager.deactivate_action(MIXED_STATIC_TARGET)
 

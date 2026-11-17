@@ -10,6 +10,7 @@ from decker.plugin.manifest import (
     ManifestValidationError,
     PluginManifest,
 )
+from decker.plugin.settings_schema import SettingField
 
 _COUNTER: dict[str, Any] = {
     "format": 1,
@@ -235,7 +236,9 @@ def test_page_in_action_settings_is_accepted() -> None:
     data = copy.deepcopy(_COUNTER)
     data["contributes"]["actions"][0]["settings"] = [{"key": "where", "type": "page", "label": "Where"}]
     manifest = PluginManifest.from_dict(data)
-    assert_that(manifest.actions[0].settings[0].type).is_equal_to("page")
+    field = manifest.actions[0].settings[0]
+    assert isinstance(field, SettingField)
+    assert_that(field.type).is_equal_to("page")
 
 
 def _static_action(**extra: Any) -> dict[str, Any]:
