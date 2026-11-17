@@ -67,3 +67,43 @@ class TestEventBusPush:
         with patch("decker.server.event_bus.async_") as mock_async:
             bus.push("key_event", "{}")
             mock_async.assert_not_called()
+
+
+class TestEventBusSenders:
+    def test_the_remote_callable_is_resolved_once_per_client(self):
+        bus = EventBus()
+        conn = MagicMock()
+        bus.register(conn)
+
+        with patch("decker.server.event_bus.async_") as mock_async:
+            send = MagicMock()
+            mock_async.return_value = send
+            for _ in range(3):
+                bus.push("key_event", "{}")
+
+        assert_that(mock_async.call_count).is_equal_to(1)
+        assert_that(send.call_count).is_equal_to(3)
+
+    def test_unregistering_forgets_the_resolved_callable(self):
+        bus = EventBus()
+        conn = MagicMock()
+        bus.register(conn)
+        with patch("decker.server.event_bus.async_", return_value=MagicMock()) as mock_async:
+            bus.push("key_event", "{}")
+            bus.unregister(conn)
+            bus.register(conn)
+            bus.push("key_event", "{}")
+
+        assert_that(mock_async.call_count).is_equal_to(2)
+
+    def test_a_client_whose_delivery_fails_is_dropped_and_its_callable_forgotten(self):
+        bus = EventBus()
+        conn = MagicMock()
+        bus.register(conn)
+        send = MagicMock(side_effect=OSError("gone"))
+
+        with patch("decker.server.event_bus.async_", return_value=send):
+            bus.push("key_event", "{}")
+
+        assert_that(bus._clients).is_empty()  # pylint: disable=protected-access
+        assert_that(bus._senders).is_empty()  # pylint: disable=protected-access
