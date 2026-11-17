@@ -66,9 +66,13 @@ class TextStyleEdit(QWidget):
         self._toolbar.move(self._popup_position())
         self._toolbar.show()
 
+    def _available_geometry(self) -> QRect:
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        return screen.availableGeometry() if screen is not None else QRect(0, 0, 1280, 800)
+
     def _popup_position(self) -> QPoint:
         size = self._toolbar.sizeHint()
-        screen = (self.screen() or QGuiApplication.primaryScreen()).availableGeometry()
+        screen = self._available_geometry()
         left = self.mapToGlobal(self.rect().bottomLeft())
         right_edge = self.mapToGlobal(self.rect().bottomRight()).x()
         x = max(screen.left(), min(right_edge - size.width() + 1, screen.right() - size.width() + 1))

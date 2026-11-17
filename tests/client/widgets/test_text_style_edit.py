@@ -2,12 +2,18 @@
 
 # pylint: disable=protected-access,unused-argument
 from assertpy import assert_that
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtTest import QTest
 
 from decker.client.widgets.text_style_edit import TextStyleEdit
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
+
+
+def _screen() -> QRect:
+    primary = QGuiApplication.primaryScreen()
+    assert primary is not None
+    return primary.availableGeometry()
 
 
 class TestTextStyleEdit:
@@ -19,7 +25,7 @@ class TestTextStyleEdit:
         emitted: list[None] = []
         edit.value_changed.connect(lambda: emitted.append(None))
 
-        QTest.keyClicks(edit._line, "Hi")
+        QTest.keyClicks(edit._line, "Hi")  # type: ignore[call-arg, arg-type]  # PyQt6 stub declares self
 
         assert_that(emitted).is_not_empty()
         assert_that(edit.value()["text"]).is_equal_to("Hi")
@@ -81,13 +87,13 @@ class TestTextStyleEdit:
         edit.show()
         edit._cog.trigger()
 
-        QTest.keyClick(edit._toolbar, Qt.Key.Key_Escape)
+        QTest.keyClick(edit._toolbar, Qt.Key.Key_Escape)  # type: ignore[call-overload]  # PyQt6 stub declares self
 
         assert_that(edit._toolbar.isVisible()).is_false()
         assert_that(edit._cog.isChecked()).is_false()
 
     def test_popup_clamped_to_screen_bottom_right(self, qapp):
-        screen = QGuiApplication.primaryScreen().availableGeometry()
+        screen = _screen()
         edit = TextStyleEdit()
         edit.show()
         edit.move(screen.right() - 40, screen.bottom() - 10)
@@ -98,7 +104,7 @@ class TestTextStyleEdit:
         edit._toolbar.close()
 
     def test_popup_opens_below_field_when_there_is_room(self, qapp):
-        screen = QGuiApplication.primaryScreen().availableGeometry()
+        screen = _screen()
         edit = TextStyleEdit()
         edit.show()
         edit.move(screen.left() + 200, screen.top() + 20)

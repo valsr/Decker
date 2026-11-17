@@ -90,7 +90,7 @@ def _draw_text_passes(draw: ImageDraw.ImageDraw, t: _TitleDraw) -> None:
 
 def _decoration_rects(
     draw: ImageDraw.ImageDraw, t: _TitleDraw, px: int, style: Mapping[str, Any]
-) -> list[tuple[int, int, int, int]]:
+) -> list[tuple[float, float, float, float]]:
     """Underline / strike rectangles (left, top, right, bottom) derived from the measured text box."""
     left, top, right, _ = draw.textbbox(t.xy, t.text, font=t.font, anchor=t.anchor, stroke_width=t.fake_bold)
     baseline = top - t.font.getbbox(t.text, anchor="ls")[1]
@@ -104,32 +104,39 @@ def _decoration_rects(
     return rects
 
 
-def _draw_title(draw: ImageDraw.ImageDraw, text: str, style: Mapping[str, Any], size: int) -> None:
+def _title_draw(text: str, style: Mapping[str, Any], size: int) -> tuple[_TitleDraw, int]:
+    """Resolve the style into what to draw, plus the font size in px."""
     scale = size / _BASE_SIZE
     margin = round(_TITLE_MARGIN * scale)
     anchor, y = {"top": ("mt", margin), "middle": ("mm", size // 2), "bottom": ("mb", size - margin)}[style["position"]]
     px = max(1, round(style["size"] * scale))
     font, real_bold = _font(style["font"] or "DejaVu Sans", px, style["bold"], style["italic"])
     outline = style["outline"] or None
-    t = _TitleDraw(
-        text=text,
-        xy=(size // 2, y),
-        anchor=anchor,
-        font=font,
-        color=style["color"],
-        outline=outline,
-        outline_width=round(style["outline_width"] * scale) if outline else 0,
-        fake_bold=max(1, round(px / 24)) if style["bold"] and not real_bold else 0,
+    return (
+        _TitleDraw(
+            text=text,
+            xy=(size // 2, y),
+            anchor=anchor,
+            font=font,
+            color=style["color"],
+            outline=outline,
+            outline_width=round(style["outline_width"] * scale) if outline else 0,
+            fake_bold=max(1, round(px / 24)) if style["bold"] and not real_bold else 0,
+        ),
+        px,
     )
-    rects = _decoration_rects(draw, t, px, style)
-    if outline:
-        for l, tp, r, b in rects:
-            draw.rectangle(
-                (l - t.outline_width, tp - t.outline_width, r + t.outline_width, b + t.outline_width), fill=outline
-            )
-    _draw_text_passes(draw, t)
+
+
+def _draw_title(draw: ImageDraw.ImageDraw, text: str, style: Mapping[str, Any], size: int) -> None:
+    title, px = _title_draw(text, style, size)
+    rects = _decoration_rects(draw, title, px, style)
+    if title.outline:
+        grow = title.outline_width
+        for left, top, right, bottom in rects:
+            draw.rectangle((left - grow, top - grow, right + grow, bottom + grow), fill=title.outline)
+    _draw_text_passes(draw, title)
     for rect in rects:
-        draw.rectangle(rect, fill=t.color)
+        draw.rectangle(rect, fill=title.color)
 
 
 def compose_key_image(

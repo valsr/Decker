@@ -4,7 +4,15 @@ from collections.abc import Mapping
 from typing import Any
 
 from PyQt6.QtCore import QRect, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QIcon, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
+from PyQt6.QtGui import (
+    QFont,
+    QIcon,
+    QKeyEvent,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+    QShortcut,
+)
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFontComboBox,
@@ -16,7 +24,12 @@ from PyQt6.QtWidgets import (
 )
 
 from decker.client.widgets.color_tool_button import ColorToolButton
-from decker.common.text_style import OUTLINE_WIDTH_RANGE, POSITIONS, SIZE_RANGE, normalize_text_style
+from decker.common.text_style import (
+    OUTLINE_WIDTH_RANGE,
+    POSITIONS,
+    SIZE_RANGE,
+    normalize_text_style,
+)
 
 _ICON = 18
 _POSITION_NAMES = {"top": "Top", "middle": "Middle", "bottom": "Bottom"}
@@ -78,7 +91,7 @@ def _spin(bounds: tuple[int, int], suffix: str) -> QSpinBox:
     return spin
 
 
-class TextStyleToolbar(QFrame):
+class TextStyleToolbar(QFrame):  # pylint: disable=too-many-instance-attributes
     """Popup row: font, size, B/I/U/S, position, colour, outline, outline width, visible."""
 
     style_changed = pyqtSignal()

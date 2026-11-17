@@ -198,8 +198,14 @@ def _manifest_data(appearance: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _pixel(img: Image.Image, x: int, y: int) -> tuple[int, ...]:
+    value = img.getpixel((x, y))
+    assert isinstance(value, tuple)
+    return value
+
+
 def _brightest(img: Image.Image) -> int:
-    return max(max(img.getpixel((x, y))) for x in range(144) for y in range(144))
+    return max(max(_pixel(img, x, y)) for x in range(144) for y in range(144))
 
 
 def test_text_color_alpha_blends_with_background() -> None:
@@ -288,11 +294,11 @@ def test_underline_outlined_only_when_outline_set() -> None:
     styled = _styled(underline=True, outline="#ff0000", outline_width=2)
     rows = _long_run_rows(styled, int(width * 0.9))
     assert_that(rows).is_not_empty()
-    above, below = styled.getpixel((72, rows[0] - 1)), styled.getpixel((72, rows[-1] + 1))
+    above, below = _pixel(styled, 72, rows[0] - 1), _pixel(styled, 72, rows[-1] + 1)
     assert_that(above[0] > 200 and above[1] < 50).is_true()
     assert_that(below[0] > 200 and below[1] < 50).is_true()
     plain = _styled(underline=True)
-    assert_that(any(p[0] > 200 and p[1] < 50 for p in (plain.getpixel((72, y)) for y in range(144)))).is_false()
+    assert_that(any(p[0] > 200 and p[1] < 50 for p in (_pixel(plain, 72, y) for y in range(144)))).is_false()
 
 
 def test_outline_none_ignores_outline_width() -> None:

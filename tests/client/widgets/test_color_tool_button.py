@@ -6,13 +6,19 @@ from assertpy import assert_that
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QColorDialog
 
-from decker.client.widgets.color_tool_button import ColorToolButton, hex_to_qcolor, qcolor_to_hex
+from decker.client.widgets.color_tool_button import (
+    ColorToolButton,
+    hex_to_qcolor,
+    qcolor_to_hex,
+)
 
 _GET_COLOR = "decker.client.widgets.color_tool_button.QColorDialog.getColor"
 
 
 def _none_action(button: ColorToolButton) -> Any:
-    return next((a for a in button.menu().actions() if a.text() == "None"), None)
+    menu = button.menu()
+    assert menu is not None
+    return next((a for a in menu.actions() if a.text() == "None"), None)
 
 
 class TestHexConversion:
