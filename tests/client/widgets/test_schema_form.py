@@ -359,7 +359,7 @@ class TestProfileFields:  # pylint: disable=protected-access
                 return json.dumps({"pages": [{"page_id": i, "name": n} for i, n in pages]})
 
         context = AppContext.get()
-        context.connection_manager = _Rpc()
+        context.connection_manager = _Rpc()  # type: ignore[assignment]
         context.active_device = DeviceHardwareInfo(id="dev1", type="Deck", vendor_id=0, product_id=0, num_keys=6)
 
     _SCHEMA = [
