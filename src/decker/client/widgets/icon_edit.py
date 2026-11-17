@@ -8,7 +8,14 @@ from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QToolButton, QWidget
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QToolButton,
+    QWidget,
+)
 
 from decker.client.action_icons import decode_icon, placeholder_pixmap
 from decker.client.context import AppContext
@@ -45,8 +52,9 @@ class IconEdit(QWidget):
         self._preview = QLabel()
         self._preview.setFixedSize(_PREVIEW_SIZE, _PREVIEW_SIZE)
         self._name = QLabel()
-        browse = QPushButton("Browse…")
-        browse.clicked.connect(self.browse)
+        self._compact = False
+        self._browse_btn = QPushButton("Browse…")
+        self._browse_btn.clicked.connect(self.browse)
         self._clear = QToolButton()
         self._clear.setText("✕")
         self._clear.setToolTip("Remove the icon")
@@ -60,10 +68,27 @@ class IconEdit(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(self._preview)
         row.addWidget(self._name, 1)
-        row.addWidget(browse)
+        row.addWidget(self._browse_btn)
         row.addWidget(self._clear)
         row.addWidget(self._colour)
         self._refresh()
+
+    def set_compact(self, compact: bool) -> None:
+        """Compact: thumbnail, clear and (once there is an icon) the colour; double-click the thumbnail to browse."""
+        self._compact = compact
+        self.setSizePolicy(
+            QSizePolicy.Policy.Maximum if compact else QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+        )
+        self._name.setVisible(not compact)
+        self._browse_btn.setVisible(not compact)
+        self._refresh()
+
+    def mouseDoubleClickEvent(self, a0: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """In compact mode a double click opens the browser."""
+        if self._compact:
+            self.browse()
+        else:
+            super().mouseDoubleClickEvent(a0)
 
     def value(self) -> dict[str, Any]:
         """The icon value: ``{"ref": "", or "pack:<pack id>/<path>", "color": "#rrggbb[aa]"}``."""
@@ -102,6 +127,7 @@ class IconEdit(QWidget):
         parsed = parse_icon_ref(self._ref)
         self._name.setText(Path(parsed[1]).stem if parsed is not None else "No icon")
         self._clear.setEnabled(parsed is not None)
+        self._colour.setVisible(parsed is not None or not self._compact)
         self._preview.setPixmap(self._preview_pixmap(parsed))
 
     def _preview_pixmap(self, parsed: tuple[str, str] | None) -> QPixmap:

@@ -82,3 +82,14 @@ def test_clear_is_disabled_without_an_icon(qapp) -> None:
     assert_that(_action(preview._build_menu(), "Clear icon").isEnabled()).is_false()
     preview.set_has_icon(True)
     assert_that(_action(preview._build_menu(), "Clear icon").isEnabled()).is_true()
+
+
+def test_the_context_menu_is_built_once_and_reused(qapp) -> None:
+    preview = KeyPreview()
+
+    first = preview._build_menu()
+    preview.set_has_icon(True)
+    second = preview._build_menu()
+
+    assert_that(second).is_same_as(first)
+    assert_that(_action(second, "Clear icon").isEnabled()).is_true()

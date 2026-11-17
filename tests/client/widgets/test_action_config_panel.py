@@ -1,9 +1,12 @@
+import threading
+import time
 from typing import Any
 
 from assertpy import assert_that
 from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton, QSpinBox
+from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QSpinBox
 
+import decker.client.widgets.action_config_panel as panel_module
 from decker.client.widgets.action_config_panel import ActionConfigPanel
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
 
@@ -410,3 +413,126 @@ class TestPanelStateReset:  # pylint: disable=protected-access
         panel._on_save()
 
         assert_that(panel.is_dirty).is_false()
+
+
+def _pump(ms: int) -> None:
+    deadline = time.monotonic() + ms / 1000
+    while time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.005)
+
+
+def _wait_for(predicate, timeout_ms: int) -> None:
+    deadline = time.monotonic() + timeout_ms / 1000
+    while not predicate() and time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.005)
+
+
+_REAL_RUN = panel_module._run_in_thread  # captured before the autouse fixture swaps in the inline runner
+
+
+class TestThreadedPreview:  # pylint: disable=protected-access
+    def _threaded(self, monkeypatch) -> None:
+        monkeypatch.setattr(panel_module, "_run_in_thread", _REAL_RUN)
+
+    def test_the_provider_runs_off_the_gui_thread_and_the_image_arrives_later(  # pylint: disable=unused-argument
+        self, qapp, monkeypatch
+    ):
+        self._threaded(monkeypatch)
+        panel = ActionConfigPanel()
+        gate = threading.Event()
+        ran_on: list[int] = []
+        shown: list[str | None] = []
+        setattr(panel._preview, "set_image", shown.append)
+
+        def provider(_appearance: dict) -> str:
+            ran_on.append(threading.get_ident())
+            gate.wait(2)
+            return "image"
+
+        panel.set_preview_provider(provider)
+        _show(panel)
+        assert_that(shown).is_empty()  # the GUI thread was not blocked waiting for the provider
+
+        gate.set()
+        _wait_for(lambda: bool(shown), 2000)
+
+        assert_that(shown).is_equal_to(["image"])
+        assert_that(ran_on[0]).is_not_equal_to(threading.get_ident())
+
+    def test_a_late_reply_for_an_older_request_is_dropped(self, qapp, monkeypatch):  # pylint: disable=unused-argument
+        self._threaded(monkeypatch)
+        panel = ActionConfigPanel()
+        first_gate, second_gate = threading.Event(), threading.Event()
+        gates = iter([first_gate, second_gate])
+        answers = iter(["old", "new"])
+        shown: list[str | None] = []
+        setattr(panel._preview, "set_image", shown.append)
+
+        def provider(_appearance: dict) -> str:
+            gate, answer = next(gates), next(answers)
+            gate.wait(2)
+            return answer
+
+        panel.set_preview_provider(provider)
+        _show(panel)  # request 1 (blocked)
+        panel._request_preview()  # request 2 (blocked)
+        second_gate.set()
+        _wait_for(lambda: bool(shown), 2000)
+        first_gate.set()
+        _pump(100)
+
+        assert_that(shown).is_equal_to(["new"])
+
+    def test_a_reply_after_leaving_the_key_is_dropped(self, qapp, monkeypatch):  # pylint: disable=unused-argument
+        self._threaded(monkeypatch)
+        panel = ActionConfigPanel()
+        gate = threading.Event()
+        shown: list[str | None] = []
+        setattr(panel._preview, "set_image", shown.append)
+        panel.set_preview_provider(lambda _a: "late" if gate.wait(2) else None)
+        _show(panel)
+
+        panel.show_placeholder()
+        shown.clear()  # the reset itself clears the picture
+        gate.set()
+        _pump(100)
+
+        assert_that(shown).is_empty()
+
+    def test_a_failing_provider_in_the_thread_is_ignored(self, qapp, monkeypatch):  # pylint: disable=unused-argument
+        self._threaded(monkeypatch)
+        panel = ActionConfigPanel()
+        called = threading.Event()
+
+        def boom(_appearance: dict) -> str:
+            called.set()
+            raise RuntimeError("down")
+
+        panel.set_preview_provider(boom)
+        _show(panel)
+
+        assert_that(called.wait(2)).is_true()
+        _pump(50)
+
+
+class TestPreviewRefreshes:  # pylint: disable=protected-access
+    def test_a_successful_save_refreshes_the_preview(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        _show(panel, {"step": 1})
+        panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
+        panel._preview_timer.stop()
+
+        panel._on_save()
+
+        assert_that(panel._preview_timer.isActive()).is_true()
+
+    def test_refresh_preview_soon_restarts_the_debounce(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        _show(panel)
+        panel._preview_timer.stop()
+
+        panel.refresh_preview_soon()
+
+        assert_that(panel._preview_timer.isActive()).is_true()

@@ -21,6 +21,14 @@ class KeyPreview(QLabel):
         self.setScaledContents(True)
         self.setToolTip("Double-click to set an icon, right-click for more")
         self._has_icon = False
+        self._menu = QMenu(self)
+        set_icon = QAction("Set icon…", self._menu)
+        set_icon.triggered.connect(self.set_icon_requested.emit)
+        self._clear_action = QAction("Clear icon", self._menu)
+        self._clear_action.setEnabled(False)
+        self._clear_action.triggered.connect(self.clear_icon_requested.emit)
+        self._menu.addAction(set_icon)
+        self._menu.addAction(self._clear_action)
 
     def set_image(self, image_b64: str | None) -> None:
         """Show a base64 PNG; None or undecodable data clears the picture."""
@@ -39,17 +47,10 @@ class KeyPreview(QLabel):
     def set_has_icon(self, has: bool) -> None:
         """Whether the key has an icon override (enables Clear icon)."""
         self._has_icon = has
+        self._clear_action.setEnabled(has)
 
     def _build_menu(self) -> QMenu:
-        menu = QMenu(self)
-        set_icon = QAction("Set icon…", menu)
-        set_icon.triggered.connect(self.set_icon_requested.emit)
-        clear = QAction("Clear icon", menu)
-        clear.setEnabled(self._has_icon)
-        clear.triggered.connect(self.clear_icon_requested.emit)
-        menu.addAction(set_icon)
-        menu.addAction(clear)
-        return menu
+        return self._menu
 
     def contextMenuEvent(self, ev: QContextMenuEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
         """Show the icon menu."""

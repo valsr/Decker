@@ -268,6 +268,8 @@ class AppearanceForm(QWidget):
                 continue
             if isinstance(field.widget, ColorButton):
                 field.widget.set_show_name(False)
+            if isinstance(field.widget, IconEdit):
+                field.widget.set_compact(True)
             self._fields[entry["key"]] = field
             _watch(field.widget, self.changed.emit)
             wide = entry.get("type") == "text_style"

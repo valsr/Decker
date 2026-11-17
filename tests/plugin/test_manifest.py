@@ -292,3 +292,9 @@ def test_static_action_keeps_appearance_defaults_and_states() -> None:
     spec = PluginManifest.from_dict(_without_runtime([action])).actions[0]
     assert_that(spec.appearance).is_equal_to({"title": {"text": "{page_index}"}})
     assert_that(spec.states[0].title).is_equal_to("x")
+
+
+def test_action_appearance_may_declare_an_icon_default() -> None:
+    icon = {"ref": "pack:com.decker.counter.icons/x.svg", "color": "#ff0000"}
+    manifest = PluginManifest.from_dict(_with_action(appearance={"icon": icon}))
+    assert_that(manifest.actions[0].appearance).is_equal_to({"icon": icon})
