@@ -304,3 +304,47 @@ def test_icon_accepts_rgba_colour() -> None:
     assert_that(apply_schema(_icon_schema(), {"glyph": {"color": "#11223380"}})["glyph"]["color"]).is_equal_to(
         "#11223380"
     )
+
+
+@pytest.mark.parametrize("type_", ["text", "text_style"])
+def test_template_flag_accepted_on_text_and_text_style(type_: str) -> None:
+    (entry,) = parse_settings_schema([{"key": "a", "type": type_, "template": True}], "here")
+    assert_that(entry.extra["template"]).is_true()
+
+
+def test_template_flag_must_be_boolean() -> None:
+    with pytest.raises(ValueError, match="template"):
+        parse_settings_schema([{"key": "a", "type": "text", "template": "yes"}], "here")
+
+
+def test_template_flag_rejected_on_other_types() -> None:
+    with pytest.raises(ValueError, match="template"):
+        parse_settings_schema([{"key": "a", "type": "int", "template": True}], "here")
+
+
+def test_template_round_trips_through_schema_to_json() -> None:
+    schema = parse_settings_schema([{"key": "a", "type": "text", "template": True}], "here")
+    assert_that(schema_to_json(schema)[0]["template"]).is_true()
+    assert_that(parse_settings_schema(schema_to_json(schema), "x")[0].extra["template"]).is_true()
+
+
+def test_page_type_defaults_to_empty_string() -> None:
+    (entry,) = parse_settings_schema([{"key": "p", "type": "page"}], "here")
+    assert_that(entry.default).is_equal_to("")
+    assert_that(apply_schema((entry,), {})).is_equal_to({"p": ""})
+
+
+@pytest.mark.parametrize("value", [5, None, ["x"]])
+def test_page_value_coerces_non_strings_to_default(value: Any) -> None:
+    schema = parse_settings_schema([{"key": "p", "type": "page"}], "here")
+    assert_that(apply_schema(schema, {"p": value})).is_equal_to({"p": ""})
+
+
+def test_page_value_keeps_strings() -> None:
+    schema = parse_settings_schema([{"key": "p", "type": "page"}], "here")
+    assert_that(apply_schema(schema, {"p": "abc"})).is_equal_to({"p": "abc"})
+
+
+def test_page_default_must_be_a_string() -> None:
+    with pytest.raises(ValueError, match="default"):
+        parse_settings_schema([{"key": "p", "type": "page", "default": 5}], "here")
