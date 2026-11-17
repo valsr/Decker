@@ -186,6 +186,50 @@ class KeyAssignmentStore(Manager):
             self._db.execute(f"DELETE FROM {_TABLE} WHERE device_id = ? AND page_id = ?", (device_id, page_id))
             self._db.commit()
 
+    def move(self, device_id: str, page_id: str, from_index: int, to_index: int) -> bool:
+        """Re-key an assignment to another slot of its page, replacing what was there (False if nothing moved)."""
+        if from_index == to_index:
+            return False
+        with self._lock, self._db:
+            exists = self._db.execute(
+                f"SELECT 1 FROM {_TABLE} WHERE device_id = ? AND page_id = ? AND key_index = ?",
+                (device_id, page_id, from_index),
+            ).fetchone()
+            if exists is None:
+                return False
+            self._db.execute(
+                f"DELETE FROM {_TABLE} WHERE device_id = ? AND page_id = ? AND key_index = ?",
+                (device_id, page_id, to_index),
+            )
+            self._db.execute(
+                f"UPDATE {_TABLE} SET key_index = ? WHERE device_id = ? AND page_id = ? AND key_index = ?",
+                (to_index, device_id, page_id, from_index),
+            )
+        return True
+
+    def copy_key(
+        self, device_id: str, page_id: str, from_index: int, to_index: int, context_id: str
+    ) -> KeyAssignment | None:
+        """Copy an assignment to another slot of its page under a new context id, replacing what was there."""
+        if from_index == to_index:
+            return None
+        with self._lock, self._db:
+            row = self._db.execute(
+                f"SELECT {_COLUMNS} FROM {_TABLE} WHERE device_id = ? AND page_id = ? AND key_index = ?",
+                (device_id, page_id, from_index),
+            ).fetchone()
+            if row is None:
+                return None
+            self._db.execute(
+                f"DELETE FROM {_TABLE} WHERE device_id = ? AND page_id = ? AND key_index = ?",
+                (device_id, page_id, to_index),
+            )
+            self._db.execute(
+                f"INSERT INTO {_TABLE} (device_id, page_id, {_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (device_id, page_id, to_index, row[1], row[2], context_id, row[4], row[5]),
+            )
+        return self.get(device_id, page_id, to_index)
+
     def copy_page(
         self, device_id: str, source_page_id: str, target_page_id: str, page_map: Mapping[str, str] | None = None
     ) -> list[tuple[int, KeyAssignment]]:
