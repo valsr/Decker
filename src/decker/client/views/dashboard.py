@@ -371,8 +371,11 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
                 self._key_images[key_index] = image_b64
             else:
                 self._key_images.pop(key_index, None)
-            if key_index == self._selected_key and image_b64 and not self._config_panel.is_dirty:
-                self._config_panel.set_preview_image(image_b64)
+            if key_index == self._selected_key and image_b64:
+                if self._config_panel.is_dirty:
+                    self._config_panel.refresh_preview_soon()  # recompose the draft over the plugin's new image
+                else:
+                    self._config_panel.set_preview_image(image_b64)
             if not image_b64:
                 self._grid.set_key_label(key_index, str(state.get("label", "")))
             self._sync_slot(key_index, state)

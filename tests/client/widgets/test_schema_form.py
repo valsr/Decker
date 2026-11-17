@@ -324,3 +324,15 @@ class TestChangedEmitsOncePerEdit:  # pylint: disable=protected-access
         count = self._count(form, lambda: edit._on_colour_changed("#123456"))  # type: ignore[attr-defined]
 
         assert_that(count).is_equal_to(1)
+
+
+class TestCompactIcon:  # pylint: disable=protected-access
+    def test_the_appearance_form_uses_a_compact_icon_row_and_regular_forms_do_not(
+        self, qapp
+    ):  # pylint: disable=unused-argument
+        appearance = AppearanceForm()
+        appearance.set_schema([{"key": "icon", "type": "icon", "label": "Icon"}], {})
+        regular = _form([{"key": "icon", "type": "icon", "label": "Icon"}])
+
+        assert_that(appearance._fields["icon"].widget._compact).is_true()  # type: ignore[attr-defined]
+        assert_that(regular._fields["icon"].widget._compact).is_false()  # type: ignore[attr-defined]

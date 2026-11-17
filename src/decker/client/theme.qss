@@ -93,6 +93,15 @@ QPushButton[dirty="true"] {
     color: $accent_text;
 }
 
+QPushButton[dirty="true"]:hover {
+    background-color: $accent_line;
+}
+
+QPushButton[dirty="true"]:pressed {
+    background-color: $pressed;
+    color: $text;
+}
+
 QPushButton:disabled {
     background-color: $surface;
     color: $text_disabled;

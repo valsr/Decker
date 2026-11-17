@@ -347,3 +347,38 @@ def test_browse_is_public(qapp, monkeypatch, tmp_path) -> None:
     edit.browse()
 
     assert_that(opened).is_equal_to([True])
+
+
+class TestCompact:
+    def test_compact_hides_the_name_and_browse_and_shows_colour_only_with_an_icon(self, qapp, tmp_path):
+        edit = _edit(None, IconThumbnailCache(tmp_path))
+        edit.show()
+        edit.set_compact(True)
+
+        assert_that(edit._name.isVisible()).is_false()
+        assert_that(edit._browse_btn.isVisible()).is_false()
+        assert_that(edit._colour.isVisible()).is_false()
+
+        edit.set_value({"ref": _REF, "color": "#ffffff"})
+        assert_that(edit._colour.isVisible()).is_true()
+
+        edit.clear_icon()
+        assert_that(edit._colour.isVisible()).is_false()
+
+    def test_regular_mode_keeps_everything_visible(self, qapp, tmp_path):
+        edit = _edit(None, IconThumbnailCache(tmp_path))
+        edit.show()
+
+        assert_that(edit._name.isVisible()).is_true()
+        assert_that(edit._browse_btn.isVisible()).is_true()
+        assert_that(edit._colour.isVisible()).is_true()
+
+    def test_double_clicking_the_compact_thumbnail_opens_the_browser(self, qapp, tmp_path, monkeypatch):
+        edit = _edit(None, IconThumbnailCache(tmp_path))
+        edit.set_compact(True)
+        opened: list[bool] = []
+        monkeypatch.setattr(edit, "browse", lambda: opened.append(True))
+
+        edit.mouseDoubleClickEvent(None)
+
+        assert_that(opened).is_equal_to([True])

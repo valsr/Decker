@@ -863,9 +863,12 @@ class TestKeyEditorWiring:  # pylint: disable=protected-access
         shown: list[str | None] = []
         panel.set_preview_image = shown.append
 
+        panel._preview_timer.stop()
+
         view._on_display_states_updated("dev1", [{"key_index": 3, "image_b64": "TElWRQ=="}])
 
         assert_that(shown).is_empty()
+        assert_that(panel._preview_timer.isActive()).is_true()  # recomposed over the new plugin image
 
 
 class TestFinalReviewFixes:  # pylint: disable=protected-access

@@ -123,3 +123,15 @@ def test_unsaved_changes_highlight_the_save_button() -> None:
 
     for colors in BUNDLED.values():
         assert 'QPushButton[dirty="true"]' in render_stylesheet(colors)
+
+
+def test_unsaved_save_button_still_reacts_to_hover_and_press() -> None:
+    from decker.client.themes import (  # pylint: disable=import-outside-toplevel
+        BUNDLED,
+        render_stylesheet,
+    )
+
+    for colors in BUNDLED.values():
+        sheet = render_stylesheet(colors)
+        assert 'QPushButton[dirty="true"]:hover' in sheet
+        assert 'QPushButton[dirty="true"]:pressed' in sheet

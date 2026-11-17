@@ -1,10 +1,11 @@
 """Bottom panel for configuring the selected key: live preview, appearance rows and action settings."""
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -31,11 +32,28 @@ PreviewProvider = Callable[[dict[str, Any]], str | None]
 SaveCallback = Callable[[dict[str, Any], dict[str, Any]], bool | None]  # False = the save failed
 
 
+def _run_job(job: Callable[[], str | None]) -> str | None:
+    try:
+        return job()
+    except Exception:  # pylint: disable=broad-except
+        logging.debug("Key preview failed", exc_info=True)
+        return None
+
+
+def _run_in_thread(job: Callable[[], str | None], done: Callable[[str | None], None]) -> None:
+    """Run ``job`` on a worker thread and hand its result (None on failure) to ``done`` from that thread."""
+    threading.Thread(target=lambda: done(_run_job(job)), name="key-preview", daemon=True).start()
+
+
 class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-attributes
     """Stacked config panel: page 0 = placeholder, page 1 = preview, appearance rows, Save and action settings."""
 
+    _preview_ready = pyqtSignal(int, object)
+
     def __init__(self) -> None:
         super().__init__()
+        self._preview_seq = 0
+        self._preview_ready.connect(self._on_preview_ready)
         self._save_cb: SaveCallback | None = None
         self._loaded: tuple[Any, ...] | None = None
         self._appearance_defaults: dict[str, Any] = {}
@@ -71,6 +89,10 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         """Set how the draft appearance is turned into a base64 key image (None or "" keeps the last picture)."""
         self._preview_provider = provider
 
+    def refresh_preview_soon(self) -> None:
+        """Recompose the preview after the debounce (e.g. when the plugin's own image changed)."""
+        self._preview_timer.start()
+
     def set_preview_image(self, image_b64: str | None) -> None:
         """Show an image in the preview."""
         self._preview.set_image(image_b64)
@@ -88,6 +110,7 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         self._loaded = None
         self._baseline = None
         self._preview_timer.stop()
+        self._preview_seq += 1  # drops a reply still in flight for the previous key
         self._preview.set_image(None)
         self._refresh_state()
 
@@ -190,14 +213,15 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         }
 
     def _request_preview(self) -> None:
-        if self._preview_provider is None:
+        provider = self._preview_provider
+        if provider is None:
             return
-        try:
-            image = self._preview_provider(self._draft_appearance())
-        except Exception:  # pylint: disable=broad-except
-            logging.debug("Key preview failed", exc_info=True)
-            return
-        if image:
+        self._preview_seq += 1
+        seq, draft = self._preview_seq, self._draft_appearance()
+        _run_in_thread(lambda: provider(draft), lambda image: self._preview_ready.emit(seq, image))
+
+    def _on_preview_ready(self, seq: int, image: Any) -> None:
+        if seq == self._preview_seq and isinstance(image, str) and image:
             self._preview.set_image(image)
 
     def _on_save(self) -> None:
@@ -218,6 +242,8 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         saved = self._save_cb(settings, self._draft_appearance())
         if saved is False:
             self._loaded, self._baseline = previous
+        else:
+            self.refresh_preview_soon()
         self._refresh_state()
 
 
