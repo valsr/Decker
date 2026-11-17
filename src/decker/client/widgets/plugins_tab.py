@@ -27,6 +27,7 @@ from decker.client.events import (
     PluginInstallProgressEvent,
     PluginLoadFailedEvent,
     PluginsChangedEvent,
+    PluginUpdatesAvailableEvent,
 )
 from decker.client.events.event_manager import EventManager
 from decker.client.widgets.schema_form import SchemaForm
@@ -122,6 +123,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         super().__init__(parent)
         self._plugins: dict[str, dict[str, Any]] = {}
         self._failed_plugins: dict[str, str] = {}
+        self._updates: dict[str, str] = {}
 
         self._plugin_list: QListWidget = QListWidget()
         self._install_btn: QPushButton = QPushButton("Install…")
@@ -143,6 +145,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         em.subscribe(PluginInstallProgressEvent, self._on_install_progress)
         em.subscribe(PluginInstallFinishedEvent, self._on_install_finished)
         em.subscribe(PluginsChangedEvent, self._on_plugins_changed)
+        em.subscribe(PluginUpdatesAvailableEvent, self._on_updates_available)
 
     def refresh(self) -> None:
         """Re-fetch the installed plugins and the install permission from the server."""
@@ -212,6 +215,8 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
                 f"{plugin.get('name', plugin_id)}  v{plugin.get('version', '')} · {plugin.get('author', '')} · {kind}\n"
                 f"{_contribution_summary(plugin)}"
             )
+            if plugin_id in self._updates:
+                text += f" · Update available: {self._updates[plugin_id]}"
             item = QListWidgetItem(_plugin_icon(plugin), text)
             item.setData(_PLUGIN_ID_ROLE, plugin_id)
             item.setToolTip(str(plugin.get("description", "")))
@@ -304,6 +309,10 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
             text = f"Install failed: {event.message}"
         self._status_label.setText(text)
         logging.info("Plugin install %s finished: %s", event.job_id, text)
+
+    def _on_updates_available(self, event: PluginUpdatesAvailableEvent) -> None:
+        self._updates = {str(u["id"]): str(u["available"]) for u in event.updates}
+        self._render_plugins()
 
     def _on_plugins_changed(self, _event: PluginsChangedEvent) -> None:
         self.refresh()

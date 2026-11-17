@@ -13,7 +13,9 @@ from decker.client.events import (
     DeviceListUpdatedEvent,
     OpenUrlRequestedEvent,
     PagesUpdatedEvent,
+    PluginInstallFinishedEvent,
     PluginLoadFailedEvent,
+    PluginUpdatesAvailableEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
@@ -466,3 +468,56 @@ class TestDropInstall:
         window.dragEnterEvent(event)
 
         event.acceptProposedAction.assert_called_once()
+
+
+class TestUpdateToast:
+    @staticmethod
+    def _report(version="2.0.0"):
+        updates = [{"id": "a.b", "name": "A", "installed": "1.0.0", "available": version}]
+        return PluginUpdatesAvailableEvent(updates=updates, missing=[])
+
+    def test_toast_action_shown_for_updates(self, window, connection_manager):  # pylint: disable=redefined-outer-name
+        connection_manager.call.return_value = "job-1"
+
+        window.dispatch(self._report())
+
+        assert_that(window._toast.text()).is_equal_to("1 plugin update available")  # pylint: disable=protected-access
+        action = window._toast_action  # pylint: disable=protected-access
+        assert_that(action.isHidden()).is_false()
+        assert_that(action.text()).is_equal_to("Update all")
+        action.click()
+        connection_manager.call.assert_called_with("plugin_install_from_repository", "a.b")
+
+    def test_toast_for_missing_plugins(self, window):  # pylint: disable=redefined-outer-name
+        missing = [{"id": f"m.{i}", "name": "M", "version": "1", "keys": 2} for i in range(2)]
+
+        window.dispatch(PluginUpdatesAvailableEvent(updates=[], missing=missing))
+
+        assert_that(window._toast.text()).is_equal_to("2 missing plugins available")  # pylint: disable=protected-access
+        assert_that(window._toast_action.text()).is_equal_to("Install")  # pylint: disable=protected-access
+
+    def test_toast_not_repeated_for_same_report(self, window):  # pylint: disable=redefined-outer-name
+        window.dispatch(self._report())
+        window._toast.hide()  # pylint: disable=protected-access
+
+        window.dispatch(self._report())
+        assert_that(window._toast.isHidden()).is_true()  # pylint: disable=protected-access
+
+        window.dispatch(self._report("3.0.0"))
+        assert_that(window._toast.isHidden()).is_false()  # pylint: disable=protected-access
+
+    def test_summary_toast_after_run(self, window, connection_manager):  # pylint: disable=redefined-outer-name
+        connection_manager.call.return_value = "job-1"
+        window.dispatch(self._report())
+        window._toast_action.click()  # pylint: disable=protected-access
+
+        window.dispatch(
+            PluginInstallFinishedEvent(
+                job_id="job-1", ok=True, plugin_id="a.b", version="2.0.0", previous_version="1.0.0", message=""
+            )
+        )
+
+        assert_that(window._toast.text()).is_equal_to(
+            "1 plugin installed or updated"
+        )  # pylint: disable=protected-access
+        assert_that(window._toast_action.isHidden()).is_true()  # pylint: disable=protected-access

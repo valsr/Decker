@@ -14,6 +14,7 @@ from decker.client.events import (
     PluginInstallFinishedEvent,
     PluginInstallProgressEvent,
     PluginsChangedEvent,
+    PluginUpdatesAvailableEvent,
 )
 from decker.client.events.event_manager import EventManager
 from decker.client.widgets import plugins_tab
@@ -297,3 +298,19 @@ def test_get_more_button_opens_single_dialog(manager, qapp):
     assert_that(tab._get_more_dialog).is_same_as(first)
     assert_that(first.isModal()).is_false()
     first.close()
+
+
+def test_plugins_tab_badges_updates(tab):
+    update = {"id": "com.acme.extra", "name": "Extra", "installed": "2.1.0", "available": "2.2.0"}
+
+    EventManager.get().emit(PluginUpdatesAvailableEvent(updates=[update], missing=[]))
+
+    texts = {
+        tab._plugin_list.item(i).data(plugins_tab._PLUGIN_ID_ROLE): tab._plugin_list.item(i).text() for i in range(2)
+    }
+    assert_that(texts["com.acme.extra"]).contains("Update available: 2.2.0")
+    assert_that(texts["com.decker.core"]).does_not_contain("Update available")
+
+    EventManager.get().emit(PluginUpdatesAvailableEvent(updates=[], missing=[]))
+    assert_that(tab._plugin_list.item(0).text()).does_not_contain("Update available")
+    assert_that(tab._plugin_list.item(1).text()).does_not_contain("Update available")

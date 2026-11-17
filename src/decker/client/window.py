@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QStackedWidget,
     QSystemTrayIcon,
 )
@@ -28,6 +29,7 @@ from decker.client.events import (
     PagesUpdatedEvent,
     PluginInstallFinishedEvent,
     PluginLoadFailedEvent,
+    PluginUpdatesAvailableEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
     ViewActivatedEvent,
@@ -35,6 +37,7 @@ from decker.client.events import (
 )
 from decker.client.events.event_manager import EventManager
 from decker.client.ui_state_store import UiStateStore
+from decker.client.update_runner import RESULT_OK, UpdateRunner
 from decker.client.view_name import ViewName
 from decker.client.views import (
     BaseView,
@@ -57,6 +60,7 @@ _WINDOW_GEOMETRY_KEY = "window_geometry"
 _DRAIN_INTERVAL_MS = 16
 _INITIAL_VIEW_RECHECK_MS = 50
 _TOAST_DURATION_MS = 4000
+_ACTION_TOAST_DURATION_MS = 20000
 
 
 class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
@@ -78,6 +82,12 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
 
         self._stack: QStackedWidget = QStackedWidget()
         self._toast: QLabel = QLabel(self)
+        self._toast_action: QPushButton = QPushButton(self)
+        self._toast_serial: int = 0
+        self._last_updates_key: tuple[Any, ...] | None = None
+        self._update_runner: UpdateRunner = UpdateRunner(
+            connection_manager.call, on_complete=self._on_update_run_complete
+        )
         # Created before the window's own handlers so it observes events the window consumes.
         self._settings_dialog: SettingsDialog = SettingsDialog(self)
         self._register_all_views()
@@ -226,6 +236,7 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         em.subscribe(PluginLoadFailedEvent, self._on_plugin_load_failed)
         em.subscribe(OpenUrlRequestedEvent, self._on_open_url_requested)
         em.subscribe(PluginInstallFinishedEvent, self._on_plugin_install_finished)
+        em.subscribe(PluginUpdatesAvailableEvent, self._on_updates_available)
         for event_type in (
             DeviceListUpdatedEvent,
             ActionListUpdatedEvent,
@@ -256,6 +267,8 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
             self._show_toast(f"Installed plugin {event.plugin_id} {event.version}")
         else:
             self._show_toast(f"Plugin install failed: {event.message}")
+        # After the per-job toast, so a finished run's summary toast replaces it.
+        self._update_runner.on_finished(event.job_id, event.ok, event.message)
 
     def _on_open_url_requested(self, event: OpenUrlRequestedEvent) -> bool:
         if QUrl(event.url).scheme().lower() not in ("http", "https"):
@@ -285,12 +298,65 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
             return self._views[self._active].handle_event(event)
         return None
 
-    def _show_toast(self, message: str) -> None:
+    def _on_updates_available(self, event: PluginUpdatesAvailableEvent) -> None:
+        key = (
+            tuple((u.get("id"), u.get("available")) for u in event.updates),
+            tuple((m.get("id"), m.get("version")) for m in event.missing),
+        )
+        if key == self._last_updates_key:
+            return
+        self._last_updates_key = key
+        if event.updates:
+            ids = [str(u["id"]) for u in event.updates]
+            self._show_toast(_count_text(len(ids), "plugin update", "available"), "Update all", ids)
+        elif event.missing:
+            ids = [str(m["id"]) for m in event.missing]
+            self._show_toast(_count_text(len(ids), "missing plugin", "available"), "Install", ids)
+
+    def _run_updates(self, plugin_ids: list[str]) -> None:
+        self._hide_toast()
+        self._update_runner.run(plugin_ids)
+
+    def _on_update_run_complete(self, results: dict[str, str]) -> None:
+        failed = {plugin_id: result for plugin_id, result in results.items() if result != RESULT_OK}
+        done = len(results) - len(failed)
+        text = _count_text(done, "plugin", "installed or updated")
+        if failed:
+            first_id, first_error = next(iter(failed.items()))
+            text += f", {len(failed)} failed ({first_id}: {first_error})"
+        self._show_toast(text)
+
+    def _show_toast(self, message: str, action_text: str = "", plugin_ids: list[str] | None = None) -> None:
+        self._toast_serial += 1
+        serial = self._toast_serial
         self._toast.setText(message)
         self._toast.adjustSize()
         self._toast.move(12, self.height() - self._toast.height() - 12)
         self._toast.show()
-        QTimer.singleShot(_TOAST_DURATION_MS, self._toast.hide)
+        self._toast_action.hide()
+        if action_text and plugin_ids:
+            ids = list(plugin_ids)
+            self._toast_action.setText(action_text)
+            self._toast_action.adjustSize()
+            self._toast_action.move(
+                self._toast.x() + self._toast.width() + 8,
+                self._toast.y() + (self._toast.height() - self._toast_action.height()) // 2,
+            )
+            try:
+                self._toast_action.clicked.disconnect()
+            except TypeError:
+                pass  # nothing connected yet
+            self._toast_action.clicked.connect(lambda: self._run_updates(ids))
+            self._toast_action.show()
+            self._toast_action.raise_()
+        duration = _ACTION_TOAST_DURATION_MS if action_text else _TOAST_DURATION_MS
+        QTimer.singleShot(duration, lambda: self._hide_toast(serial))
+
+    def _hide_toast(self, serial: int | None = None) -> None:
+        if serial is not None and serial != self._toast_serial:
+            return  # a newer toast replaced this one
+        self._toast.hide()
+        self._toast_action.hide()
 
     def _register_all_views(self) -> None:
         overlay = ReconnectWaitingOverlay(on_settings=self.open_settings)
@@ -308,6 +374,11 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         self.setCentralWidget(self._stack)
         self._toast.setObjectName("toast")
         self._toast.hide()
+        self._toast_action.hide()
+
+
+def _count_text(count: int, noun: str, suffix: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'} {suffix}"
 
 
 def _should_close_to_tray() -> bool:

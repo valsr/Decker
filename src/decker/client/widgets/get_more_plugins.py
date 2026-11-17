@@ -25,7 +25,11 @@ from PyQt6.QtWidgets import (
 from decker.client.action_icons import decode_icon, placeholder_pixmap
 from decker.client.connection_manager import to_plain
 from decker.client.context import AppContext
-from decker.client.events import PluginInstallFinishedEvent, PluginInstallProgressEvent
+from decker.client.events import (
+    PluginInstallFinishedEvent,
+    PluginInstallProgressEvent,
+    PluginsChangedEvent,
+)
 from decker.client.events.event_manager import EventManager
 
 ALL_CATEGORIES = "All categories"
@@ -147,6 +151,7 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         em = EventManager.get()
         em.subscribe(PluginInstallProgressEvent, self._on_progress)
         em.subscribe(PluginInstallFinishedEvent, self._on_finished)
+        em.subscribe(PluginsChangedEvent, self._on_plugins_changed)
         self.refresh()
 
     def refresh(self) -> None:
@@ -160,6 +165,7 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         em = EventManager.get()
         em.unsubscribe(PluginInstallProgressEvent, self._on_progress)
         em.unsubscribe(PluginInstallFinishedEvent, self._on_finished)
+        em.unsubscribe(PluginsChangedEvent, self._on_plugins_changed)
         super().done(result)
 
     def _build(self) -> None:
@@ -343,6 +349,11 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         )
         self._apply_filter()
         self._run(lambda m: to_plain(m.call("repository_catalog")), self._show_catalog_keep_status)
+
+    def _on_plugins_changed(self, _event: PluginsChangedEvent) -> None:
+        # Plugins changed elsewhere (e.g. "Update all"); an own job reloads the catalog when it finishes.
+        if self._installing is None:
+            self.refresh()
 
     def _show_catalog_keep_status(self, catalog: Any) -> None:
         status = self._status.text()
