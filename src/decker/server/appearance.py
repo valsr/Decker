@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from decker.asset.renderer import AssetRenderer
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
+from decker.common.text_style import fold_legacy_title
 from decker.plugin.settings_schema import apply_schema, parse_settings_schema
 
 _BASE_SIZE = 72  # title sizes in settings are relative to a 72 px key
@@ -44,24 +45,29 @@ def _font(family: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFon
 
 
 def resolve_appearance(action_defaults: Mapping[str, Any], stored: Mapping[str, Any]) -> dict[str, Any]:
-    """Complete, typed appearance: schema defaults < action defaults < stored values."""
-    return apply_schema(_PARSED_SCHEMA, {**action_defaults, **stored})
+    """Complete, typed appearance: schema defaults < action defaults < stored values (title merged per field)."""
+    defaults = fold_legacy_title(action_defaults)
+    values = fold_legacy_title(stored)
+    merged = {**defaults, **values}
+    if "title" in merged:
+        merged["title"] = {**defaults.get("title", {}), **values.get("title", {})}
+    return apply_schema(_PARSED_SCHEMA, merged)
 
 
-def _draw_title(draw: ImageDraw.ImageDraw, title: str, appearance: Mapping[str, Any], size: int) -> None:
+def _draw_title(draw: ImageDraw.ImageDraw, text: str, style: Mapping[str, Any], size: int) -> None:
     scale = size / _BASE_SIZE
     margin = round(_TITLE_MARGIN * scale)
     anchor, y = {"top": ("mt", margin), "middle": ("mm", size // 2), "bottom": ("mb", size - margin)}[
-        appearance["title_position"]
+        style["position"]
     ]
-    outline = appearance["title_outline"] or None
+    outline = style["outline"] or None
     draw.text(
         (size // 2, y),
-        title,
-        fill=appearance["title_color"],
-        font=_font(appearance["title_font"] or "DejaVu Sans", max(1, round(appearance["title_size"] * scale))),
+        text,
+        fill=style["color"],
+        font=_font(style["font"] or "DejaVu Sans", max(1, round(style["size"] * scale))),
         anchor=anchor,
-        stroke_width=round(appearance["title_outline_width"] * scale) if outline else 0,
+        stroke_width=round(style["outline_width"] * scale) if outline else 0,
         stroke_fill=outline,
     )
 
@@ -78,9 +84,12 @@ def compose_key_image(
                 img.alpha_composite(layer)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logging.debug("skipping unreadable plugin image: %s", exc)
-    title = appearance["title"] or plugin_title
-    if appearance["show_title"] and title:
-        _draw_title(ImageDraw.Draw(img), title, appearance, size)
+    style = appearance["title"]
+    text = style["text"] or plugin_title
+    if style["visible"] and text:
+        layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        _draw_title(ImageDraw.Draw(layer), text, style, size)
+        img.alpha_composite(layer)
     buf = io.BytesIO()
     img.convert("RGB").save(buf, format="PNG")
     return buf.getvalue()

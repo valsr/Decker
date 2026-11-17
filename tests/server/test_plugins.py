@@ -546,17 +546,17 @@ class TestAppearanceComposition:
 
         event = env.bus.of("key_state_changed")[-1]
 
-        assert_that(event["appearance"]["title"]).is_equal_to("Hi")
+        assert_that(event["appearance"]["title"]["text"]).is_equal_to("Hi")
         assert_that(event["appearance"]["background"]).is_equal_to("#1f618d")
-        assert_that(event["appearance_defaults"]["title"]).is_equal_to("")
+        assert_that(event["appearance_defaults"]["title"]["text"]).is_equal_to("")
         assert_that(event["appearance_defaults"]["background"]).is_equal_to("#1f618d")
 
     def test_appearance_for_merges_manifest_defaults(self, env):
         resolved, defaults = env.manager.appearance_for(COUNTER_TARGET, {"title": "x"})
 
         assert_that(resolved["background"]).is_equal_to("#1f618d")
-        assert_that(resolved["title"]).is_equal_to("x")
-        assert_that(defaults["title"]).is_equal_to("")
+        assert_that(resolved["title"]["text"]).is_equal_to("x")
+        assert_that(defaults["title"]["text"]).is_equal_to("")
 
 
 class TestComposeFailureIsContained:
