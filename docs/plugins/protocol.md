@@ -26,7 +26,7 @@ discarded.
 
 | Event | Context | Payload |
 |-------|---------|---------|
-| `hello` | | `{"protocol": 1, "decker_version": "0.4.0", "plugin_id": "com.example.hello", "global_settings": {...}}` (first message) |
+| `hello` | | `{"protocol": 1, "decker_version": "0.5.0", "plugin_id": "com.example.hello", "global_settings": {...}}` (first message) |
 | `will_appear` | yes | `{"action": "<action id>", "device": "<device id>", "key": {"index": 0, "column": 0, "row": 0}, "settings": {...}, "state": 0}` |
 | `will_disappear` | yes | none |
 | `key_down`, `key_up` | yes | none (raw key events) |
@@ -51,6 +51,7 @@ discarded.
 | `show_alert`, `show_ok` | yes | none (accepted, no visible effect in v1) |
 | `set_settings` | yes | `{"settings": {...}}`, validated against the action's schema and saved; keys you leave out keep their stored value, so send only what you changed (see [Pages](#pages)) |
 | `switch_page` | yes | `{"to": "next"\|"previous"\|"first"\|"last", "wrap": false}` or `{"page_id": "<id>"}`: switch the key's device to that page (see [Pages](#pages)) |
+| `switch_profile` | yes | `{"to": "next"\|"previous"\|"first"\|"last", "wrap": false}` or `{"profile_id": 2}`: switch the key's device to that profile's default page (see [Profiles](#profiles)) |
 | `set_global_settings` | | `{"settings": {...}}`, validated against `global_settings` and saved |
 | `set_gestures` | yes | `{"gestures": ["press", "long_press"]}`; replaces the key's gesture set |
 | `log` | | `{"level": "info", "message": "text"}`; levels `debug`, `info`, `warning`, `error` |
@@ -62,15 +63,26 @@ Messages for a context that is not active (for example after `will_disappear`) a
 
 `switch_page` acts on the device of the key (`context`) that sent it. `to` is relative to the page the device shows;
 `wrap` (default `false`, only `true` counts) loops from the last page to the first and back. `page_id` goes to one of
-that device's own pages. Unknown pages, a device with one page, an edge without wrap and malformed payloads are ignored
+that device's pages, **in any of its profiles** (the device switches profile first when needed); `to` stays inside the
+profile the device shows. Unknown pages, a device with one page, an edge without wrap and malformed payloads are ignored
 (logged by the server).
 
-A `page` setting (see [settings schema](settings-schema.md)) arrives as `{"page_id": "...", "name": "...", "index": 1}`
-(`index` is 1-based); a deleted or unset page arrives as `{"page_id": "", "name": "", "index": 0}`. Settings fields that
-declare `"template": true` arrive with `{page_name}`, `{page_index}` and `{page_count}` already replaced for the key's
+A `page` setting (see [settings schema](settings-schema.md)) arrives as `{"page_id": "...", "name": "...", "index": 1, "profile_id": 0}`
+(`index` is 1-based within its profile); a deleted or unset page arrives as `{"page_id": "", "name": "", "index": 0, "profile_id": -1}`.
+Settings fields that declare `"template": true` arrive with `{page_name}`, `{page_index}`, `{page_count}`, `{current_profile}`
+and `{profile_id}` already replaced for the key's
 device; the stored value stays as the user typed it, so a plugin must not write expanded text back: with
 `set_settings`, send only the keys you changed. The server re-sends `settings_changed` when a page is renamed, added or
 deleted or the device switches pages and a delivered value changes. Templates in `global_settings` are not expanded.
+
+## Profiles
+
+A device has one or more **profiles**, each a set of pages; `profile_id` is a small integer per device (the lowest unused
+one is handed out, so ids are reused after a deletion). `switch_profile` acts on the device of the key that sent it:
+`to` moves through the profiles in the order the user sees them (`wrap` as for pages), `profile_id` goes to that
+profile. The device then shows the profile's default page. Unknown or non-integer ids, a device with one profile and
+malformed payloads are ignored. A `profile` setting arrives resolved (see [settings schema](settings-schema.md)); its
+`icon` is a ref a plugin can pass to `set_icon`, including `decker:logo`, the Decker icon.
 
 ## Images
 
