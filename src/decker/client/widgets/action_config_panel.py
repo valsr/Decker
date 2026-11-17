@@ -43,6 +43,10 @@ class ActionConfigPanel(QStackedWidget):
         self._loaded = None
         self.setCurrentIndex(_PAGE_PLACEHOLDER)
 
+    def forget_loaded(self) -> None:
+        """Treat the next values as a different key's, so edits made for the previous key are replaced."""
+        self._loaded = None
+
     def show_action_config(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         settings_schema: list[dict[str, Any]],

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QTimer, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
@@ -71,6 +71,7 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         self._views: dict[ViewName, BaseView] = {}
         self._active: ViewName | None = None
         self._last_view: ViewName | None = None
+        self._open_url_prompt_active = False
 
         AppContext.get().window = self
         AppContext.get().connection_manager = connection_manager
@@ -259,8 +260,23 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
     def _on_open_url_requested(self, event: OpenUrlRequestedEvent) -> bool:
         if QUrl(event.url).scheme().lower() not in ("http", "https"):
             return True
-        answer = QMessageBox.question(self, "Open link", f"{event.plugin_id} wants to open {event.url}")
-        if answer == QMessageBox.StandardButton.Yes:
+        if self._open_url_prompt_active:
+            return True  # one prompt at a time; a plugin looping open_url must not stack dialogs
+        self._open_url_prompt_active = True
+        try:
+            box = QMessageBox(
+                QMessageBox.Icon.Question,
+                "Open link",
+                f"{event.plugin_id} wants to open {event.url}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                self,
+            )
+            box.setTextFormat(Qt.TextFormat.PlainText)
+            box.setDefaultButton(QMessageBox.StandardButton.No)
+            answer = box.exec()
+        finally:
+            self._open_url_prompt_active = False
+        if answer == QMessageBox.StandardButton.Yes.value:
             QDesktopServices.openUrl(QUrl(event.url))
         return True
 

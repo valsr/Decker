@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from assertpy import assert_that
-from PyQt6.QtCore import QMimeData, QUrl
+from PyQt6.QtCore import QMimeData, Qt, QUrl
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QMessageBox
 
@@ -139,24 +139,49 @@ class TestDispatch:
 
     def test_open_url_opens_only_after_confirmation(self, window):  # pylint: disable=redefined-outer-name
         event = OpenUrlRequestedEvent(plugin_id="com.decker.x", url="https://example.com")
+        seen: dict = {}
+        answers = [QMessageBox.StandardButton.No.value, QMessageBox.StandardButton.Yes.value]
+
+        def fake_exec(box):
+            seen.update(
+                text=box.text(),
+                text_format=box.textFormat(),
+                default=box.defaultButton().text().replace("&", ""),
+            )
+            return answers.pop(0)
+
         with (
             patch("decker.client.window.QDesktopServices.openUrl") as open_url,
-            patch("decker.client.window.QMessageBox.question", return_value=QMessageBox.StandardButton.No) as ask,
+            patch.object(QMessageBox, "exec", fake_exec),
         ):
             window.dispatch(event)
-            assert_that(ask.call_args.args[1:]).is_equal_to(
-                ("Open link", "com.decker.x wants to open https://example.com")
-            )
+            assert_that(seen["text"]).is_equal_to("com.decker.x wants to open https://example.com")
+            assert_that(seen["text_format"]).is_equal_to(Qt.TextFormat.PlainText)
+            assert_that(seen["default"]).is_equal_to("No")
             open_url.assert_not_called()
-            ask.return_value = QMessageBox.StandardButton.Yes
             window.dispatch(event)
             open_url.assert_called_once()
             assert_that(open_url.call_args.args[0].toString()).is_equal_to("https://example.com")
 
+    def test_open_url_prompts_do_not_stack(self, window):  # pylint: disable=redefined-outer-name
+        event = OpenUrlRequestedEvent(plugin_id="com.decker.x", url="https://example.com")
+        calls: list[int] = []
+
+        def fake_exec(_box):
+            calls.append(1)
+            window.dispatch(event)
+            window.dispatch(event)
+            return QMessageBox.StandardButton.No.value
+
+        with patch.object(QMessageBox, "exec", fake_exec):
+            window.dispatch(event)
+
+        assert_that(calls).is_length(1)
+
     def test_open_url_rejects_file_scheme(self, window):  # pylint: disable=redefined-outer-name
         with (
             patch("decker.client.window.QDesktopServices.openUrl") as open_url,
-            patch("decker.client.window.QMessageBox.question") as ask,
+            patch.object(QMessageBox, "exec") as ask,
         ):
             window.dispatch(OpenUrlRequestedEvent(plugin_id="com.decker.x", url="file:///etc/passwd"))
             ask.assert_not_called()

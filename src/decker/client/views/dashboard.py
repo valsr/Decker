@@ -299,6 +299,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     # ------------------------------------------------------------------
 
     def _on_key_selected(self, index: int) -> None:
+        if index != self._selected_key:
+            self._config_panel.forget_loaded()
         self._selected_key = index
         self._refresh_config_panel()
         # Simulate a short press so the counter increments.

@@ -443,6 +443,37 @@ class TestKeyInteractions:
         assert_that(panel.currentIndex()).is_equal_to(1)
         assert_that(panel._settings_form.values()).is_equal_to({"step": 4})  # pylint: disable=protected-access
 
+    def test_selecting_another_key_with_identical_values_drops_unsaved_edits(  # pylint: disable=unused-argument
+        self, qapp, tmp_path
+    ):
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        AppContext.get().connection_manager = MagicMock()
+        schema: list[dict[str, Any]] = [
+            {"key": "step", "type": "int", "label": "Step", "default": 1, "min": 1, "max": 9}
+        ]
+        view.handle_event(
+            ActionListUpdatedEvent(
+                actions=[
+                    {"plugin_uuid": "com.p", "action_uuid": "com.p.a", "action_name": "A", "settings_schema": schema}
+                ]
+            )
+        )
+        for key in (3, 4):
+            view._key_slots[key] = {  # pylint: disable=protected-access
+                "plugin_uuid": "com.p",
+                "action_uuid": "com.p.a",
+                "context_id": f"c{key}",
+                "settings": {"step": 2},
+            }
+        view._on_key_selected(3)  # pylint: disable=protected-access
+        panel = view._config_panel  # pylint: disable=protected-access
+        panel._settings_form._fields["step"].set(8)  # pylint: disable=protected-access
+
+        view._on_key_selected(4)  # pylint: disable=protected-access
+
+        assert_that(panel._settings_form.values()).is_equal_to({"step": 2})  # pylint: disable=protected-access
+
     def test_save_calls_key_update_settings_and_key_update_appearance(  # pylint: disable=unused-argument
         self, qapp, tmp_path
     ):
