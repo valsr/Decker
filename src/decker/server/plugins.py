@@ -71,11 +71,9 @@ class _StreamDeckHardwareSink:
         self,
         device_manager: Any,  # DeviceManager | None — avoid circular import at module level
         label_setter: Callable[[str, int, str], None],
-        on_state_changed: _StateChangedCallback | None = None,
     ) -> None:
         self._device_manager = device_manager
         self._label_setter = label_setter
-        self._on_state_changed = on_state_changed
         self._renderer = AssetRenderer()
 
     def set_image(self, device_id: str, key_index: int, image: bytes) -> None:
@@ -84,14 +82,10 @@ class _StreamDeckHardwareSink:
             self._device_manager.set_image_bytes(device_id, key_index, image)
         else:
             logging.debug("set_image: no DeviceManager available")
-        if self._on_state_changed is not None:
-            self._on_state_changed(device_id, key_index)
 
     def set_title(self, device_id: str, key_index: int, title: str) -> None:
         """Store the display label for client polling (hardware text not rendered)."""
         self._label_setter(device_id, key_index, title)
-        if self._on_state_changed is not None:
-            self._on_state_changed(device_id, key_index)
 
     def clear_image(self, device_id: str, key_index: int) -> None:
         """Blank the key and drop its stored image."""
@@ -100,8 +94,6 @@ class _StreamDeckHardwareSink:
             if device is not None:
                 device.clear_key_image(key_index)
             self._device_manager.clear_key_state(device_id, key_index)
-        if self._on_state_changed is not None:
-            self._on_state_changed(device_id, key_index)
 
     def set_state(self, device_id: str, key_index: int, state: int) -> None:
         """No-op: multi-state icon rendering is not implemented yet."""
@@ -166,6 +158,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._icon_cache: dict[tuple[Path, str | None], str] = {}
         self._hellos: dict[str, dict[str, Any]] = {}
         self._sink: _StreamDeckHardwareSink = _StreamDeckHardwareSink(None, self._set_key_label)
+        self._state_changed_cb: _StateChangedCallback | None = None
         self.settings_persister: Callable[[ActionTarget, dict[str, Any]], None] | None = None
         if policy is None:
             limit = int(config.get_or_default("plugin.memory_limit", _DEFAULT_MEMORY_LIMIT))
@@ -178,11 +171,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Wire up the device manager, then scan plugins and start the supervisor."""
         self._device_manager = context.device_manager
         self._event_bus = context.event_bus
-        self._sink = _StreamDeckHardwareSink(
-            self._device_manager,
-            self._set_key_label,
-            on_state_changed=self._make_state_changed_cb(context),
-        )
+        self._sink = _StreamDeckHardwareSink(self._device_manager, self._set_key_label)
+        self._state_changed_cb = self._make_state_changed_cb(context)
         self.settings_persister = self._make_settings_persister(context)
         try:
             self._sdk_path = stage_sdk()
@@ -297,7 +287,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             if hello is not None:
                 hello["global_settings"] = settings
         if notify:
-            self._supervisor.send(plugin_id, Message("global_settings_changed", None, {"settings": settings}))
+            self._supervisor.send(plugin_id, Message("global_settings_changed", None, {"global_settings": settings}))
         return settings
 
     def delete_plugin_settings(self, plugin_id: str) -> None:
@@ -366,7 +356,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             if live is None:
                 return
             live.appearance = dict(stored)
-            self._recompose(live)
+        self._recompose(live)
 
     def activate_action(self, target: ActionTarget, appearance: dict[str, Any] | None = None) -> None:
         """Tell the action's plugin that an instance appeared, starting the plugin if needed."""
@@ -391,7 +381,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         )
         with self._lock:
             self._live[target.context_id] = live
-            self._recompose(live)
+        self._recompose(live)
         self._supervisor.acquire(target.plugin_uuid)
         if self._supervisor.is_failed(target.plugin_uuid):
             self._mark_failed(live)
@@ -445,24 +435,41 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     # ------------------------------------------------------------------
 
     def _recompose(self, live: _Live) -> None:
-        """Compose the key image from appearance, plugin image/title and state, and send it to the sink.
+        """Compose the key image outside the lock, then write it if the instance is still active.
 
-        Callers hold self._lock so no sink call can follow deactivate_action.
+        Only the final sink write holds self._lock, so no hardware write can follow deactivate_action.
         """
+        target = live.target
         try:
+            image = self._compose(live)
+            with self._lock:
+                if self._live.get(target.context_id) is not live:
+                    return
+                self._sink.set_image(target.device_id, target.key_index, image)
+        except Exception:  # pylint: disable=broad-except
+            logging.warning("Could not compose key image for context %s", target.context_id, exc_info=True)
+            return
+        self._notify_state(target.device_id, target.key_index)
+
+    def _compose(self, live: _Live) -> bytes:
+        with self._lock:
+            plugin = self._plugins.get(live.target.plugin_uuid)
             spec = live.action
             state = spec.states[live.state] if 0 <= live.state < len(spec.states) else None
-            image = live.plugin_image
-            if image is None and state is not None and state.image:
-                plugin = self._plugins.get(live.target.plugin_uuid)
-                image = read_icon(plugin.plugin_dir, state.image) if plugin is not None else None
-            title = live.plugin_title or (state.title if state is not None and state.title else "")
-            appearance = resolve_appearance(spec.appearance, live.appearance)
-            self._sink.set_image(
-                live.target.device_id, live.target.key_index, compose_key_image(appearance, image, title)
-            )
+            image, plugin_title, stored = live.plugin_image, live.plugin_title, dict(live.appearance)
+        if image is None and state is not None and state.image:
+            image = read_icon(plugin.plugin_dir, state.image) if plugin is not None else None
+        title = plugin_title or (state.title if state is not None and state.title else "")
+        return compose_key_image(resolve_appearance(spec.appearance, stored), image, title)
+
+    def _notify_state(self, device_id: str, key_index: int) -> None:
+        callback = self._state_changed_cb
+        if callback is None:
+            return
+        try:
+            callback(device_id, key_index)
         except Exception:  # pylint: disable=broad-except
-            logging.warning("Could not compose key image for context %s", live.target.context_id, exc_info=True)
+            logging.warning("Key state notification failed", exc_info=True)
 
     def _send_context(self, live: _Live, event: str, payload: dict[str, Any] | None = None) -> None:
         self._supervisor.send(live.target.plugin_uuid, Message(event, live.target.context_id, payload or {}))
@@ -475,7 +482,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             "device": target.device_id,
             "key": {"index": target.key_index, "column": column, "row": row},
             "settings": live.settings,
-            "state": 0,
+            "state": live.state,
         }
         self._supervisor.send(target.plugin_uuid, Message("will_appear", target.context_id, payload))
 
@@ -530,40 +537,42 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._route_context_message(plugin_id, message)
 
     def _route_context_message(self, plugin_id: str, message: Message) -> None:
-        # The lock spans the liveness check and the sink call, so once deactivate_action returns no
-        # further hardware effect for that context can happen. Sink calls are short local writes.
         with self._lock:
             live = self._live.get(message.context or "")
             if live is None or live.target.plugin_uuid != plugin_id:
                 logging.debug("[%s] dropped %s for inactive context %s", plugin_id, message.event, message.context)
                 return
-            if self._apply_sink_event(live, message):
-                return
+            handled, recompose = self._apply_sink_event(live, message)
+        if recompose:
+            self._recompose(live)
+        if handled:
+            return
         if message.event == "set_settings":
             self._on_set_settings(live, message.payload)
         elif message.event == "set_gestures":
             self._on_set_gestures(live, message.payload)
 
-    def _apply_sink_event(self, live: _Live, message: Message) -> bool:
+    def _apply_sink_event(self, live: _Live, message: Message) -> tuple[bool, bool]:
+        """Update the instance (caller holds the lock); returns (handled, needs a recompose)."""
         target, payload = live.target, message.payload
         if message.event == "set_image":
-            self._on_set_image(live, payload)
-        elif message.event == "set_title":
+            return True, self._on_set_image(live, payload)
+        if message.event == "set_title":
             live.plugin_title = str(payload.get("title", ""))
             self._sink.set_title(target.device_id, target.key_index, live.plugin_title)
-            self._recompose(live)
-        elif message.event == "set_state":
+            return True, True
+        if message.event == "set_state":
             state = payload.get("state")
             live.state = state if isinstance(state, int) else 0
             self._sink.set_state(target.device_id, target.key_index, live.state)
-            self._recompose(live)
-        elif message.event == "show_alert":
+            return True, True
+        if message.event == "show_alert":
             self._sink.show_alert(target.device_id, target.key_index)
-        elif message.event == "show_ok":
+            return True, False
+        if message.event == "show_ok":
             self._sink.show_ok(target.device_id, target.key_index)
-        else:
-            return False
-        return True
+            return True, False
+        return False, False
 
     def _on_ready(self, plugin_id: str) -> None:
         with self._lock:
@@ -573,20 +582,18 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         for device_id in self._device_ids():
             self._supervisor.send(plugin_id, Message("device_connected", payload={"device": device_id}))
 
-    def _on_set_image(self, live: _Live, payload: dict[str, Any]) -> None:
-        target = live.target
+    def _on_set_image(self, live: _Live, payload: dict[str, Any]) -> bool:
         image = payload.get("image")
         if image is None:
             live.plugin_image = None
-            self._recompose(live)
-            return
+            return True
         try:
             data = base64.b64decode(str(image), validate=True)
         except (binascii.Error, ValueError):
-            logging.warning("[%s] set_image with invalid base64 dropped", target.plugin_uuid)
-            return
+            logging.warning("[%s] set_image with invalid base64 dropped", live.target.plugin_uuid)
+            return False
         live.plugin_image = data
-        self._recompose(live)
+        return True
 
     def _on_set_settings(self, live: _Live, payload: dict[str, Any]) -> None:
         raw = payload.get("settings")
@@ -645,6 +652,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                 return
             self._sink.clear_image(target.device_id, target.key_index)
             self._sink.set_title(target.device_id, target.key_index, _FAILED_LABEL)
+        self._notify_state(target.device_id, target.key_index)
 
     def _drop_failure(self, plugin_id: str) -> None:
         self._failures = [f for f in self._failures if f.plugin_uuid != plugin_id]

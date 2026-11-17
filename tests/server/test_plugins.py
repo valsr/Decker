@@ -815,3 +815,50 @@ def test_user_plugin_with_bundled_id_is_rejected(tmp_path):
         assert_that([p for p in manager.plugins() if p.manifest.id == "com.decker.counter"][0].bundled).is_true()
     finally:
         manager.destroy()
+
+
+class TestLockDiscipline:
+    def test_composition_and_state_push_run_outside_the_manager_lock(self, env, monkeypatch):
+        import decker.server.plugins as plugins_module
+
+        held: list[bool] = []
+        real = plugins_module.compose_key_image
+
+        def watching(*args, **kwargs):
+            held.append(env.manager._lock._is_owned())  # pylint: disable=protected-access
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(plugins_module, "compose_key_image", watching)
+        pushes: list[bool] = []
+        original = env.manager._state_changed_cb  # pylint: disable=protected-access
+
+        def notified(device_id, key_index):
+            pushes.append(env.manager._lock._is_owned())  # pylint: disable=protected-access
+            original(device_id, key_index)
+
+        env.manager._state_changed_cb = notified  # pylint: disable=protected-access
+        env.manager.activate_action(REC_TARGET)
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("set_title", "ctx-1", {"title": "T"})
+        )
+
+        assert_that(held).is_not_empty()
+        assert_that(any(held)).is_false()
+        assert_that(pushes).is_not_empty()
+        assert_that(any(pushes)).is_false()
+
+    def test_will_appear_carries_the_live_state(self, env):
+        env.manager.activate_action(REC_TARGET)
+        assert _wait_for(lambda: env.received("will_appear"))
+        env.manager._live["ctx-1"].state = 1  # pylint: disable=protected-access
+        env.manager._send_will_appear(env.manager._live["ctx-1"])  # pylint: disable=protected-access
+
+        assert _wait_for(lambda: len(env.received("will_appear")) == 2)
+        assert_that(env.received("will_appear")[-1]["payload"]["state"]).is_equal_to(1)
+
+    def test_global_settings_changed_uses_the_spec_key(self, env):
+        env.manager.activate_action(REC_TARGET)
+        assert _wait_for(lambda: env.received("will_appear"))
+        env.manager.update_global_settings("com.decker.rec", {})
+        assert _wait_for(lambda: env.received("global_settings_changed"))
+        assert_that(env.received("global_settings_changed")[0]["payload"]).contains_key("global_settings")
