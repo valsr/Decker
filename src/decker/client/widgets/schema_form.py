@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from decker.client.widgets.color_button import ColorButton
+from decker.client.widgets.text_style_edit import TextStyleEdit
 
 _INT_LIMIT = 999_999_999
 _DEFAULT_COLOR = "#000000"
@@ -133,6 +134,11 @@ def _font_field(_entry: dict[str, Any]) -> _Field:
     return _Field(combo, lambda: combo.currentFont().family(), lambda v: combo.setCurrentFont(QFont(str(v))))
 
 
+def _text_style_field(_entry: dict[str, Any]) -> _Field:
+    edit = TextStyleEdit()
+    return _Field(edit, edit.value, edit.set_value)
+
+
 _BUILDERS: dict[str, Callable[[dict[str, Any]], _Field]] = {
     "int": _int_field,
     "float": _float_field,
@@ -142,6 +148,7 @@ _BUILDERS: dict[str, Callable[[dict[str, Any]], _Field]] = {
     "color": _color_field,
     "font": _font_field,
     "icon": _text_field,
+    "text_style": _text_style_field,
 }
 
 

@@ -4,7 +4,7 @@ from assertpy import assert_that
 from PyQt6.QtWidgets import QLabel, QLineEdit, QSpinBox
 
 from decker.client.widgets.action_config_panel import ActionConfigPanel
-from decker.common.appearance_schema import APPEARANCE_SCHEMA
+from decker.common.text_style import TEXT_STYLE_DEFAULTS
 
 _COUNTER_SCHEMA: list[dict[str, Any]] = [
     {"section": "Counting"},
@@ -12,7 +12,7 @@ _COUNTER_SCHEMA: list[dict[str, Any]] = [
     {"key": "double_step", "type": "int", "label": "Double step", "optional": True},
     {"key": "max", "type": "int", "label": "Max", "default": 0, "min": 0, "special_value": "No limit"},
 ]
-_DEFAULTS: dict[str, Any] = {e["key"]: e.get("default") for e in APPEARANCE_SCHEMA if "key" in e}
+_DEFAULTS: dict[str, Any] = {"background": "#000000", "title": dict(TEXT_STYLE_DEFAULTS)}
 
 
 def _show(panel: ActionConfigPanel, settings=None, appearance=None, save=None) -> None:
@@ -67,30 +67,30 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
     def test_resent_identical_values_keep_edits(self, qapp):  # pylint: disable=unused-argument
         panel = ActionConfigPanel()
         _show(panel, {"step": 1})
-        panel._appearance_form._fields["title"].set("typing…")
+        panel._appearance_form._fields["title"].set({"text": "typing…"})
 
         _show(panel, {"step": 1})
 
-        assert_that(panel._appearance_form.values()["title"]).is_equal_to("typing…")
+        assert_that(panel._appearance_form.values()["title"]["text"]).is_equal_to("typing…")
 
     def test_new_values_repopulate(self, qapp):  # pylint: disable=unused-argument
         panel = ActionConfigPanel()
         _show(panel, {"step": 1})
-        panel._appearance_form._fields["title"].set("typing…")
+        panel._appearance_form._fields["title"].set({"text": "typing…"})
 
-        _show(panel, {"step": 1}, {**_DEFAULTS, "title": "Saved"})
+        _show(panel, {"step": 1}, {**_DEFAULTS, "title": {**TEXT_STYLE_DEFAULTS, "text": "Saved"}})
 
-        assert_that(panel._appearance_form.values()["title"]).is_equal_to("Saved")
+        assert_that(panel._appearance_form.values()["title"]["text"]).is_equal_to("Saved")
 
     def test_reopening_after_placeholder_repopulates(self, qapp):  # pylint: disable=unused-argument
         panel = ActionConfigPanel()
         _show(panel, {"step": 1})
-        panel._appearance_form._fields["title"].set("typing…")
+        panel._appearance_form._fields["title"].set({"text": "typing…"})
         panel.show_placeholder()
 
         _show(panel, {"step": 1})
 
-        assert_that(panel._appearance_form.values()["title"]).is_equal_to("")
+        assert_that(panel._appearance_form.values()["title"]["text"]).is_equal_to("")
 
     def test_echo_of_saved_state_keeps_later_edits(self, qapp):  # pylint: disable=unused-argument
         panel = ActionConfigPanel()
@@ -98,9 +98,38 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         panel._settings_form._fields["step"].set(7)
         panel._appearance_form._fields["background"].set("#8a1c1c")
         panel._on_save()
-        panel._appearance_form._fields["title"].set("second edit")
+        panel._appearance_form._fields["title"].set({"text": "second edit"})
 
         saved_appearance = {**_DEFAULTS, "background": "#8a1c1c"}
         _show(panel, panel._settings_form.values(), saved_appearance)
 
-        assert_that(panel._appearance_form.values()["title"]).is_equal_to("second edit")
+        assert_that(panel._appearance_form.values()["title"]["text"]).is_equal_to("second edit")
+
+    def test_legacy_stored_keys_populate_title_control(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+
+        _show(panel, {"step": 1}, {"title": "Old", "title_size": 20, "show_title": False})
+
+        title = panel._appearance_form.values()["title"]
+        assert_that(title).contains_entry({"text": "Old"}, {"size": 20}, {"visible": False})
+
+    def test_save_drops_legacy_keys(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        captured: list[tuple[dict, dict]] = []
+        _show(panel, {"step": 1}, {"title": "Old", "title_size": 20}, save=lambda s, a: captured.append((s, a)))
+
+        panel._on_save()
+
+        appearance = captured[0][1]
+        assert_that(appearance).contains_key("title")
+        assert_that(appearance).does_not_contain_key("title_size")
+        assert_that(appearance["title"]).contains_entry({"text": "Old"}, {"size": 20})
+
+    def test_unchanged_title_is_not_saved(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        captured: list[tuple[dict, dict]] = []
+        _show(panel, {"step": 1}, save=lambda s, a: captured.append((s, a)))
+
+        panel._on_save()
+
+        assert_that(captured[0][1]).is_empty()

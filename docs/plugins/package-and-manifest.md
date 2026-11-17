@@ -43,7 +43,7 @@ JSON with snake_case keys. Unknown keys are ignored. `format` must be the intege
         "icon": "icons/greet",
         "gestures": ["press", "long_press"],
         "states": [{ "image": "icons/greet", "title": "Hi" }],
-        "appearance": { "background": "#1f618d", "title_position": "bottom" },
+        "appearance": { "background": "#1f618d", "title": { "position": "bottom" } },
         "settings": [
           { "key": "name", "type": "text", "label": "Name", "default": "world" }
         ]
@@ -94,7 +94,7 @@ JSON with snake_case keys. Unknown keys are ignored. `format` must be the intege
 | `name`, `tooltip`, `icon` | Display data. |
 | `gestures` | Default gesture set: any of `press`, `double_press`, `long_press` (default `["press"]`). A running plugin can change it per key with `set_gestures`. |
 | `states` | Optional list of `{image, title}`; selected by `set_state` (index into the list). |
-| `appearance` | Optional defaults for the Decker-drawn appearance (`background`, `show_title`, `title`, `title_position`, `title_font`, `title_size`, `title_color`, `title_outline`, `title_outline_width`). |
+| `appearance` | Optional defaults for the Decker-drawn appearance: `background` and `title` (a [`text_style`](settings-schema.md#text-style) object; give only the fields you want to change, e.g. `{"position": "top"}`). The older flat `show_title`, `title_position`, `title_font`, `title_size`, `title_color`, `title_outline` and `title_outline_width` keys, and a plain-string `title`, are still accepted and folded into `title`. |
 | `settings` | [Settings schema](settings-schema.md) for the per-key form. |
 
 ### `icon_packs[]`

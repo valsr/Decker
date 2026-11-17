@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 
 from decker.client.widgets.schema_form import SchemaForm
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
+from decker.common.text_style import fold_legacy_title
 
 _PAGE_PLACEHOLDER = 0
 _PAGE_FORM = 1
@@ -57,7 +58,9 @@ class ActionConfigPanel(QStackedWidget):
     ) -> None:
         """Populate and show the forms; identical values re-sent while shown leave edits in progress alone."""
         self._save_cb = save_cb
-        self._appearance_defaults = dict(appearance_defaults)
+        appearance_defaults = fold_legacy_title(appearance_defaults)
+        self._appearance_defaults = appearance_defaults
+        appearance = _merged(appearance, appearance_defaults)
         loaded = (
             settings_schema,
             dict(settings),
@@ -67,7 +70,7 @@ class ActionConfigPanel(QStackedWidget):
         if self.currentIndex() == _PAGE_FORM and loaded == self._loaded:
             return
         self._loaded = loaded
-        self._appearance_form.set_schema(APPEARANCE_SCHEMA, {**appearance_defaults, **appearance})
+        self._appearance_form.set_schema(APPEARANCE_SCHEMA, appearance)
         self._settings_form.set_schema(settings_schema, settings)
         self.setCurrentIndex(_PAGE_FORM)
 
@@ -109,6 +112,15 @@ class ActionConfigPanel(QStackedWidget):
                 self._loaded[3],
             )
         self._save_cb(settings, appearance)
+
+
+def _merged(appearance: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    """Stored appearance with legacy title keys folded in and the title merged field-wise over the defaults."""
+    folded = fold_legacy_title(appearance)
+    merged = {**defaults, **folded}
+    if "title" in merged:
+        merged["title"] = {**defaults.get("title", {}), **folded.get("title", {})}
+    return merged
 
 
 def _resolved(appearance: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
