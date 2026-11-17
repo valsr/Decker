@@ -145,3 +145,4 @@ class PageController(Manager):
 
     def _notify(self, device_id: str) -> None:
         self._ctx.event_bus.push(PAGES_CHANGED_EVENT, json.dumps({"device_id": device_id}))
+        self._ctx.plugin_manager.refresh_page_dependent(device_id)

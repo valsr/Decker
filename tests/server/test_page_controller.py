@@ -100,6 +100,7 @@ class TestActivate:
                 call.dm.show_page(DEV, page2.page_id),
                 call.pm.store_settings(new, {"step": 2}),
                 call.pm.activate_action(new, {}),
+                call.pm.refresh_page_dependent(DEV),
             ]
         )
         assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(page2.page_id)
@@ -198,3 +199,38 @@ class TestDeletePage:
         context.page_store.delete_page(DEV, page2.page_id)
 
         assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(PAGE1)
+
+
+class TestNotifyRefreshesPlugins:
+    @pytest.mark.parametrize("operation", ["add", "rename", "delete", "activate"])
+    def test_notify_refreshes_the_plugin_manager(self, context, operation):
+        second = context.page_store.add_page(DEV)
+        manager = cast(MagicMock, context.plugin_manager)
+        manager.refresh_page_dependent.reset_mock()
+        lock_free: list[bool] = []
+
+        def _probe(_device_id: str) -> None:
+            def _try() -> None:
+                lock = context.page_controller._lock  # pylint: disable=protected-access
+                got = lock.acquire(blocking=False)
+                lock_free.append(got)
+                if got:
+                    lock.release()
+
+            thread = threading.Thread(target=_try)
+            thread.start()
+            thread.join()
+
+        manager.refresh_page_dependent.side_effect = _probe
+        controller = context.page_controller
+        if operation == "add":
+            controller.add_page(DEV)
+        elif operation == "rename":
+            controller.rename_page(DEV, second.page_id, "Renamed")
+        elif operation == "delete":
+            controller.delete_page(DEV, second.page_id)
+        else:
+            controller.activate(DEV, second.page_id)
+
+        assert_that(manager.refresh_page_dependent.call_args_list).is_equal_to([call(DEV)])
+        assert_that(lock_free).is_equal_to([True])

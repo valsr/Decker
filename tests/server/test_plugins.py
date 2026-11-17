@@ -17,7 +17,7 @@ import pytest
 from assertpy import assert_that
 from PIL import Image
 
-from decker.common.model import DeviceHardwareInfo, KeyInfo
+from decker.common.model import DeviceHardwareInfo, KeyInfo, PageInfo
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.gestures import Gesture
 from decker.plugin.loader import InstalledPlugin
@@ -69,6 +69,18 @@ _REC_MANIFEST = {
     },
 }
 
+_REC_MANIFEST["contributes"]["actions"].append(
+    {
+        "id": "com.decker.rec.tpl",
+        "name": "Templated",
+        "settings": [
+            {"key": "label", "type": "text", "label": "Label", "default": "", "template": True},
+            {"key": "plain", "type": "text", "label": "Plain", "default": ""},
+            {"key": "style", "type": "text_style", "label": "Style", "template": True},
+            {"key": "where", "type": "page", "label": "Where"},
+        ],
+    }
+)
 _STATIC_MANIFEST = {
     "format": 1,
     "id": "com.t.static",
@@ -113,6 +125,7 @@ def _target(plugin: str, action: str, context: str = "ctx-1", key: int = 0) -> A
 COUNTER_TARGET = _target(_COUNTER, _COUNTER_ACTION)
 REC_TARGET = _target("com.decker.rec", _REC_ACTION)
 STATIC_TARGET = _target("com.t.static", _STATIC_ACTION, "ctx-static", 1)
+TPL_TARGET = _target("com.decker.rec", "com.decker.rec.tpl", "ctx-tpl", 4)
 MIXED_STATIC_TARGET = _target("com.t.mixed", "com.t.mixed.preset", "ctx-mixed", 2)
 
 
@@ -188,6 +201,25 @@ def _wait_for(predicate, timeout=8.0):
     return False
 
 
+class FakePages:
+    """Stands in for both the page store and the page controller of one device."""
+
+    def __init__(self) -> None:
+        self.pages = {"dev-1": [PageInfo("p1", "Home"), PageInfo("p2", "Settings"), PageInfo("p3", "Media")]}
+        self.active = {"dev-1": "p2"}
+
+    def list_pages(self, device_id: str) -> list[PageInfo]:
+        return list(self.pages.get(device_id, []))
+
+    def active_page_id(self, device_id: str) -> str:
+        return self.active.get(device_id, "")
+
+    def rename(self, page_id: str, name: str, device_id: str = "dev-1") -> None:
+        self.pages[device_id] = [
+            PageInfo(p.page_id, name if p.page_id == page_id else p.name) for p in self.pages[device_id]
+        ]
+
+
 class Env:
     """A running PluginManager over a fake device, with the recorder plugin installed."""
 
@@ -205,6 +237,7 @@ class Env:
         self.mixed_dir = self.plugins_dir / "com.t.mixed"
         shutil.copytree(self.rec_dir, self.mixed_dir)
         (self.mixed_dir / "manifest.json").write_text(json.dumps(_MIXED_MANIFEST))
+        self.pages = FakePages()
         self.dm = FakeDeviceManager()
         self.bus = FakeBus()
         self.persisted: list[tuple[ActionTarget, dict]] = []
@@ -212,7 +245,8 @@ class Env:
         context = SimpleNamespace(
             device_manager=self.dm,
             event_bus=self.bus,
-            page_controller=MagicMock(),
+            page_controller=self.pages,
+            page_store=self.pages,
             key_assignment_store=MagicMock(),
         )
         self.manager.create(context)  # type: ignore[arg-type]
@@ -1142,3 +1176,175 @@ class TestStaticActions:
 
         assert_that(actions).contains_key(_STATIC_ACTION)
         assert_that(actions[_STATIC_ACTION]["settings_schema"]).is_equal_to([])
+
+
+_STATIC_MANIFEST_DEFAULTS = _STATIC_MANIFEST["contributes"]["actions"][0]["appearance"]
+
+
+class TestTemplates:
+    def test_title_template_is_expanded_when_drawn(self, env):
+        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_index}/{page_count}"}})
+
+        assert_that(env.image(1)).is_equal_to(
+            compose_key_image(resolve_appearance(_STATIC_MANIFEST_DEFAULTS, {"title": {"text": "2/3"}}), None, "")
+        )
+
+    def test_unknown_and_escaped_braces_in_the_title(self, env):
+        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{{x}} {nope}"}})
+
+        assert_that(env.image(1)).is_equal_to(
+            compose_key_image(
+                resolve_appearance(_STATIC_MANIFEST_DEFAULTS, {"title": {"text": "{x} {nope}"}}), None, ""
+            )
+        )
+
+    def test_title_without_pages_keeps_text_literal(self, env):
+        env.pages.pages["dev-1"] = []
+        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
+
+        assert_that(env.image(1)).is_equal_to(
+            compose_key_image(
+                resolve_appearance(_STATIC_MANIFEST_DEFAULTS, {"title": {"text": "{page_name}"}}), None, ""
+            )
+        )
+
+    def test_plugin_fallback_title_is_not_expanded(self, env):
+        live_target = _target("com.decker.rec", _REC_ACTION)
+        env.manager.activate_action(live_target)
+        assert _wait_for(lambda: env.received("will_appear"))
+
+        env.manager._route_context_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("set_title", "ctx-1", {"title": "{page_name}"})
+        )
+
+        appearance = resolve_appearance({}, {})
+        assert_that(env.image()).is_equal_to(compose_key_image(appearance, None, "{page_name}"))
+
+    def _tpl_settings(self, env, **values):
+        env.manager.store_settings(TPL_TARGET, values)
+        env.manager.activate_action(TPL_TARGET)
+        assert _wait_for(lambda: env.received("will_appear"))
+        return env.received("will_appear")[-1]["payload"]["settings"]
+
+    def test_opted_in_text_field_is_delivered_expanded(self, env):
+        settings = self._tpl_settings(env, label="On {page_name}")
+
+        assert_that(settings["label"]).is_equal_to("On Settings")
+        assert_that(
+            env.manager._settings_store.get_settings(  # pylint: disable=protected-access
+                "com.decker.rec", "com.decker.rec.tpl", "ctx-tpl"
+            )["label"]
+        ).is_equal_to("On {page_name}")
+
+    def test_not_opted_in_field_is_delivered_verbatim(self, env):
+        settings = self._tpl_settings(env, plain="On {page_name}")
+
+        assert_that(settings["plain"]).is_equal_to("On {page_name}")
+
+    def test_text_style_text_is_expanded_other_fields_untouched(self, env):
+        settings = self._tpl_settings(env, style={"text": "{page_index}", "size": 33})
+
+        assert_that(settings["style"]["text"]).is_equal_to("2")
+        assert_that(settings["style"]["size"]).is_equal_to(33)
+
+    def test_page_field_is_resolved_to_id_name_index(self, env):
+        settings = self._tpl_settings(env, where="p3")
+
+        assert_that(settings["where"]).is_equal_to({"page_id": "p3", "name": "Media", "index": 3})
+
+    @pytest.mark.parametrize("stored", ["", "gone", 5, {"page_id": 5}, None])
+    def test_deleted_or_unset_or_foreign_page_resolves_to_empty(self, env, stored):
+        settings = self._tpl_settings(env, where=stored)
+
+        assert_that(settings["where"]).is_equal_to({"page_id": "", "name": "", "index": 0})
+
+    def test_settings_changed_delivers_the_expanded_copy(self, env):
+        self._tpl_settings(env, label="{page_name}")
+        env.manager.store_settings(TPL_TARGET, {"label": "Now {page_count}"})
+
+        env.manager.dispatch_settings_changed(TPL_TARGET)
+
+        assert _wait_for(lambda: env.received("settings_changed"))
+        assert_that(env.received("settings_changed")[-1]["payload"]["settings"]["label"]).is_equal_to("Now 3")
+
+    def test_set_settings_from_a_plugin_does_not_store_expanded_text(self, env):
+        self._tpl_settings(env, label="{page_name}", plain="keep")
+
+        env.manager._route_context_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("set_settings", "ctx-tpl", {"settings": {"plain": "changed"}})
+        )
+
+        stored = env.manager._settings_store.get_settings(  # pylint: disable=protected-access
+            "com.decker.rec", "com.decker.rec.tpl", "ctx-tpl"
+        )
+        assert_that(stored["label"]).is_equal_to("{page_name}")
+        assert_that(stored["plain"]).is_equal_to("changed")
+
+    def test_echoed_page_value_keeps_the_page_choice(self, env):
+        self._tpl_settings(env, where="p3")
+
+        env.manager._route_context_message(  # pylint: disable=protected-access
+            "com.decker.rec",
+            Message("set_settings", "ctx-tpl", {"settings": {"where": {"page_id": "p3", "name": "Media", "index": 3}}}),
+        )
+
+        stored = env.manager._settings_store.get_settings(  # pylint: disable=protected-access
+            "com.decker.rec", "com.decker.rec.tpl", "ctx-tpl"
+        )
+        assert_that(stored["where"]).is_equal_to("p3")
+
+
+class TestPageRefresh:
+    def test_rename_refreshes_title_and_settings(self, env):
+        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
+        env.manager.store_settings(TPL_TARGET, {"label": "{page_name}", "where": "p2"})
+        env.manager.activate_action(TPL_TARGET)
+        assert _wait_for(lambda: env.received("will_appear"))
+        before = env.image(1)
+
+        env.pages.rename("p2", "Renamed")
+        env.manager.refresh_page_dependent("dev-1")
+
+        assert_that(env.image(1)).is_not_equal_to(before)
+        assert _wait_for(lambda: env.received("settings_changed"))
+        settings = env.received("settings_changed")[-1]["payload"]["settings"]
+        assert_that(settings["label"]).is_equal_to("Renamed")
+        assert_that(settings["where"]["name"]).is_equal_to("Renamed")
+
+    def test_no_duplicate_settings_changed_when_nothing_changed(self, env):
+        env.manager.store_settings(TPL_TARGET, {"label": "{page_name}"})
+        env.manager.activate_action(TPL_TARGET)
+        assert _wait_for(lambda: env.received("will_appear"))
+
+        env.manager.refresh_page_dependent("dev-1")
+        env.manager.refresh_page_dependent("dev-1")
+        time.sleep(0.3)
+
+        assert_that(env.received("settings_changed")).is_empty()
+
+    def test_other_devices_are_untouched(self, env):
+        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
+        before = env.image(1)
+        env.pages.rename("p2", "Renamed")
+
+        env.manager.refresh_page_dependent("dev-2")
+
+        assert_that(env.image(1)).is_equal_to(before)
+
+    def test_keys_without_templates_are_not_recomposed(self, env, monkeypatch):
+        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "plain"}})
+        calls = MagicMock()
+        monkeypatch.setattr("decker.server.plugins.compose_key_image", calls)
+
+        env.manager.refresh_page_dependent("dev-1")
+
+        assert_that(calls.call_count).is_equal_to(0)
+
+    def test_page_switch_redraws_keys_with_the_new_variables(self, env):
+        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
+        before = env.image(1)
+        env.pages.active["dev-1"] = "p3"
+
+        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
+
+        assert_that(env.image(1)).is_not_equal_to(before)
