@@ -1150,3 +1150,78 @@ class TestProfiles:  # pylint: disable=protected-access
         view._on_device_selected(_D2)
 
         assert_that(view._page_tabs.profile_selector.isVisibleTo(view._page_tabs)).is_false()
+
+
+class TestKeyMoveAndCopy:  # pylint: disable=protected-access
+    def setup_method(self):
+        AppContext._instance = None
+
+    def _view(self, tmp_path, result=True) -> tuple[DashboardView, MagicMock]:
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        view._pages = _PAGES
+        cm = MagicMock()
+        cm.call.return_value = result
+        AppContext.get().connection_manager = cm
+        view._grid.build(_KEYS_15)
+        for index in (1, 4):
+            view._key_slots[index] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": f"c{index}", "settings": {}}
+        return view, cm
+
+    def test_a_drop_moves_through_the_server_and_selects_the_target(
+        self, qapp, tmp_path
+    ):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+
+        view._grid.key_moved.emit(1, 3, False)
+
+        cm.call.assert_called_once_with("key_move", "dev1", "p1", 1, 3)
+        assert_that(view._selected_key).is_equal_to(3)
+        cm.request_device_refresh.assert_called_once_with()
+
+    def test_ctrl_drop_copies(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+
+        view._grid.key_moved.emit(1, 3, True)
+
+        cm.call.assert_called_once_with("key_copy", "dev1", "p1", 1, 3)
+        assert_that(view._selected_key).is_equal_to(3)
+
+    @pytest.mark.parametrize("result", [False, None])
+    def test_a_failed_call_changes_nothing(self, qapp, tmp_path, result):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path, result)
+        view._selected_key = 4
+
+        view._grid.key_moved.emit(1, 3, False)
+
+        assert_that(view._selected_key).is_equal_to(4)
+        cm.request_device_refresh.assert_not_called()
+
+    def test_nothing_is_called_without_a_device_page_or_connection(
+        self, qapp, tmp_path
+    ):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+        view._pages = None
+        view._grid.key_moved.emit(1, 3, False)
+        view._pages = _PAGES
+        AppContext.get().connection_manager = None
+        view._grid.key_moved.emit(1, 3, False)
+        AppContext.reset()
+        view._grid.key_moved.emit(1, 3, False)
+
+        cm.call.assert_not_called()
+
+    def test_only_assigned_keys_are_draggable(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, _cm = self._view(tmp_path)
+
+        view._sync_draggable()
+
+        assert_that([i for i, b in view._grid._buttons.items() if b._draggable]).is_equal_to([1, 4])
+
+    def test_resetting_the_selection_clears_draggability(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, _cm = self._view(tmp_path)
+        view._sync_draggable()
+
+        view._reset_key_selection()
+
+        assert_that([i for i, b in view._grid._buttons.items() if b._draggable]).is_empty()

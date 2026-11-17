@@ -141,6 +141,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         selector.add_requested.connect(self._on_add_profile)
         selector.edit_requested.connect(self._on_edit_profile)
         selector.rename_requested.connect(self._on_rename_profile)
+        self._grid.key_moved.connect(self._on_key_moved)
         self._grid.key_pressed.connect(self._on_key_pressed)
         self._grid.key_edit_requested.connect(self._on_key_edit_requested)
         self._grid.key_long_pressed.connect(self._on_key_long_pressed)
@@ -322,6 +323,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._key_slots = {}
         self._key_images = {}
         self._selected_key = None
+        self._sync_draggable()
         self._grid.set_selected(None)
         self._config_panel.show_placeholder()
 
@@ -372,6 +374,22 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._selected_key = index
         self._refresh_config_panel()
 
+    def _sync_draggable(self) -> None:
+        """Only keys with an action can be dragged."""
+        self._grid.set_draggable_keys(self._key_slots.keys())
+
+    def _on_key_moved(self, from_index: int, to_index: int, copy: bool) -> None:
+        """Move (or, with Ctrl, copy) a key's action; the destination key is selected afterwards."""
+        device_id = AppContext.get().active_device_id
+        page_id = self._active_page_id
+        cm = AppContext.get().connection_manager
+        if not device_id or not page_id or cm is None:
+            return
+        if not cm.call("key_copy" if copy else "key_move", device_id, page_id, from_index, to_index):
+            return
+        self._on_key_edit_requested(to_index)
+        cm.request_device_refresh()
+
     def _on_key_pressed(self, index: int) -> None:
         device_id = AppContext.get().active_device_id
         if device_id and index in self._key_slots:
@@ -419,6 +437,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
                 "settings": settings,
             }
             self._grid.set_key_label(key_index, "0")
+            self._sync_draggable()
             logging.debug("Assigned %s/%s to key %d", plugin_uuid, action_uuid, key_index)
 
     def _on_display_states_updated(self, device_id: str, states: list[dict[str, Any]]) -> None:
@@ -478,6 +497,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             return
         if not state.get("plugin_uuid"):
             self._key_slots.pop(key_index, None)
+            self._sync_draggable()
             return
         self._key_slots[key_index] = {
             "plugin_uuid": str(state.get("plugin_uuid", "")),
@@ -487,6 +507,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             "appearance": dict(state.get("appearance") or {}),
             "appearance_defaults": dict(state.get("appearance_defaults") or {}),
         }
+        self._sync_draggable()
 
     def _make_save_callback(self, key_index: int) -> "Callable[[dict[str, Any], dict[str, Any]], bool]":
         def _cb(settings: dict[str, Any], appearance: dict[str, Any]) -> bool:
