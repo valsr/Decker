@@ -150,7 +150,7 @@ class TestKeyEditPencil:  # pylint: disable=protected-access,unused-argument
 
         geometry = button._edit_button.geometry()
 
-        assert_that((geometry.width(), geometry.height())).is_equal_to((20, 20))
+        assert_that((geometry.width(), geometry.height())).is_equal_to((30, 30))
         assert_that(button.width() - geometry.right() - 1).is_equal_to(4)
         assert_that(geometry.top()).is_equal_to(4)
 
@@ -226,8 +226,8 @@ class TestEditPencilTheming:  # pylint: disable=protected-access,unused-argument
         hint = button._edit_button.sizeHint()
 
         # The global QToolButton padding used to leave ~6px for a 10px glyph, clipping it to a smudge.
-        assert_that(hint.width()).described_as(f"{theme} width").is_less_than_or_equal_to(20)
-        assert_that(hint.height()).described_as(f"{theme} height").is_less_than_or_equal_to(20)
+        assert_that(hint.width()).described_as(f"{theme} width").is_less_than_or_equal_to(30)
+        assert_that(hint.height()).described_as(f"{theme} height").is_less_than_or_equal_to(30)
 
     @pytest.mark.parametrize("theme", ["dark", "light"])
     def test_pencil_has_its_own_background_so_it_reads_over_a_key_image(self, qapp, theme):
@@ -309,6 +309,12 @@ class TestEditPencilIcon:  # pylint: disable=protected-access,unused-argument
         assert_that(button_grid_module._EDIT_ICON.is_file()).is_true()
         assert_that(button_grid_module._EDIT_ICON.read_bytes()).contains(b"<svg")
 
+    def test_pencil_drawing_is_21_px_inside_its_30_px_button(self, qapp):
+        pencil = _key()._edit_button
+
+        assert_that((pencil.iconSize().width(), pencil.iconSize().height())).is_equal_to((21, 21))
+        assert_that((pencil.width(), pencil.height())).is_equal_to((30, 30))
+
     def test_pencil_uses_the_edit_svg_not_a_glyph(self, qapp):
         pencil = _key()._edit_button
 
@@ -371,5 +377,5 @@ class TestEditPencilIcon:  # pylint: disable=protected-access,unused-argument
 
         hint = button._edit_button.sizeHint()
 
-        assert_that(hint.width()).is_less_than_or_equal_to(20)
-        assert_that(hint.height()).is_less_than_or_equal_to(20)
+        assert_that(hint.width()).is_less_than_or_equal_to(30)
+        assert_that(hint.height()).is_less_than_or_equal_to(30)
