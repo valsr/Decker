@@ -114,7 +114,7 @@ class _StreamDeckHardwareSink:
 
 
 @dataclass
-class _Live:
+class _Live:  # pylint: disable=too-many-instance-attributes
     """One active action instance: where it is, what it declared and how its gestures are recognised."""
 
     target: ActionTarget

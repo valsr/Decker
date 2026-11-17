@@ -29,7 +29,7 @@ class FakeRpc:
 
 def _edit(rpc: FakeRpc | None = None) -> IconEdit:
     fake = rpc if rpc is not None else FakeRpc()
-    return IconEdit(lambda: fake)  # type: ignore[arg-type,return-value]
+    return IconEdit(lambda: fake)
 
 
 def _centre(edit: IconEdit) -> tuple[int, int, int, int]:

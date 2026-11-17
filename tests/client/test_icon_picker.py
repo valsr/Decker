@@ -192,7 +192,9 @@ class TestIconBrowserTree:
     def test_all_icons_is_selected_initially(self, qapp):  # pylint: disable=unused-argument
         dialog = IconBrowserDialog(None, _manager())
 
-        assert_that(dialog._tree.currentItem().text(0)).is_equal_to("All icons")  # pylint: disable=protected-access
+        current = dialog._tree.currentItem()  # pylint: disable=protected-access
+        assert current is not None
+        assert_that(current.text(0)).is_equal_to("All icons")
         assert_that(_names(dialog)).is_length(5)
 
     def test_empty_pack_shows_message(self, qapp):  # pylint: disable=unused-argument
@@ -431,3 +433,17 @@ class TestIconBrowserChoice:
         dialog = IconBrowserDialog(None, None)
 
         assert_that(dialog._tree.topLevelItemCount()).is_zero()  # pylint: disable=protected-access
+
+
+class TestIconBrowserTooltips:
+    def test_tooltip_names_the_pack_so_duplicates_can_be_told_apart(self, qapp):  # pylint: disable=unused-argument
+        dialog = IconBrowserDialog(None, _manager())
+
+        tips = [
+            dialog._model.index(r, 0).data(Qt.ItemDataRole.ToolTipRole)  # pylint: disable=protected-access
+            for r in range(dialog._model.rowCount())  # pylint: disable=protected-access
+        ]
+
+        assert_that(tips[0]).is_equal_to("Pack A: a.svg")
+        assert_that(tips[2]).is_equal_to("Pack B: house.svg")
+        assert_that(tips[4]).is_equal_to("Pack C: Star.svg")

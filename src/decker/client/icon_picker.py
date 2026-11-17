@@ -57,9 +57,15 @@ class RpcCaller(Protocol):  # pylint: disable=too-few-public-methods
 class _IconModel(QAbstractListModel):
     """The icons on show: ``(pack id, path)`` entries; the decoration is asked for only when a row is painted."""
 
-    def __init__(self, pixmap_for: Callable[[str, str], QPixmap], parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        pixmap_for: Callable[[str, str], QPixmap],
+        pack_label: Callable[[str], str],
+        parent: QObject | None = None,
+    ) -> None:
         super().__init__(parent)
         self._pixmap_for = pixmap_for
+        self._pack_label = pack_label
         self._entries: list[tuple[str, str]] = []
         self._rows: dict[tuple[str, str], int] = {}
 
@@ -96,7 +102,7 @@ class _IconModel(QAbstractListModel):
         if role == Qt.ItemDataRole.DecorationRole:
             return self._pixmap_for(pack_id, path)
         if role == Qt.ItemDataRole.ToolTipRole:
-            return path
+            return f"{self._pack_label(pack_id)}: {path}"
         return None
 
 
@@ -130,7 +136,7 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search icons by name")
         self._search.setClearButtonEnabled(True)
-        self._model = _IconModel(self._pixmap_for, self)
+        self._model = _IconModel(self._pixmap_for, self._pack_label, self)
         self._icon_list = QListView()
         self._icon_list.setModel(self._model)
         self._icon_list.setViewMode(QListView.ViewMode.IconMode)
@@ -212,6 +218,10 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
         if kind == "plugin":
             return [str(p["id"]) for p in self._packs if str(p.get("plugin_id", "")) == key]
         return [key] if kind == "pack" else []
+
+    def _pack_label(self, pack_id: str) -> str:
+        pack = next((p for p in self._packs if str(p["id"]) == pack_id), None)
+        return str(pack.get("name", pack_id)) if pack is not None else pack_id
 
     def _pack_names(self, pack_id: str) -> list[str] | None:
         if pack_id not in self._names:
