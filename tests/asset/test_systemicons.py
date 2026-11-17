@@ -307,3 +307,184 @@ class TestBuildIndex:
 
         assert_that(first).matches(r"^T-[0-9a-f]{8}$")
         assert_that(second).matches(r"^T-[0-9a-f]{8}$").is_not_equal_to(first)
+
+
+class TestSystemIcons:
+    @pytest.fixture(name="tree")
+    def tree_fixture(self, tmp_path: Path) -> Path:
+        root = tmp_path / "icons"
+        make_theme(
+            root,
+            "T",
+            {
+                "actions/scalable": {"Context": "Actions", "Size": "48", "Type": "Scalable"},
+                "actions/16": {"Context": "Actions", "Size": "16", "Type": "Fixed"},
+                "places/48": {"Context": "Places", "Size": "48", "Type": "Fixed"},
+                "mimetypes/48": {"Context": "MimeTypes", "Size": "48", "Type": "Fixed"},
+            },
+            files=(
+                "actions/scalable/edit-copy.svg",
+                "actions/16/edit-copy.png",
+                "actions/16/zoom-in.png",
+                "places/48/folder.png",
+                "mimetypes/48/text-plain.png",
+            ),
+        )
+        make_theme(root, "hicolor", {})
+        return root
+
+    @staticmethod
+    def _icons(tree: Path, theme: str = "T"):
+        from decker.asset.systemicons import SystemIcons
+
+        return SystemIcons(search_dirs=[tree], home=tree.parent / "home", configured_theme=lambda: theme, recheck_s=0)
+
+    def test_packs_have_the_registry_shape_in_category_order_and_skip_empty_ones(self, tree: Path) -> None:
+        packs = self._icons(tree).list_packs()
+
+        assert_that([p["id"] for p in packs]).is_equal_to(
+            ["decker.system.actions", "decker.system.mimetypes", "decker.system.places"]
+        )
+        actions = packs[0]
+        assert_that(actions["name"]).is_equal_to("Actions")
+        assert_that(actions["plugin_id"]).is_equal_to("decker.system")
+        assert_that(actions["plugin_name"]).is_equal_to("System Icons")
+        assert_that(actions["icon_count"]).is_equal_to(2)
+        assert_that(actions["plugin_version"]).matches(r"^T-[0-9a-f]{8}$")
+        assert_that(actions["description"]).is_equal_to("System icons: Actions")
+        assert_that(packs[1]["name"]).is_equal_to("Mimetypes")
+
+    def test_list_icons_is_sorted_and_unknown_packs_are_empty(self, tree: Path) -> None:
+        icons = self._icons(tree)
+
+        assert_that(icons.list_icons("decker.system.actions")).is_equal_to(["edit-copy", "zoom-in"])
+        assert_that(icons.list_icons("decker.system.nope")).is_empty()
+        assert_that(icons.list_icons("com.x.pack")).is_empty()
+
+    def test_read_icon_serves_the_scalable_file(self, tree: Path) -> None:
+        assert_that(self._icons(tree).read_icon("decker.system.actions", "edit-copy")).is_equal_to(b"<svg/>")
+        assert_that(self._icons(tree).read_icon("decker.system.actions", "zoom-in")).is_equal_to(b"png")
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            None,
+            5,
+            b"x",
+            "",
+            "nope",
+            "folder",
+            "..",
+            "../x",
+            "/etc/passwd",
+            "a/b",
+            "actions/edit-copy",
+            "x" * 5000,
+            "edit-copy.svg",
+        ],
+    )
+    def test_unknown_or_hostile_names_give_nothing(self, tree: Path, name) -> None:
+        assert_that(self._icons(tree).read_icon("decker.system.actions", name)).is_none()
+
+    def test_a_name_is_only_served_from_its_own_category(self, tree: Path) -> None:
+        assert_that(self._icons(tree).read_icon("decker.system.places", "edit-copy")).is_none()
+        assert_that(self._icons(tree).read_icon("decker.system.places", "folder")).is_equal_to(b"png")
+
+    def test_a_symlink_to_a_non_image_is_refused_and_a_broken_link_is_survived(
+        self, tree: Path, tmp_path: Path
+    ) -> None:
+        secret = tmp_path / "secret.txt"
+        secret.write_text("secret")
+        link_dir = tree / "T" / "places" / "48"
+        (link_dir / "evil.png").symlink_to(secret)
+        (link_dir / "broken.png").symlink_to(tmp_path / "does-not-exist")
+        icons = self._icons(tree)
+
+        assert_that(icons.read_icon("decker.system.places", "evil")).is_none()
+        assert_that(icons.read_icon("decker.system.places", "broken")).is_none()
+        assert_that(icons.read_icon("decker.system.places", "folder")).is_equal_to(b"png")
+
+    def test_a_symlink_to_an_image_elsewhere_is_served(self, tree: Path, tmp_path: Path) -> None:
+        target = tmp_path / "real.svg"
+        target.write_bytes(b"<svg>real</svg>")
+        (tree / "T" / "places" / "48" / "linked.png").symlink_to(target)
+
+        assert_that(self._icons(tree).read_icon("decker.system.places", "linked")).is_equal_to(b"<svg>real</svg>")
+
+    def test_files_over_the_size_limit_are_refused(self, tree: Path, monkeypatch) -> None:
+        import decker.asset.systemicons as module
+
+        monkeypatch.setattr(module, "MAX_ICON_BYTES", 2)
+
+        assert_that(self._icons(tree).read_icon("decker.system.places", "folder")).is_none()
+
+    def test_the_index_is_built_once_and_rebuilt_when_the_theme_changes(self, tree: Path, monkeypatch) -> None:
+        import decker.asset.systemicons as module
+
+        builds: list[str] = []
+        real = module.build_index
+        monkeypatch.setattr(module, "build_index", lambda *a, **k: builds.append("x") or real(*a, **k))
+        icons = self._icons(tree)
+
+        icons.list_icons("decker.system.actions")
+        icons.read_icon("decker.system.actions", "edit-copy")
+        icons.list_packs()
+        assert_that(builds).is_length(1)
+
+        os.utime(tree / "T" / "index.theme", ns=(2_000_000_000, 2_000_000_000))
+        icons.list_icons("decker.system.actions")
+
+        assert_that(builds).is_length(2)
+
+    def test_two_threads_on_first_use_build_once(self, tree: Path, monkeypatch) -> None:
+        import threading
+        import time
+
+        import decker.asset.systemicons as module
+
+        builds: list[str] = []
+        real = module.build_index
+
+        def slow(*args, **kwargs):
+            builds.append("x")
+            time.sleep(0.2)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(module, "build_index", slow)
+        icons = self._icons(tree)
+        results: list[list[str]] = []
+        threads = [
+            threading.Thread(target=lambda: results.append(icons.list_icons("decker.system.actions"))) for _ in range(4)
+        ]
+
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(5)
+
+        assert_that(builds).is_length(1)
+        assert_that(results).is_length(4)
+        assert_that({tuple(r) for r in results}).is_length(1)
+
+    def test_the_theme_disappearing_later_gives_empty_packs_not_errors(self, tree: Path) -> None:
+        import shutil
+
+        icons = self._icons(tree)
+        assert_that(icons.list_packs()).is_not_empty()
+
+        shutil.rmtree(tree / "T")
+
+        assert_that(icons.list_packs()).is_empty()
+        assert_that(icons.read_icon("decker.system.actions", "edit-copy")).is_none()
+
+    def test_owns_is_exact(self, tree: Path) -> None:
+        icons = self._icons(tree)
+
+        assert_that(icons.owns("decker.system.actions")).is_true()
+        assert_that(icons.owns("decker.system.other")).is_true()
+        for pack_id in ("decker.system.nope", "decker.system.", "decker.system", "com.x", ""):
+            assert_that(icons.owns(pack_id)).is_false()
+
+    def test_the_theme_is_detected_from_the_configured_name(self, tree: Path) -> None:
+        assert_that(self._icons(tree).theme_name()).is_equal_to("T")
+        assert_that(self._icons(tree, "NotInstalled").theme_name()).is_equal_to("hicolor")
