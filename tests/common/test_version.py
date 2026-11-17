@@ -25,3 +25,15 @@ def test_default_uses_decker_version(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(version, "decker_version", lambda: "0.5.0")
     assert_that(version.is_compatible(">=0.5")).is_true()
     assert_that(version.is_compatible(">=0.6")).is_false()
+
+
+def test_invalid_version_is_incompatible():
+    assert_that(version.is_compatible(">=1.0", "garbage")).is_false()
+
+
+def test_decker_version_falls_back_to_zero(monkeypatch: pytest.MonkeyPatch):
+    def _missing(_name: str) -> str:
+        raise version.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(version.metadata, "version", _missing)
+    assert_that(version.decker_version()).is_equal_to("0")
