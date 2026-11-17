@@ -21,6 +21,8 @@ from PyQt6.QtWidgets import (
 
 from decker.client.connection_manager import to_plain
 from decker.client.context import AppContext
+from decker.client.events import RepositoriesCheckFinishedEvent, ServerDisconnectedEvent
+from decker.client.events.event_manager import EventManager
 from decker.client.widgets.plugins_tab import NOT_ALLOWED_TOOLTIP, install_allowed
 
 REPOSITORY_TRUST_WARNING = (
@@ -58,6 +60,9 @@ class RepositoriesSection(QWidget):  # pylint: disable=too-many-instance-attribu
         self._status: QLabel = QLabel()
         self._worker: threading.Thread | None = None
         self._build()
+        em = EventManager.get()
+        em.subscribe(RepositoriesCheckFinishedEvent, self._on_check_finished)
+        em.subscribe(ServerDisconnectedEvent, self._on_disconnected)
 
     def refresh(self) -> None:
         """Re-fetch the repositories and the schedule from the server."""
@@ -180,14 +185,26 @@ class RepositoriesSection(QWidget):  # pylint: disable=too-many-instance-attribu
         self._check_btn.setEnabled(False)
         self._run(lambda m: to_plain(m.call("repositories_check")), self._after_check)
 
-    def _after_check(self, report: Any) -> None:
-        self._check_btn.setEnabled(True)
-        if not isinstance(report, dict):
+    def _after_check(self, result: Any) -> None:
+        if not isinstance(result, dict):
             self._status.setText("Could not check for updates.")
-            return
-        updates, missing = len(report.get("updates") or []), len(report.get("missing") or [])
-        self._status.setText(f"{updates} update(s) available, {missing} missing plugin(s) available.")
+            self._check_btn.setEnabled(True)
+        elif not result.get("started"):
+            self._status.setText(str(result.get("reason") or "Could not start the check."))
+            self._check_btn.setEnabled(True)
+
+    def _on_check_finished(self, event: RepositoriesCheckFinishedEvent) -> None:
+        self._check_btn.setEnabled(True)
+        failed = sum(1 for repo in event.repositories if repo.get("error"))
+        self._status.setText(
+            "Check finished."
+            if not failed
+            else f"Check finished; {failed} repositor{'y' if failed == 1 else 'ies'} failed."
+        )
         self.refresh()
+
+    def _on_disconnected(self, _event: ServerDisconnectedEvent) -> None:
+        self._check_btn.setEnabled(True)
 
     def _after_mutation(self, error: Any, success: str) -> None:
         if error is None:

@@ -110,6 +110,13 @@ class PluginUpdatesAvailableEvent:
 
 
 @dataclass(frozen=True)
+class RepositoriesCheckFinishedEvent:
+    """A repository check started with `repositories_check` finished; carries the repositories' status."""
+
+    repositories: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
 class ViewActivatedEvent:
     """A view became the active view in the main window."""
 
@@ -137,6 +144,7 @@ AppEvent = (
     | PluginInstallFinishedEvent
     | PluginsChangedEvent
     | PluginUpdatesAvailableEvent
+    | RepositoriesCheckFinishedEvent
     | ViewActivatedEvent
     | ViewDeactivatedEvent
 )

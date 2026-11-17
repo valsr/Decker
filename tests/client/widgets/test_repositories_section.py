@@ -8,6 +8,11 @@ from assertpy import assert_that
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from decker.client.context import AppContext
+from decker.client.events import (
+    RepositoriesCheckFinishedEvent,
+    ServerDisconnectedEvent,
+)
+from decker.client.events.event_manager import EventManager
 from decker.client.widgets import plugins_tab
 from decker.client.widgets.repositories_section import (
     REPOSITORY_TRUST_WARNING,
@@ -32,7 +37,7 @@ def manager(qapp):
         "repository_add": "",
         "repository_remove": True,
         "update_check_set_schedule": True,
-        "repositories_check": {"updates": [{"id": "x"}], "missing": []},
+        "repositories_check": {"started": True},
     }
     cm.call.side_effect = lambda method, *args: answers.get(method)
     cm.answers = answers
@@ -119,7 +124,7 @@ def test_schedule_change_calls_rpc(section, manager, qapp):
     manager.call.assert_any_call("update_check_set_schedule", "daily")
 
 
-def test_check_for_updates_runs_off_ui_thread(section, manager, qapp):
+def test_check_for_updates_runs_off_ui_thread_and_reenables_on_finished_event(section, manager, qapp):
     threads: list[int] = []
 
     def fake(method, *args):
@@ -133,7 +138,35 @@ def test_check_for_updates_runs_off_ui_thread(section, manager, qapp):
 
     assert_that(threads).is_length(1)
     assert_that(threads[0]).is_not_equal_to(threading.get_ident())
-    assert_that(section._status.text()).contains("1 update(s)")
+    assert_that(section._check_btn.isEnabled()).is_false()
+    assert_that(section._status.text()).is_equal_to("Checking for updates…")
+
+    repos = [dict(_REPOS[0]), dict(_REPOS[1])]
+    EventManager.get().emit(RepositoriesCheckFinishedEvent(repositories=repos))
+    _settle(section, qapp)
+
+    assert_that(section._check_btn.isEnabled()).is_true()
+    assert_that(section._status.text()).contains("1 repository failed")
+    assert_that(_methods(manager)).contains("repositories_list")
+
+
+def test_check_already_running_reports_reason_and_reenables(section, manager, qapp):
+    manager.answers["repositories_check"] = {"started": False, "reason": "a check is already running"}
+    section._check_btn.click()
+    _settle(section, qapp)
+
+    assert_that(section._check_btn.isEnabled()).is_true()
+    assert_that(section._status.text()).is_equal_to("a check is already running")
+
+
+def test_disconnect_reenables_check_button(section, manager, qapp):
+    section._check_btn.click()
+    _settle(section, qapp)
+    assert_that(section._check_btn.isEnabled()).is_false()
+
+    EventManager.get().emit(ServerDisconnectedEvent(reason="gone"))
+
+    assert_that(section._check_btn.isEnabled()).is_true()
 
 
 def test_controls_disabled_when_not_allowed(manager, qapp):

@@ -26,6 +26,7 @@ from decker.client.events import (
     PluginLoadFailedEvent,
     PluginsChangedEvent,
     PluginUpdatesAvailableEvent,
+    RepositoriesCheckFinishedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
@@ -357,6 +358,8 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             EventManager.get().push(_parse_install_finished(data))
         elif event_type == "plugin_updates_available":
             EventManager.get().push(_parse_updates(data))
+        elif event_type == "repositories_check_finished":
+            EventManager.get().push(RepositoriesCheckFinishedEvent(repositories=list(data.get("repositories") or [])))
         elif event_type == "plugins_changed":
             self.request_actions_refresh()
             EventManager.get().push(PluginsChangedEvent())
