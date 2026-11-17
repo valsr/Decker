@@ -145,6 +145,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._settings_store = settings_store if settings_store is not None else PluginSettingsStore()
         self._user_loader = PluginLoader(plugins_dir) if plugins_dir is not None else PluginLoader()
         self._failures: list[PluginLoadFailedEvent] = []
+        self._placeholders: set[tuple[str, int]] = set()
         self._plugins: dict[str, InstalledPlugin] = {}
         self._live: dict[str, _Live] = {}
         self._lock = threading.RLock()
@@ -369,6 +370,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             previous = self._live.get(target.context_id)
         if previous is not None:
             self.deactivate_action(previous.target)
+        self._clear_placeholder(target.device_id, target.key_index)
         stored = self._settings_store.get_settings(target.plugin_uuid, target.action_uuid, target.context_id)
         live = _Live(
             target=target,
@@ -577,6 +579,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         with self._lock:
             lives = [live for live in self._live.values() if live.target.plugin_uuid == plugin_id]
         for live in lives:
+            self._clear_placeholder(live.target.device_id, live.target.key_index)
             self._send_will_appear(live)
         for device_id in self._device_ids():
             self._supervisor.send(plugin_id, Message("device_connected", payload={"device": device_id}))
@@ -651,14 +654,31 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                 return
             self._sink.clear_image(target.device_id, target.key_index)
             self._sink.set_title(target.device_id, target.key_index, _FAILED_LABEL)
+            self._placeholders.add((target.device_id, target.key_index))
         self._notify_state(target.device_id, target.key_index)
 
     def _mark_missing(self, target: ActionTarget) -> None:
-        logging.warning("Plugin %s is not installed; key %d keeps its assignment", target.plugin_uuid, target.key_index)
+        with self._lock:
+            failed = any(f.plugin_uuid == target.plugin_uuid for f in self._failures)
+        label = _FAILED_LABEL if failed else _MISSING_LABEL
+        logging.warning(
+            "Plugin %s is not %s; key %d keeps its assignment",
+            target.plugin_uuid,
+            "loaded" if failed else "installed",
+            target.key_index,
+        )
         with self._lock:
             self._sink.clear_image(target.device_id, target.key_index)
-            self._sink.set_title(target.device_id, target.key_index, _MISSING_LABEL)
+            self._sink.set_title(target.device_id, target.key_index, label)
+            self._placeholders.add((target.device_id, target.key_index))
         self._notify_state(target.device_id, target.key_index)
+
+    def _clear_placeholder(self, device_id: str, key_index: int) -> None:
+        with self._lock:
+            if (device_id, key_index) not in self._placeholders:
+                return
+            self._placeholders.discard((device_id, key_index))
+            self._sink.set_title(device_id, key_index, "")
 
     def _drop_failure(self, plugin_id: str) -> None:
         self._failures = [f for f in self._failures if f.plugin_uuid != plugin_id]
