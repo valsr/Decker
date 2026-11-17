@@ -7,7 +7,6 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -16,6 +15,7 @@ from decker.asset.iconpack import IconPackRegistry
 from decker.asset.renderer import AssetRenderer
 from decker.common import config
 from decker.common.manager import Manager
+from decker.common.version import decker_version
 from decker.plugin.environment import stage_sdk
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.gestures import Gesture, GestureRecognizer
@@ -133,13 +133,6 @@ def _gestures_from(names: Any) -> frozenset[Gesture]:
     return frozenset(Gesture(n) for n in names if n in {g.value for g in Gesture})
 
 
-def _decker_version() -> str:
-    try:
-        return metadata.version("decker")
-    except metadata.PackageNotFoundError:
-        return "0"
-
-
 class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """Owned by the server: discovers plugins, runs them out of process and routes events both ways."""
 
@@ -232,7 +225,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             return
         hello = {
             "protocol": 1,
-            "decker_version": _decker_version(),
+            "decker_version": decker_version(),
             "plugin_id": manifest.id,
             "global_settings": self.global_settings(manifest.id),
         }
