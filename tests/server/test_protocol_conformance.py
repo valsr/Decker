@@ -31,9 +31,14 @@ _MANIFEST = {
     "contributes": {"actions": [{"id": _ACTION_ID, "name": "Act"}]},
 }
 
-_PNG = base64.b64encode(
-    (lambda buf: (Image.new("RGBA", (8, 8), (0, 255, 0, 255)).save(buf, format="PNG"), buf.getvalue())[1])(io.BytesIO())
-).decode()
+
+def _green_png() -> str:
+    buf = io.BytesIO()
+    Image.new("RGBA", (8, 8), (0, 255, 0, 255)).save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+_PNG = _green_png()
 
 _SCRIPT = f"""#!{sys.executable}
 import json, os, sys
@@ -88,7 +93,7 @@ def test_non_sdk_executable_plugin_speaks_the_documented_protocol(tmp_path):
     device_manager = FakeDeviceManager()
     manager = PluginManager(tmp_path / "plugins", _FAST, PluginSettingsStore(tmp_path / "plugins.db"))
     manager.create(
-        SimpleNamespace(
+        SimpleNamespace(  # type: ignore[arg-type]
             device_manager=device_manager,
             event_bus=FakeBus(),
             page_controller=MagicMock(),
