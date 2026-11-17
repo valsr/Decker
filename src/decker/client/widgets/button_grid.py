@@ -64,6 +64,13 @@ class KeyButtonWidget(QPushButton):
         self._long_press_timer.setInterval(_LONG_PRESS_MS)
         self._long_press_timer.timeout.connect(self._on_long_press_fired)
         self._edit_button = self._build_edit_button()
+        self.setProperty("selected", False)
+
+    def set_selected(self, selected: bool) -> None:
+        """Mark this key as the one being edited (outlined by the theme)."""
+        self.setProperty("selected", selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def _build_edit_button(self) -> QToolButton:
         button = QToolButton(self)
@@ -215,6 +222,7 @@ class ButtonGridWidget(QWidget):
         self._grid_layout = QGridLayout()
         self._grid_layout.setSpacing(4)
         self._key_info: list[KeyInfo] = []
+        self._buttons: dict[int, KeyButtonWidget] = {}
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.addLayout(self._grid_layout)
@@ -244,6 +252,11 @@ class ButtonGridWidget(QWidget):
             button.action_dropped.connect(self.action_dropped.emit)
             self._grid_layout.addWidget(button, row, col)
             self._buttons[index] = button
+
+    def set_selected(self, key_index: int | None) -> None:
+        """Outline the key being edited; None (or an unknown index) outlines nothing."""
+        for index, button in self._buttons.items():
+            button.set_selected(index == key_index)
 
     def set_key_label(self, key_index: int, label: str) -> None:
         """Update the display label for a single key button."""

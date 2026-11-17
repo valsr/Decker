@@ -379,3 +379,49 @@ class TestEditPencilIcon:  # pylint: disable=protected-access,unused-argument
 
         assert_that(hint.width()).is_less_than_or_equal_to(30)
         assert_that(hint.height()).is_less_than_or_equal_to(30)
+
+
+class TestSelectedKey:
+    def _selected(self, grid: ButtonGridWidget) -> list[int]:
+        buttons = grid._buttons  # pylint: disable=protected-access
+        return [i for i, b in buttons.items() if b.property("selected") is True]
+
+    def test_set_selected_marks_only_that_key(self, qapp):  # pylint: disable=unused-argument
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(6))
+
+        grid.set_selected(2)
+        assert_that(self._selected(grid)).is_equal_to([2])
+        grid.set_selected(4)
+        assert_that(self._selected(grid)).is_equal_to([4])
+
+    def test_none_clears_the_selection(self, qapp):  # pylint: disable=unused-argument
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(6))
+        grid.set_selected(2)
+
+        grid.set_selected(None)
+
+        assert_that(self._selected(grid)).is_empty()
+
+    def test_unknown_index_selects_nothing(self, qapp):  # pylint: disable=unused-argument
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(3))
+        grid.set_selected(1)
+
+        grid.set_selected(99)
+
+        assert_that(self._selected(grid)).is_empty()
+
+    def test_rebuilding_the_grid_clears_the_selection(self, qapp):  # pylint: disable=unused-argument
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(6))
+        grid.set_selected(2)
+
+        grid.build(_make_keys(6))
+
+        assert_that(self._selected(grid)).is_empty()
+
+    def test_theme_outlines_the_selected_key(self, qapp):  # pylint: disable=unused-argument
+        stylesheet = render_stylesheet(next(iter(BUNDLED.values())))
+        assert_that(stylesheet).contains('KeyButtonWidget[selected="true"]')

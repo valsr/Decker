@@ -643,6 +643,19 @@ class TestPages:  # pylint: disable=protected-access
         assert_that(view._key_slots).is_empty()
         assert_that(view._selected_key).is_none()
 
+    def test_editing_a_key_outlines_it_and_a_page_change_clears_it(
+        self, qapp, tmp_path
+    ):  # pylint: disable=unused-argument
+        view, _cm = self._view(tmp_path)
+        view._grid.build(_KEYS_15)  # pylint: disable=protected-access
+
+        view._on_key_edit_requested(3)  # pylint: disable=protected-access
+        assert_that(view._grid._buttons[3].property("selected")).is_true()  # pylint: disable=protected-access
+
+        view.handle_event(PagesUpdatedEvent(pages=dataclasses.replace(_PAGES, active_page_id="p2")))
+
+        assert_that(view._grid._buttons[3].property("selected")).is_false()  # pylint: disable=protected-access
+
     def test_selecting_tab_activates_page_on_server(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view, cm = self._view(tmp_path)
 
