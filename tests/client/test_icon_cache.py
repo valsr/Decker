@@ -75,7 +75,7 @@ class TestHitsAndMisses:
     def test_put_then_get_hits_memory_and_disk(self, cache, tmp_path):
         cache.put(_PACK, "a.svg", 64, "#ffffff", _pix("#00ff00"))
 
-        assert_that(_centre(cache.get(_PACK, "a.svg", 64, "#ffffff"))).is_equal_to((0, 255, 0))  # type: ignore[arg-type]
+        assert_that(_centre(cache.get(_PACK, "a.svg", 64, "#ffffff"))).is_equal_to((0, 255, 0))
         fresh = IconThumbnailCache(tmp_path / "cache")  # a new process: nothing in memory
         fresh.update_packs(_packs())
         hit = fresh.get(_PACK, "a.svg", 64, "#ffffff")
@@ -90,9 +90,9 @@ class TestHitsAndMisses:
         cache.put(_PACK, "a.svg", 24, "#ffffff", _pix("#00ff00"))
         cache.put(_PACK, "a.svg", 64, "#000000", _pix("#0000ff"))
 
-        assert_that(_centre(cache.get(_PACK, "a.svg", 64, "#ffffff"))).is_equal_to((255, 0, 0))  # type: ignore[arg-type]
-        assert_that(_centre(cache.get(_PACK, "a.svg", 24, "#ffffff"))).is_equal_to((0, 255, 0))  # type: ignore[arg-type]
-        assert_that(_centre(cache.get(_PACK, "a.svg", 64, "#000000"))).is_equal_to((0, 0, 255))  # type: ignore[arg-type]
+        assert_that(_centre(cache.get(_PACK, "a.svg", 64, "#ffffff"))).is_equal_to((255, 0, 0))
+        assert_that(_centre(cache.get(_PACK, "a.svg", 24, "#ffffff"))).is_equal_to((0, 255, 0))
+        assert_that(_centre(cache.get(_PACK, "a.svg", 64, "#000000"))).is_equal_to((0, 0, 255))
         assert_that(cache.get(_PACK, "a.svg", 32, "#ffffff")).is_none()
         assert_that(cache.get(_PACK, "a.svg", 64, "#123456")).is_none()
 
@@ -100,7 +100,7 @@ class TestHitsAndMisses:
         cache.put(_PACK, "a.svg", 64, None, _pix("#ff00ff"))
 
         assert_that(cache.get(_PACK, "a.svg", 64, "#ffffff")).is_none()
-        assert_that(_centre(cache.get(_PACK, "a.svg", 64, None))).is_equal_to((255, 0, 255))  # type: ignore[arg-type]
+        assert_that(_centre(cache.get(_PACK, "a.svg", 64, None))).is_equal_to((255, 0, 255))
 
     def test_disk_layout_matches_the_spec(self, cache, tmp_path):
         cache.put(_PACK, "sub/a.svg", 64, "#FFFFFF", _pix())
