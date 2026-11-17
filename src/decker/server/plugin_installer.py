@@ -119,6 +119,7 @@ class PluginInstaller:
             devices = self._uninstall_locked(plugin_id)
         finally:
             self._op_lock.release()
+        self._refresh_update_report()
         self._push(PLUGINS_CHANGED_EVENT, {})
         for device_id in sorted(devices):
             self._push(PAGES_CHANGED_EVENT, {"device_id": device_id})
@@ -175,6 +176,7 @@ class PluginInstaller:
             self._finish(job_id, None, "unexpected error while installing the plugin")
             return
         self._op_lock.release()
+        self._refresh_update_report()
         self._finish(job_id, outcome, f"Installed {outcome.plugin_id} {outcome.version}")
         self._push(PLUGINS_CHANGED_EVENT, {})
 
@@ -366,6 +368,16 @@ class PluginInstaller:
                 "message": message,
             },
         )
+
+    def _refresh_update_report(self) -> None:
+        """Recompute the update report after the installed set changed; never fails the operation."""
+        checker = self._context.update_checker
+        if checker is None:
+            return
+        try:
+            checker.refresh_local()
+        except Exception:  # pylint: disable=broad-exception-caught
+            logging.exception("Could not refresh the plugin update report")
 
     def _push(self, event_type: str, payload: dict[str, Any]) -> None:
         self._context.event_bus.push(event_type, json.dumps(payload))

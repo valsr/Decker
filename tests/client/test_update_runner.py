@@ -52,3 +52,18 @@ def test_runner_handles_finish_before_job_id_and_exceptions():
     assert_that(runner.results["a"]).is_equal_to(RESULT_OK)
     assert_that(runner.results["boom"]).contains("down")
     assert_that(runner.busy).is_false()
+
+
+def test_runner_ignores_early_finish_for_another_job():
+    runner = UpdateRunner(MagicMock())
+
+    def call(_method, _plugin_id):
+        runner.on_finished("someone-else", True, "")
+        return "j1"
+
+    runner._call = call  # pylint: disable=protected-access
+    runner.run(["a"])
+
+    assert_that(runner.busy).is_true()
+    runner.on_finished("j1", False, "bad")
+    assert_that(runner.results).is_equal_to({"a": "bad"})

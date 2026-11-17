@@ -21,7 +21,7 @@ class UpdateRunner:
         self._queue: deque[str] = deque()
         self._current: str | None = None
         self._job_id: str | None = None
-        self._early: tuple[bool, str] | None = None
+        self._early: tuple[str, bool, str] | None = None
         self.results: dict[str, str] = {}
 
     @property
@@ -31,7 +31,10 @@ class UpdateRunner:
 
     def run(self, plugin_ids: list[str]) -> None:
         """Start a fresh run over plugin_ids; ignored while a run is in progress."""
-        if self.busy or not plugin_ids:
+        if self.busy:
+            logging.warning("Plugin update run requested while another is in progress; ignored")
+            return
+        if not plugin_ids:
             return
         self.results = {}
         self._queue = deque(plugin_ids)
@@ -42,7 +45,7 @@ class UpdateRunner:
         if self._current is None:
             return
         if self._job_id is None:
-            self._early = (ok, message)
+            self._early = (job_id, ok, message)
             return
         if job_id != self._job_id:
             return
@@ -50,7 +53,8 @@ class UpdateRunner:
         self._advance()
 
     def _finish_current(self, ok: bool, message: str) -> None:
-        assert self._current is not None
+        if self._current is None:
+            return
         self.results[self._current] = RESULT_OK if ok else (message or "Install failed")
         self._current = None
         self._job_id = None
@@ -65,10 +69,11 @@ class UpdateRunner:
                 self._current = None
                 continue
             if self._early is not None:
-                ok, message = self._early
+                early_job, ok, message = self._early
                 self._early = None
-                self._finish_current(ok, message)
-                continue
+                if early_job == self._job_id:
+                    self._finish_current(ok, message)
+                    continue
             return
         if self._on_complete is not None:
             self._on_complete(dict(self.results))
