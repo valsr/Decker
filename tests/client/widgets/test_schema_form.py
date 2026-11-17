@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
 )
 
+from decker.client.widgets.color_button import ColorButton
 from decker.client.widgets.schema_form import InlineSchemaForm, SchemaForm
 from decker.client.widgets.text_style_edit import TextStyleEdit
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
@@ -173,6 +174,21 @@ class TestInlineSchemaForm:  # pylint: disable=protected-access
         assert_that(order.index(form._fields["title"].widget)).is_less_than(
             order.index(form._fields["background"].widget)
         )
+
+    def test_colour_fields_are_swatch_only(self, qapp):  # pylint: disable=unused-argument
+        form = InlineSchemaForm()
+        form.set_schema(self._SCHEMA, {"background": "#11223380"})
+
+        button = form._fields["background"].widget
+        assert isinstance(button, ColorButton)
+        assert_that(button.text()).is_equal_to("")
+        assert_that(button.toolTip()).is_equal_to("#11223380")
+
+    def test_regular_form_still_shows_the_colour_name(self, qapp):  # pylint: disable=unused-argument
+        form = _form([{"key": "bg", "type": "color", "default": "#000000"}], {"bg": "#112233"})
+        button = form._fields["bg"].widget
+        assert isinstance(button, ColorButton)
+        assert_that(button.text()).is_equal_to("#112233")
 
     def test_values_round_trip(self, qapp):  # pylint: disable=unused-argument
         form = InlineSchemaForm()

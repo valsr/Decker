@@ -17,6 +17,7 @@ class ColorButton(QPushButton):
     def __init__(self, color: str = "#000000", parent: QWidget | None = None, alpha: bool = False) -> None:
         super().__init__(parent)
         self._alpha = alpha
+        self._show_name = True
         self._color = self._parse(color) or QColor("#000000")
         self.clicked.connect(self._pick)
         self._refresh()
@@ -32,6 +33,11 @@ class ColorButton(QPushButton):
         if candidate is not None:
             self._color = candidate
             self._refresh()
+
+    def set_show_name(self, show: bool) -> None:
+        """Show the colour name next to the swatch, or just the swatch (the name stays in the tooltip)."""
+        self._show_name = show
+        self._refresh()
 
     def _parse(self, color: str) -> QColor | None:
         candidate = hex_to_qcolor(color) or QColor(color)
@@ -61,4 +67,5 @@ class ColorButton(QPushButton):
         painter.fillRect(0, 0, _SWATCH_SIZE, _SWATCH_SIZE, self._color)
         painter.end()
         self.setIcon(QIcon(swatch))
-        self.setText(self.color)
+        self.setText(self.color if self._show_name else "")
+        self.setToolTip(self.color)
