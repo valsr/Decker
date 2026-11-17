@@ -108,7 +108,7 @@ notifies every client).
 
 ## Decker server
 
-- Config: `plugins.repositories` — list of index URLs, default
+- Config: `plugin.repositories` — list of index URLs, default
   `["https://valsr.github.io/decker-plugins/index.json"]`. Removing the default is allowed.
 - A repository client (stdlib `urllib`, no new dependency) fetches indexes with a
   timeout and size cap, validates them strictly (unknown `format` ⇒ repository marked
@@ -124,7 +124,7 @@ notifies every client).
 - Compatibility: a version whose `decker` specifier excludes the running Decker is
   listed but not installable; "latest compatible" drives updates.
 - Update checks (user decision): the repository lists are refreshed on a schedule set
-  by `plugins.update_check` — `weekly` (default), `daily`, `monthly` or `manual` — plus
+  by `plugin.update_check` — `weekly` (default), `daily`, `monthly` or `manual` — plus
   on demand. The time of the last successful check is persisted under
   `~/.decker/repositories/`, so the schedule survives restarts: on start and then
   periodically the server checks only when the interval has elapsed since the last
@@ -179,7 +179,7 @@ notifies every client).
    (the key store never prunes by plugin). The Decker change that removes
    `bundled_plugins/` merges only after Counter's first `decker-plugins` release is live
    (a manual gate). Offline or with the repository unreachable, Counter keys keep their
-   assignment and show the existing "plugin unavailable" key state; the missing-plugin
+   assignment and show the "Plugin missing" key label (failure-label path); the missing-plugin
    offer appears once a repository answers.
 2. **Version compatibility** uses exactly the installer's rule
    (`SpecifierSet.contains(..., prereleases=True)`); one shared `decker_version()`
