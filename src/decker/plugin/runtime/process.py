@@ -1,7 +1,9 @@
 """Server-side wrapper around one plugin child process."""
 
 import logging
+import os
 import queue
+import signal
 import subprocess
 import threading
 from collections.abc import Callable
@@ -21,6 +23,7 @@ logger = logging.getLogger(__name__)
 _DISCARD_CHUNK = 64 * 1024
 _SEND_QUEUE_SIZE = 256
 _STDERR_CHUNK = 8 * 1024
+_READER_JOIN_SECONDS = 1.0
 
 
 class PluginProcess:
@@ -65,6 +68,7 @@ class PluginProcess:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            start_new_session=True,
         )
         self._proc = proc
         assert proc.stdout is not None and proc.stderr is not None
@@ -99,14 +103,23 @@ class PluginProcess:
             return
         except subprocess.TimeoutExpired:
             pass
-        proc.terminate()
+        self._signal_group(signal.SIGTERM)
         try:
             proc.wait(timeout=timeout)
             return
         except subprocess.TimeoutExpired:
             pass
-        proc.kill()
+        self._signal_group(signal.SIGKILL)
         proc.wait()
+
+    def _signal_group(self, sig: int) -> None:
+        proc = self._proc
+        if proc is None:
+            return
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     def rss_bytes(self) -> int | None:
         """Resident set size of the child from /proc, or None if unavailable."""
@@ -176,8 +189,10 @@ class PluginProcess:
 
     def _watch(self, proc: subprocess.Popen[bytes], readers: list[threading.Thread]) -> None:
         returncode = proc.wait()
+        # A helper the plugin left behind can keep the pipes open forever; do not wait for it.
         for reader in readers:
-            reader.join()
+            reader.join(timeout=_READER_JOIN_SECONDS)
+        self._signal_group(signal.SIGKILL)
         try:
             self._on_exit(returncode)
         except Exception:  # pylint: disable=broad-exception-caught
