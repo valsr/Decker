@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from decker.client.view_name import ViewName
-from decker.common.model import DeviceHardwareInfo, DevicePages
+from decker.common.model import DeviceHardwareInfo, DevicePages, DeviceProfiles
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,13 @@ class PagesUpdatedEvent:
 
 
 @dataclass(frozen=True)
+class ProfilesUpdatedEvent:
+    """The active device's profiles, their names or icons, or its active profile changed."""
+
+    profiles: DeviceProfiles
+
+
+@dataclass(frozen=True)
 class PluginInstallProgressEvent:
     """A plugin install job reported a progress message."""
 
@@ -140,6 +147,7 @@ AppEvent = (
     | ActionListUpdatedEvent
     | KeyDisplayStatesUpdatedEvent
     | PagesUpdatedEvent
+    | ProfilesUpdatedEvent
     | PluginInstallProgressEvent
     | PluginInstallFinishedEvent
     | PluginsChangedEvent

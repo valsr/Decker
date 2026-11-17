@@ -26,12 +26,20 @@ from decker.client.events import (
     PluginLoadFailedEvent,
     PluginsChangedEvent,
     PluginUpdatesAvailableEvent,
+    ProfilesUpdatedEvent,
     RepositoriesCheckFinishedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
-from decker.common.model import DeviceHardwareInfo, DevicePages, KeyInfo, PageInfo
+from decker.common.model import (
+    DeviceHardwareInfo,
+    DevicePages,
+    DeviceProfiles,
+    KeyInfo,
+    PageInfo,
+    ProfileInfo,
+)
 
 _RETRY_INTERVAL_S = 3.0
 _HEARTBEAT_INTERVAL_S = 5.0
@@ -288,6 +296,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             return None
 
     def _refresh_active_device(self) -> None:
+        self._refresh_profiles()
         self._refresh_pages()
         self._refresh_key_display_states()
 
@@ -301,6 +310,17 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             logging.warning("Could not fetch pages for %s: %s", device_id, exc)
             return
         EventManager.get().push(PagesUpdatedEvent(pages=pages))
+
+    def _refresh_profiles(self) -> None:
+        device_id = _active_device_id()
+        if self._conn is None or device_id is None:
+            return
+        try:
+            profiles = _parse_device_profiles(self._call_json("profiles_list", device_id))
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Could not fetch profiles for %s: %s", device_id, exc)
+            return
+        EventManager.get().push(ProfilesUpdatedEvent(profiles=profiles))
 
     def _refresh_key_display_states(self) -> None:
         device_id = _active_device_id()
@@ -347,7 +367,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             EventManager.get().push(
                 OpenUrlRequestedEvent(plugin_id=str(data.get("plugin_id", "")), url=str(data.get("url", "")))
             )
-        elif event_type == "pages_changed":
+        elif event_type in ("pages_changed", "profiles_changed"):
             if data.get("device_id") == _active_device_id():
                 self.request_device_refresh()
         elif event_type == "plugin_install_progress":
@@ -403,7 +423,31 @@ def _parse_device_pages(data: Any) -> DevicePages:
         pages=pages,
         default_page_id=str(data["default_page_id"]),
         active_page_id=str(data["active_page_id"]),
+        profile_id=int(data.get("profile_id", 0)),
     )
+
+
+def _parse_device_profiles(data: Any) -> DeviceProfiles:
+    """Deserialise a profiles_list response; raises ValueError if it is malformed."""
+    if not isinstance(data, dict):
+        raise ValueError(f"unexpected profiles response: {data!r}")
+    profiles = [
+        ProfileInfo(profile_id=_int_id(p["profile_id"]), name=str(p["name"]), icon=str(p.get("icon", "")))
+        for p in data.get("profiles") or []
+    ]
+    if not profiles:
+        raise ValueError("device has no profiles")
+    return DeviceProfiles(
+        device_id=str(data["device_id"]),
+        profiles=profiles,
+        active_profile_id=_int_id(data["active_profile_id"]),
+    )
+
+
+def _int_id(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"profile id {value!r} is not an integer")
+    return value
 
 
 def _parse_hw_info(data: dict[str, Any]) -> DeviceHardwareInfo:

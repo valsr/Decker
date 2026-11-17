@@ -24,12 +24,19 @@ from decker.client.events import (
     PluginLoadFailedEvent,
     PluginsChangedEvent,
     PluginUpdatesAvailableEvent,
+    ProfilesUpdatedEvent,
     RepositoriesCheckFinishedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
-from decker.common.model import DeviceHardwareInfo, DevicePages, PageInfo
+from decker.common.model import (
+    DeviceHardwareInfo,
+    DevicePages,
+    DeviceProfiles,
+    PageInfo,
+    ProfileInfo,
+)
 from decker.common.utils import api_response
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
 
@@ -623,3 +630,89 @@ class TestPageRefresh:  # pylint: disable=protected-access
         events = [e for e in EventManager.get().drain() if isinstance(e, PluginUpdatesAvailableEvent)]
         assert_that(events).is_length(1)
         assert_that(events[0].missing).is_equal_to([{"id": "m"}])
+
+
+_DEVICE_PROFILES = DeviceProfiles(
+    device_id="dev1",
+    profiles=[ProfileInfo(0, "Default", ""), ProfileInfo(2, "Work", "pack:a/b.svg")],
+    active_profile_id=2,
+)
+
+
+@api_response
+def _profiles_payload(profiles: DeviceProfiles) -> DeviceProfiles:
+    return profiles
+
+
+class TestProfileRefresh:  # pylint: disable=protected-access
+    def setup_method(self):
+        EventManager.reset()
+        AppContext.reset()
+        AppContext.get().active_device = DeviceHardwareInfo(
+            id="dev1", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15
+        )
+        self.manager = ConnectionManager()
+        self.conn = MagicMock()
+        self.conn.root.pages_list.return_value = str(_pages_payload(_DEVICE_PAGES))
+        self.conn.root.profiles_list.return_value = str(_profiles_payload(_DEVICE_PROFILES))
+        self.conn.root.key_get_states.return_value = json.dumps([])
+        self.manager._conn = self.conn
+
+    def teardown_method(self):
+        self.manager._conn = None
+        AppContext.reset()
+
+    def test_refresh_profiles_pushes_parsed_profiles(self):
+        self.manager._refresh_profiles()
+
+        events = [e for e in EventManager.get().drain() if isinstance(e, ProfilesUpdatedEvent)]
+        assert_that(events).is_length(1)
+        assert_that(events[0].profiles).is_equal_to(_DEVICE_PROFILES)
+        self.conn.root.profiles_list.assert_called_once_with("dev1")
+
+    def test_malformed_or_failed_profiles_response_is_logged_not_raised(self):
+        replies = [json.dumps([]), json.dumps({"device_id": "dev1", "profiles": []}), RuntimeError("down")]
+        replies.append(
+            json.dumps({"device_id": "d", "profiles": [{"profile_id": "x", "name": "n"}], "active_profile_id": 0})
+        )
+        for reply in replies:
+            if isinstance(reply, Exception):
+                self.conn.root.profiles_list.side_effect = reply
+            else:
+                self.conn.root.profiles_list.return_value = reply
+
+            self.manager._refresh_profiles()
+
+        assert_that([e for e in EventManager.get().drain() if isinstance(e, ProfilesUpdatedEvent)]).is_empty()
+
+    def test_refresh_without_device_is_a_no_op(self):
+        AppContext.reset()
+
+        self.manager._refresh_profiles()
+
+        self.conn.root.profiles_list.assert_not_called()
+
+    def test_profiles_changed_for_active_device_requests_refresh(self):
+        self.manager._on_server_event("profiles_changed", json.dumps({"device_id": "dev1"}))
+
+        assert_that(self.manager._device_refresh_requested.is_set()).is_true()
+
+    def test_profiles_changed_for_other_device_is_ignored(self):
+        self.manager._on_server_event("profiles_changed", json.dumps({"device_id": "other"}))
+
+        assert_that(self.manager._device_refresh_requested.is_set()).is_false()
+
+    def test_device_refresh_fetches_pages_and_profiles(self):
+        self.manager._refresh_active_device()
+
+        self.conn.root.pages_list.assert_called_once_with("dev1")
+        self.conn.root.profiles_list.assert_called_once_with("dev1")
+
+    def test_pages_carry_their_profile_id(self):
+        payload = json.loads(str(_pages_payload(DevicePages("dev1", [PageInfo("p1", "A")], "p1", "p1", profile_id=3))))
+        self.conn.root.pages_list.return_value = json.dumps(payload)
+
+        self.manager._refresh_pages()
+
+        pages = [e for e in EventManager.get().drain() if isinstance(e, PagesUpdatedEvent)][0].pages
+        assert_that(pages.profile_id).is_equal_to(3)

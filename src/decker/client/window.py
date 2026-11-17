@@ -31,6 +31,7 @@ from decker.client.events import (
     PluginInstallFinishedEvent,
     PluginLoadFailedEvent,
     PluginUpdatesAvailableEvent,
+    ProfilesUpdatedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
     ViewActivatedEvent,
@@ -245,6 +246,7 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
             KeyDisplayStatesUpdatedEvent,
             KeyEvent,
             PagesUpdatedEvent,
+            ProfilesUpdatedEvent,
         ):
             em.subscribe(event_type, self._forward_to_active_view)
 
