@@ -12,7 +12,11 @@ _COUNTER_SCHEMA: list[dict[str, Any]] = [
     {"key": "double_step", "type": "int", "label": "Double step", "optional": True},
     {"key": "max", "type": "int", "label": "Max", "default": 0, "min": 0, "special_value": "No limit"},
 ]
-_DEFAULTS: dict[str, Any] = {"background": "#000000", "title": dict(TEXT_STYLE_DEFAULTS)}
+_DEFAULTS: dict[str, Any] = {
+    "background": "#000000",
+    "title": dict(TEXT_STYLE_DEFAULTS),
+    "icon": {"ref": "", "color": "#ffffff"},
+}
 
 
 def _show(panel: ActionConfigPanel, settings=None, appearance=None, save=None) -> None:

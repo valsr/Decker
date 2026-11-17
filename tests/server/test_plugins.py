@@ -584,6 +584,39 @@ def _send_set_image(env, payload: dict) -> None:
     env.manager._on_plugin_message(_COUNTER, Message("set_image", "ctx-1", payload))  # pylint: disable=protected-access
 
 
+class TestIconOverride:
+    def test_override_replaces_the_static_default_icon(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+
+        env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#ff0000"}})
+
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
+
+    def test_plugin_image_beats_the_override(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+        _send_set_image(env, {"image": base64.b64encode(_RED_PNG).decode(), "format": "png"})
+        before = env.image()
+
+        env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#00ff00"}})
+
+        assert_that(env.image()).is_equal_to(before)
+
+    def test_plugin_icon_beats_the_override(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+        _send_set_image(env, {"icon": _DOT_REF, "color": "#ff0000"})
+
+        env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#00ff00"}})
+
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
+
+    def test_override_to_an_unknown_pack_falls_back_to_the_default(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+
+        env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": "pack:no.such/x.svg", "color": "#ff0000"}})
+
+        assert_that(env.image()).is_equal_to(_BARE_COUNTER)
+
+
 class TestSetImageIcon:
     def test_icon_reference_composes_the_pack_icon_in_the_colour(self, env, tmp_path):
         _icon_env(env, tmp_path)

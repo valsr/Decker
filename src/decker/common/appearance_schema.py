@@ -6,6 +6,7 @@ from decker.common.text_style import LEGACY_TITLE_KEYS
 
 APPEARANCE_SCHEMA: list[dict[str, Any]] = [
     {"key": "title", "type": "text_style", "label": "Title", "template": True},
+    {"key": "icon", "type": "icon", "label": "Icon"},
     {"key": "background", "type": "color", "label": "Background", "default": "#000000", "alpha": True},
 ]
 
