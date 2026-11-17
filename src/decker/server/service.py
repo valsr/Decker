@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from packaging.version import InvalidVersion, Version
 from rpyc.core.service import Service
 from rpyc.utils import exposed
 
@@ -18,10 +19,15 @@ from decker.common import config
 from decker.common.appearance_schema import APPEARANCE_KEYS
 from decker.common.model import DeviceHardwareInfo, DevicePages, KeyState, PageInfo
 from decker.common.utils import api_response
+from decker.common.version import is_compatible
 from decker.plugin.icons import read_icon
 from decker.plugin.loader import InstalledPlugin
+from decker.plugin.repository_index import IndexVersion
 from decker.plugin.settings_schema import schema_to_json
 from decker.plugin.target import ActionTarget
+from decker.server.plugin_installer import PluginInstallError
+from decker.server.repositories import CatalogEntry, RepositoryError, RepositoryStore
+from decker.server.update_checker import UpdateChecker
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
@@ -55,6 +61,50 @@ class DeckerStatusEnum(StrEnum):
 
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"
+
+
+def _catalog_item(entry: CatalogEntry, installed_version: str | None) -> dict[str, Any]:
+    plugin = entry.plugin
+    latest = _pick_version(plugin.versions, "")
+    return {
+        "id": plugin.id,
+        "name": plugin.name,
+        "author": plugin.author,
+        "description": plugin.description,
+        "category": plugin.category,
+        "homepage": plugin.homepage,
+        "repository": entry.repository_url,
+        "shadowed_by": entry.shadowed_by,
+        "installed_version": installed_version,
+        "latest_compatible": latest.version if latest is not None else None,
+        "versions": [
+            {
+                "version": item.version,
+                "decker": item.decker,
+                "size": item.size,
+                "released": item.released,
+                "compatible": is_compatible(item.decker),
+                "contributes": item.contributes,
+            }
+            for item in plugin.versions
+        ],
+    }
+
+
+def _pick_version(versions: tuple[IndexVersion, ...], wanted: str) -> IndexVersion | None:
+    if wanted:
+        return next((item for item in versions if item.version == wanted), None)
+    best: tuple[Version, IndexVersion] | None = None
+    for item in versions:
+        if not is_compatible(item.decker):
+            continue
+        try:
+            parsed = Version(item.version)
+        except InvalidVersion:
+            continue
+        if best is None or parsed > best[0]:
+            best = (parsed, item)
+    return best[1] if best else None
 
 
 @dataclass
@@ -205,6 +255,117 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         """Uninstall a plugin, removing its keys from every device and page."""
         installer = self._installer()
         installer.uninstall(plugin_id)
+        return True
+
+    @exposed
+    def repositories_list(self) -> list[dict[str, Any]]:
+        """Return the configured plugin repositories with their last-refresh status."""
+        store = self._repository_store()
+        if store is None:
+            return []
+        return [
+            {
+                "url": info.url,
+                "name": info.name,
+                "plugin_count": info.plugin_count,
+                "last_checked": info.last_checked,
+                "error": info.error,
+            }
+            for info in store.list_repositories()
+        ]
+
+    @exposed
+    def repository_add(self, url: str) -> str:
+        """Add a repository and fetch it. Returns an empty string on success, else an error message."""
+        store = self._repository_store()
+        if not self._install_allowed():
+            return _REMOTE_INSTALL_DENIED
+        if store is None:
+            return "repositories are not available"
+        try:
+            store.add(url)
+        except RepositoryError as exc:
+            return str(exc)
+        return ""
+
+    @exposed
+    def repository_remove(self, url: str) -> bool:
+        """Remove a repository. Returns False when refused or unknown."""
+        store = self._repository_store()
+        if store is None or not self._install_allowed():
+            return False
+        return store.remove(url)
+
+    @exposed
+    def repositories_check(self) -> dict[str, Any]:
+        """Refresh every repository now and return the update report."""
+        checker = self._update_checker()
+        if checker is None:
+            return {"updates": [], "missing": []}
+        return checker.check_now().to_payload()
+
+    @exposed
+    def repository_catalog(self) -> list[dict[str, Any]]:
+        """Return every repository plugin with its versions and installed/latest-compatible state."""
+        store = self._repository_store()
+        if store is None or self._context is None:
+            return []
+        installed = {item.manifest.id: item.manifest.version for item in self._context.plugin_manager.plugins()}
+        return [_catalog_item(entry, installed.get(entry.plugin.id)) for entry in store.catalog()]
+
+    @exposed
+    def repository_icon(self, plugin_id: str) -> str:
+        """Return a repository plugin's icon as base64, or an empty string."""
+        store = self._repository_store()
+        data = store.icon(plugin_id) if store is not None else None
+        return base64.b64encode(data).decode("ascii") if data else ""
+
+    @exposed
+    def plugin_install_from_repository(self, plugin_id: str, version: str = "") -> str:
+        """Install a repository plugin version (default: latest compatible); returns a job id or an `error:` message."""
+        if not self._install_allowed():
+            return f"error: {_REMOTE_INSTALL_DENIED}"
+        store = self._repository_store()
+        installer = self._context.plugin_installer if self._context is not None else None
+        if store is None or installer is None:
+            return "error: plugin installer is not available"
+        entry = store.find(plugin_id)
+        if entry is None:
+            return f"error: {plugin_id} is not in any repository"
+        chosen = _pick_version(entry.plugin.versions, version)
+        if chosen is None:
+            return (
+                f"error: no compatible version of {plugin_id} found" if not version else f"error: {version} unavailable"
+            )
+        if not is_compatible(chosen.decker):
+            return f"error: {plugin_id} {chosen.version} requires Decker {chosen.decker}"
+        try:
+            return installer.install_from_repository(plugin_id, chosen)
+        except PluginInstallError as exc:
+            return f"error: {exc}"
+
+    @exposed
+    def plugin_updates(self) -> dict[str, Any]:
+        """Return the current update report: installed plugins with updates and plugins missing from this machine."""
+        checker = self._update_checker()
+        return checker.report().to_payload() if checker is not None else {"updates": [], "missing": []}
+
+    @exposed
+    def update_check_schedule(self) -> str:
+        """Return the update check schedule name."""
+        checker = self._update_checker()
+        return checker.schedule() if checker is not None else "weekly"
+
+    @exposed
+    def update_check_set_schedule(self, name: str) -> bool:
+        """Set the update check schedule. Returns False when refused or the name is unknown."""
+        checker = self._update_checker()
+        if checker is None or not self._install_allowed():
+            return False
+        try:
+            checker.set_schedule(name)
+        except ValueError:
+            return False
         return True
 
     @exposed
@@ -486,6 +647,12 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         return _is_loopback(self._peer_host) or config.get_as_or_default(
             "server.allow_remote_plugin_install", bool, False
         )
+
+    def _repository_store(self) -> RepositoryStore | None:
+        return self._context.repository_store if self._context is not None else None
+
+    def _update_checker(self) -> UpdateChecker | None:
+        return self._context.update_checker if self._context is not None else None
 
     def _installer(self) -> Any:
         if not self._install_allowed():
