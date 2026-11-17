@@ -130,3 +130,34 @@ class TestColorToolButton:
 
         assert_that(optional.color).is_none()
         assert_that(required.color).is_equal_to("#ff0000")
+
+
+class TestPickerSignals:
+    def test_picker_signals_wrap_the_dialog_and_follow_the_change(
+        self, qapp, monkeypatch
+    ):  # pylint: disable=unused-argument
+        button = ColorToolButton("T")
+        events: list[str] = []
+        button.picker_opened.connect(lambda: events.append("opened"))
+        button.color_changed.connect(lambda _c: events.append("changed"))
+        button.picker_closed.connect(lambda: events.append("closed"))
+
+        def fake(*_a: Any, **_k: Any) -> QColor:
+            events.append("dialog")
+            return QColor("#00ff00")
+
+        monkeypatch.setattr(_GET_COLOR, fake)
+        button.click()
+
+        assert_that(events).is_equal_to(["opened", "dialog", "changed", "closed"])
+
+    def test_picker_closed_also_emitted_when_cancelled(self, qapp, monkeypatch):  # pylint: disable=unused-argument
+        button = ColorToolButton("T")
+        events: list[str] = []
+        button.picker_opened.connect(lambda: events.append("opened"))
+        button.picker_closed.connect(lambda: events.append("closed"))
+        monkeypatch.setattr(_GET_COLOR, lambda *_a, **_k: QColor())
+
+        button.click()
+
+        assert_that(events).is_equal_to(["opened", "closed"])

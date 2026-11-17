@@ -40,6 +40,9 @@ class TextStyleEdit(QWidget):
         self._cog.setCheckable(True)
         self._line.addAction(self._cog, QLineEdit.ActionPosition.TrailingPosition)
         self._toolbar = TextStyleToolbar(self)
+        self._reopen_after_picker = False
+        self._toolbar.picker_opened.connect(self._on_picker_opened)
+        self._toolbar.picker_closed.connect(self._on_picker_closed)
         self._cog.triggered.connect(self._toggle_popup)
         self._toolbar.closed.connect(lambda: self._cog.setChecked(False))
         self._line.textEdited.connect(lambda _text: self.value_changed.emit())
@@ -54,6 +57,16 @@ class TextStyleEdit(QWidget):
         style = normalize_text_style(value)
         self._line.setText(style["text"])
         self._toolbar.set_style(style)
+
+    def _on_picker_opened(self) -> None:
+        self._reopen_after_picker = self._toolbar.isVisible()
+
+    def _on_picker_closed(self) -> None:
+        # A Popup window closes when the modal colour dialog takes focus; bring it back so editing can continue.
+        if self._reopen_after_picker:
+            self._reopen_after_picker = False
+            self._cog.setChecked(True)
+            self._open_popup()
 
     def _toggle_popup(self, checked: bool) -> None:
         if checked:
