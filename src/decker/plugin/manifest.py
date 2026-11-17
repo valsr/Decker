@@ -9,7 +9,11 @@ from typing import Any, Literal
 from packaging.requirements import InvalidRequirement, Requirement
 
 from decker.common.appearance_schema import APPEARANCE_KEYS
-from decker.plugin.settings_schema import SettingEntry, SettingField, parse_settings_schema
+from decker.plugin.settings_schema import (
+    SettingEntry,
+    SettingField,
+    parse_settings_schema,
+)
 
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?")
 SUPPORTED_FORMAT = 1

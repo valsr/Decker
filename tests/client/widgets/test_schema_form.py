@@ -238,3 +238,13 @@ class TestIconField:  # pylint: disable=protected-access
     def test_garbage_value_uses_defaults(self, qapp):  # pylint: disable=unused-argument
         form = _form([{"key": "i", "type": "icon"}], {"i": "/tmp/a.png"})
         assert_that(form.values()["i"]).is_equal_to({"ref": "", "color": "#ffffff"})
+
+
+class TestPageField:
+    def test_schema_form_builds_a_page_edit_and_round_trips(self, qapp):  # pylint: disable=unused-argument
+        from decker.client.widgets.page_edit import PageEdit
+
+        form = _form([{"key": "p", "type": "page", "label": "Page"}], {"p": "abc"})
+
+        assert_that(form.findChild(PageEdit)).is_not_none()
+        assert_that(form.values()["p"]).is_equal_to("abc")
