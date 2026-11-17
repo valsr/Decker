@@ -6,7 +6,11 @@ import pytest
 from assertpy import assert_that
 
 from decker.client.context import AppContext
-from decker.client.events import PluginInstallFinishedEvent, PluginInstallProgressEvent
+from decker.client.events import (
+    PluginInstallFinishedEvent,
+    PluginInstallProgressEvent,
+    PluginsChangedEvent,
+)
 from decker.client.events.event_manager import EventManager
 from decker.client.widgets.get_more_plugins import GetMorePluginsDialog, human_size
 
@@ -197,3 +201,24 @@ def test_finished_before_job_id_is_replayed(dialog, manager, qapp):
     dialog._after_start("job-1")
     _settle(dialog, qapp)
     assert_that(dialog._installing).is_none()
+
+
+def test_plugins_changed_reloads_catalog_when_idle(dialog, manager, qapp):
+    manager.answers["repository_catalog"] = [_plugin("a.fresh", "Fresh", installed_version="2.0.0")]
+
+    EventManager.get().emit(PluginsChangedEvent())
+    _settle(dialog, qapp)
+
+    assert_that(list(dialog._rows)).is_equal_to(["a.fresh"])
+    assert_that(dialog._rows["a.fresh"].button.text()).is_equal_to("Installed")
+
+
+def test_plugins_changed_ignored_while_installing(dialog, manager, qapp):
+    dialog._rows["a.fresh"].button.click()
+    _settle(dialog, qapp)
+    manager.answers["repository_catalog"] = []
+
+    EventManager.get().emit(PluginsChangedEvent())
+    _settle(dialog, qapp)
+
+    assert_that(dialog._rows).is_length(4)
