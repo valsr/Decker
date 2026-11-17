@@ -25,6 +25,7 @@ from decker.client.events import (
     PluginInstallProgressEvent,
     PluginLoadFailedEvent,
     PluginsChangedEvent,
+    PluginUpdatesAvailableEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
@@ -188,10 +189,16 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._bg_server = BgServingThread(self._conn)
         EventManager.get().push(ServerConnectedEvent(host=host, port=port))
         self._refresh_all()
+        self._refresh_updates()
         self._refresh_active_device()
         # A concurrent stop() may have closed the connection during the initial pull.
         if self.state == ServerState.INITIALIZING:
             self.state = ServerState.HEALTHY
+
+    def _refresh_updates(self) -> None:
+        report = to_plain(self.call("plugin_updates"))
+        if isinstance(report, dict):
+            EventManager.get().push(_parse_updates(report))
 
     def _refresh_all(self) -> None:
         self._refresh_devices()
@@ -348,6 +355,8 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             )
         elif event_type == "plugin_install_finished":
             EventManager.get().push(_parse_install_finished(data))
+        elif event_type == "plugin_updates_available":
+            EventManager.get().push(_parse_updates(data))
         elif event_type == "plugins_changed":
             self.request_actions_refresh()
             EventManager.get().push(PluginsChangedEvent())
@@ -417,6 +426,19 @@ def _parse_hw_info(data: dict[str, Any]) -> DeviceHardwareInfo:
         path=str(data.get("path") or ""),
         firmware=data.get("firmware") or None,
     )
+
+
+def to_plain(value: Any) -> Any:
+    """Copy an RPC result (possibly remote list/dict references) into plain local lists and dicts."""
+    if isinstance(value, dict):
+        return {str(key): to_plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_plain(item) for item in value]
+    return value
+
+
+def _parse_updates(data: dict[str, Any]) -> PluginUpdatesAvailableEvent:
+    return PluginUpdatesAvailableEvent(updates=list(data.get("updates") or []), missing=list(data.get("missing") or []))
 
 
 def _parse_install_finished(data: dict[str, Any]) -> PluginInstallFinishedEvent:
