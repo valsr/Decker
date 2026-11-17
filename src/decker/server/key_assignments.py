@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import threading
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -183,6 +184,21 @@ class KeyAssignmentStore(Manager):
         with self._lock:
             self._db.execute(f"DELETE FROM {_TABLE} WHERE device_id = ? AND page_id = ?", (device_id, page_id))
             self._db.commit()
+
+    def copy_page(self, device_id: str, source_page_id: str, target_page_id: str) -> list[tuple[int, KeyAssignment]]:
+        """Copy every assignment of a page onto another page, giving each copy a new context id."""
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT {_COLUMNS} FROM {_TABLE} WHERE device_id = ? AND page_id = ? ORDER BY key_index",
+                (device_id, source_page_id),
+            ).fetchall()
+            copies = [(*row[:3], uuid.uuid4().hex, *row[4:]) for row in rows]
+            self._db.executemany(
+                f"INSERT INTO {_TABLE} (device_id, page_id, {_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [(device_id, target_page_id, *copy) for copy in copies],
+            )
+            self._db.commit()
+        return [_to_assignment(device_id, copy) for copy in copies]
 
     def _migrate_to_pages(self) -> None:
         columns = [row[1] for row in self._db.execute(f"PRAGMA table_info({_TABLE})").fetchall()]

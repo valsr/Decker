@@ -228,6 +228,18 @@ class DeviceStateStore(Manager):
                 conn.execute(f"DELETE FROM {table} WHERE page_id = ?", (page_id,))
             conn.commit()
 
+    def copy_page_state(self, device_id: str, source_page_id: str, target_page_id: str) -> None:
+        """Copy every persisted image and label of a page onto another page."""
+        with self._lock:
+            conn = self._get_conn(device_id)
+            for table, column in (("page_key_images", "image"), ("page_key_labels", "label")):
+                conn.execute(
+                    f"INSERT OR REPLACE INTO {table} (page_id, key_index, {column}, updated_at) "
+                    f"SELECT ?, key_index, {column}, CURRENT_TIMESTAMP FROM {table} WHERE page_id = ?",
+                    (target_page_id, source_page_id),
+                )
+            conn.commit()
+
     # ------------------------------------------------------------------
     # Bulk delete
     # ------------------------------------------------------------------

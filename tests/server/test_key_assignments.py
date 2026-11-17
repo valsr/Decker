@@ -250,3 +250,25 @@ class TestDestroyWhileInUse:
     def test_destroy_twice_is_harmless(self, store):
         store.destroy()
         store.destroy()
+
+
+class TestCopyPage:
+    def test_copies_settings_and_appearance_with_new_context_ids(self, store):
+        store.assign("dev1", "p1", 0, _target(key_index=0, ctx="c0"), {"step": 1})
+        store.assign("dev1", "p1", 2, _target(key_index=2, ctx="c2"), {"step": 2})
+        store.update_appearance("dev1", "p1", 2, {"background": {"color": "#ff0000"}})
+
+        copied = store.copy_page("dev1", "p1", "p2")
+
+        assert_that([key for key, _ in copied]).is_equal_to([0, 2])
+        assert_that(store.all_for_page("dev1", "p2")).is_equal_to(copied)
+        originals = {a.target.context_id for _, a in store.all_for_page("dev1", "p1")}
+        assert_that(originals).is_equal_to({"c0", "c2"})
+        assert_that({a.target.context_id for _, a in copied} & originals).is_empty()
+        _, second = copied[1]
+        assert_that(second.settings).is_equal_to({"step": 2})
+        assert_that(second.appearance).is_equal_to({"background": {"color": "#ff0000"}})
+        assert_that((second.target.plugin_uuid, second.target.action_uuid)).is_equal_to(("com.p", "com.p.a"))
+
+    def test_copy_of_empty_page_is_empty(self, store):
+        assert_that(store.copy_page("dev1", "nothing", "p2")).is_empty()
