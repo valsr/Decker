@@ -45,7 +45,7 @@ values for this key (return `None` to keep the manifest's list).
 
 Attributes: `context`, `action`, `device`, `key_index`, `column`, `row`, `settings`, `global_settings`, `state`.
 
-Methods: `set_image(data, format="png")`, `set_icon(ref, color=None)` (show an icon from an installed icon pack, see
+Methods: `set_image(data, format="png")`, `set_icon(ref, color=None)` (show an icon from an installed icon pack or one of Decker's System Icons, see
 [protocol](protocol.md#images)), `clear_image()`, `set_title(title)`, `set_state(n)`, `show_alert()`,
 `show_ok()`, `set_settings(dict)` (send only the keys you changed), `set_global_settings(dict)`, `switch_page(to="next", wrap=False)`
 (`next`, `previous`, `first`, `last`), `go_to_page(page_id)` (see [Pages](protocol.md#pages)), `switch_profile(to="next", wrap=False)`, `go_to_profile(profile_id)` (see [Profiles](protocol.md#profiles)), `open_url(url)`, `log(message, level="info")`.
