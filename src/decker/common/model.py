@@ -68,6 +68,24 @@ class PageInfo:
 
 
 @dataclass(frozen=True)
+class ProfileInfo:
+    """One profile of a device: a named set of pages. ``icon`` is an icon ref; empty means the Decker icon."""
+
+    profile_id: int
+    name: str
+    icon: str = ""
+
+
+@dataclass(frozen=True)
+class DeviceProfiles:
+    """A device's profiles in dropdown order and the one currently active."""
+
+    device_id: str
+    profiles: list[ProfileInfo]
+    active_profile_id: int
+
+
+@dataclass(frozen=True)
 class DevicePages:
     """A device's pages in display order, its default page, and the page currently on the hardware."""
 
@@ -75,3 +93,4 @@ class DevicePages:
     pages: list[PageInfo]
     default_page_id: str
     active_page_id: str
+    profile_id: int = 0

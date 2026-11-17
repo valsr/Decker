@@ -472,6 +472,7 @@ class TestPageRpcs:
                 "pages": [{"page_id": P1, "name": "Page 1"}],
                 "default_page_id": P1,
                 "active_page_id": P1,
+                "profile_id": 0,
             }
         )
 
