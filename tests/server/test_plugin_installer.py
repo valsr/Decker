@@ -629,6 +629,16 @@ def test_truncated_download_fails(env, repo, tmp_path):
     assert_that(env.manager.plugins()).extracting("manifest").extracting("id").does_not_contain("com.example.tool")
 
 
+def test_download_total_deadline_fails(env, repo, tmp_path, monkeypatch):
+    root, server = repo
+    monkeypatch.setattr(installer_module, "_DOWNLOAD_DEADLINE_S", -1.0)
+
+    finished = _install_from_repo(env, _index_version(root, server, _package(tmp_path / "v.log")))
+
+    assert_that(finished["ok"]).is_false()
+    assert_that(finished["message"]).contains("took longer")
+
+
 def test_manifest_mismatch_fails(env, repo, tmp_path):
     root, server = repo
     data = _package(tmp_path / "v.log", _manifest("1.0.0"))

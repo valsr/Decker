@@ -10,7 +10,7 @@ from packaging.version import InvalidVersion, Version
 
 from decker.common import config
 from decker.common.version import is_compatible
-from decker.plugin.repository_index import IndexVersion
+from decker.plugin.repository_index import IndexVersion, latest_compatible
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
 from decker.server.repositories import RepositoryStore
@@ -41,17 +41,8 @@ class UpdateReport:
 
 
 def _latest_compatible(versions: tuple[IndexVersion, ...]) -> str | None:
-    best: tuple[Version, str] | None = None
-    for item in versions:
-        if not is_compatible(item.decker):
-            continue
-        try:
-            parsed = Version(item.version)
-        except InvalidVersion:
-            continue
-        if best is None or parsed > best[0]:
-            best = (parsed, item.version)
-    return best[1] if best else None
+    best = latest_compatible(versions)
+    return best.version if best is not None else None
 
 
 def _is_newer(candidate: str, installed: str) -> bool:

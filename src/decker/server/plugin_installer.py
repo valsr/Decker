@@ -1,10 +1,12 @@
 """Installs, upgrades and uninstalls .deckerplugin packages on the server."""
 
 import hashlib
+import http.client
 import json
 import logging
 import shutil
 import threading
+import time
 import urllib.request
 import uuid
 from collections.abc import Callable
@@ -38,6 +40,7 @@ _UNINSTALL_WAIT_S = 2.0
 _MAX_JOBS = 20
 _DOWNLOAD_CHUNK = 64 * 1024
 _DOWNLOAD_TIMEOUT_S = 20.0
+_DOWNLOAD_DEADLINE_S = 600.0
 _BUSY = "busy: another plugin install or uninstall is in progress; try again when it has finished"
 
 
@@ -186,10 +189,13 @@ class PluginInstaller:
         chunks: list[bytes] = []
         received = 0
         reported = -1
+        deadline = time.monotonic() + _DOWNLOAD_DEADLINE_S
         progress(f"Downloading {label} (0%)")
         try:
             with urllib.request.urlopen(version.url, timeout=_DOWNLOAD_TIMEOUT_S) as response:  # nosec B310
                 while received <= limit:
+                    if time.monotonic() > deadline:
+                        raise PluginInstallError(f"download took longer than {_DOWNLOAD_DEADLINE_S:g} s")
                     chunk: bytes = response.read(min(_DOWNLOAD_CHUNK, limit + 1 - received))
                     if not chunk:
                         break
@@ -199,7 +205,7 @@ class PluginInstaller:
                     if percent > reported and percent > 0:
                         reported = percent
                         progress(f"Downloading {label} ({percent}%)")
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, http.client.HTTPException) as exc:
             raise PluginInstallError(f"download failed: {exc}") from exc
         if received != version.size:
             raise PluginInstallError(f"download is {received} bytes, index says {version.size}")

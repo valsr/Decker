@@ -1,4 +1,7 @@
 import json
+import socket
+import threading
+import time
 from pathlib import Path
 from typing import Iterator
 
@@ -204,3 +207,93 @@ def test_defaults_are_spec_values_and_tests_start_empty(store: RepositoryStore) 
     defaults = yaml.safe_load((Path(config.__file__).parent / "defaults.yml").read_text())["plugin"]
     assert_that(defaults["repositories"]).is_equal_to(["https://valsr.github.io/decker-plugins/index.json"])
     assert_that(defaults["update_check"]).is_equal_to("weekly")
+
+
+def _garbage_server() -> tuple[socket.socket, str]:
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(5)
+
+    def serve() -> None:
+        while True:
+            try:
+                conn, _ = sock.accept()
+            except OSError:
+                return
+            conn.recv(4096)
+            conn.sendall(b"garbage here\r\n\r\n")
+            conn.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return sock, f"http://127.0.0.1:{sock.getsockname()[1]}/index.json"
+
+
+def test_malformed_http_response_is_a_fetch_error() -> None:
+    sock, url = _garbage_server()
+    try:
+        with pytest.raises(FetchError):
+            fetch(url, 1000)
+    finally:
+        sock.close()
+
+
+def test_garbage_repository_does_not_stop_later_ones(store: RepositoryStore, web: FixtureServer) -> None:
+    good = _publish(web, "a.json", _index("A", ["com.t.p1"]))
+    store.add(good)
+    sock, bad = _garbage_server()
+    try:
+        config.set("plugin.repositories", [bad, good])
+        _publish(web, "a.json", _index("A", ["com.t.p1", "com.t.p2"]))
+        infos = store.refresh_all()
+    finally:
+        sock.close()
+    assert_that(infos[0].error).is_not_none()
+    assert_that(infos[1].plugin_count).is_equal_to(2)
+
+
+def test_unexpected_error_is_recorded_per_repository(
+    store: RepositoryStore, web: FixtureServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url = _publish(web, "a.json", _index("A", ["com.t.p1"]))
+    store.add(url)
+
+    def boom(*_: object, **__: object) -> bytes:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("decker.server.repositories.fetch", boom)
+    infos = store.refresh_all()
+    assert_that(infos[0].error).contains("boom")
+    assert_that(infos[0].plugin_count).is_equal_to(1)
+
+
+def test_fetch_total_deadline(web: FixtureServer) -> None:
+    url = _publish(web, "a.json", _index("A", ["com.t.p1"]))
+    with pytest.raises(FetchError, match="longer than"):
+        fetch(url, 10_000, deadline=-1.0)
+
+
+def test_slow_refresh_does_not_block_readers(store: RepositoryStore, web: FixtureServer) -> None:
+    url = _publish(web, "a.json", _index("A", ["com.t.p1"]))
+    store.add(url)
+    web.delay = 1.5
+    worker = threading.Thread(target=store.refresh_all, daemon=True)
+    worker.start()
+    time.sleep(0.2)
+    started = time.monotonic()
+    assert_that(store.catalog()).is_length(1)
+    assert_that(store.list_repositories()).is_length(1)
+    assert_that(store.find("com.t.p1")).is_not_none()
+    assert_that(time.monotonic() - started).is_less_than(0.5)
+    worker.join(5)
+
+
+def test_repository_removed_during_refresh_is_not_resurrected(store: RepositoryStore, web: FixtureServer) -> None:
+    url = _publish(web, "a.json", _index("A", ["com.t.p1"]))
+    store.add(url)
+    web.delay = 1.0
+    worker = threading.Thread(target=store.refresh_all, daemon=True)
+    worker.start()
+    time.sleep(0.2)
+    store.remove(url)
+    worker.join(5)
+    assert_that(list(store._cache_dir.glob("*/index.json"))).is_empty()  # pylint: disable=protected-access
