@@ -222,3 +222,17 @@ def test_non_semver_version_rejected(version: str) -> None:
 @pytest.mark.parametrize("version", ["0.1.0", "1.2.3-beta.1", "1.0.0+build.5"])
 def test_semver_versions_accepted(version: str) -> None:
     assert_that(PluginManifest.from_dict(_counter(version=version)).version).is_equal_to(version)
+
+
+def test_page_in_global_settings_is_rejected() -> None:
+    data = copy.deepcopy(_COUNTER)
+    data["global_settings"] = [{"key": "where", "type": "page", "label": "Where"}]
+    with pytest.raises(ManifestValidationError, match="where.*page"):
+        PluginManifest.from_dict(data)
+
+
+def test_page_in_action_settings_is_accepted() -> None:
+    data = copy.deepcopy(_COUNTER)
+    data["contributes"]["actions"][0]["settings"] = [{"key": "where", "type": "page", "label": "Where"}]
+    manifest = PluginManifest.from_dict(data)
+    assert_that(manifest.actions[0].settings[0].type).is_equal_to("page")

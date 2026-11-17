@@ -9,7 +9,7 @@ from typing import Any, Literal
 from packaging.requirements import InvalidRequirement, Requirement
 
 from decker.common.appearance_schema import APPEARANCE_KEYS
-from decker.plugin.settings_schema import SettingEntry, parse_settings_schema
+from decker.plugin.settings_schema import SettingEntry, SettingField, parse_settings_schema
 
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?")
 SUPPORTED_FORMAT = 1
@@ -140,7 +140,7 @@ class PluginManifest:
             decker=_optional_str(data.get("decker")),
             runtime=runtime,
             permissions=tuple(str(p) for p in _as_list(data.get("permissions", []), "permissions")),
-            global_settings=_parse_settings(data.get("global_settings", []), "global_settings"),
+            global_settings=_parse_global_settings(data.get("global_settings", [])),
             actions=actions,
             icon_packs=packs,
         )
@@ -186,6 +186,14 @@ def _parse_settings(value: Any, where: str) -> tuple[SettingEntry, ...]:
         return parse_settings_schema(value, where)
     except ValueError as exc:
         raise ManifestValidationError(str(exc)) from exc
+
+
+def _parse_global_settings(value: Any) -> tuple[SettingEntry, ...]:
+    entries = _parse_settings(value, "global_settings")
+    for entry in entries:
+        if isinstance(entry, SettingField) and entry.type == "page":
+            raise ManifestValidationError(f"global_settings: field {entry.key!r} of type 'page' is not allowed here")
+    return entries
 
 
 def _parse_runtime(data: Any) -> RuntimeSpec:

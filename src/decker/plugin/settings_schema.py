@@ -10,14 +10,15 @@ from typing import Any
 from decker.common.icon_ref import normalize_icon_value
 from decker.common.text_style import TEXT_STYLE_DEFAULTS, normalize_text_style
 
-FIELD_TYPES = frozenset({"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style"})
+FIELD_TYPES = frozenset({"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style", "page"})
 
 _COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 _RGBA_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
     "int": ("min", "max", "step", "special_value"),
     "float": ("min", "max", "step", "decimals"),
-    "text": ("multiline",),
+    "text": ("multiline", "template"),
+    "text_style": ("template",),
     "color": ("alpha",),
     "choice": ("options",),
 }
@@ -28,6 +29,7 @@ _ZERO_VALUES: dict[str, Any] = {
     "bool": False,
     "color": "#000000",
     "font": "",
+    "page": "",
     "icon": {"ref": "", "color": "#ffffff"},
     "text_style": dict(TEXT_STYLE_DEFAULTS),
 }
@@ -83,6 +85,8 @@ def _parse_extra(type_: str, data: dict[str, Any], where: str) -> dict[str, Any]
     for name in _EXTRA_KEYS.get(type_, ()):
         if name in data:
             extra[name] = data[name]
+    if "template" in data and type_ not in ("text", "text_style"):
+        raise ValueError(f"{where}: 'template' is only valid on text and text_style fields")
     if type_ == "choice":
         extra["options"] = _parse_options(data.get("options"), where)
     for name in ("min", "max", "step", "decimals"):
@@ -94,7 +98,7 @@ def _parse_extra(type_: str, data: dict[str, Any], where: str) -> dict[str, Any]
                 raise ValueError(f"{where}: '{name}' must be an integer for an int field")
     if "special_value" in extra and not isinstance(extra["special_value"], str):
         raise ValueError(f"{where}: 'special_value' must be a string")
-    for name in ("multiline", "alpha"):
+    for name in ("multiline", "alpha", "template"):
         if name in extra and not isinstance(extra[name], bool):
             raise ValueError(f"{where}: '{name}' must be a boolean")
     return extra

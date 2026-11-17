@@ -412,3 +412,10 @@ def test_plugin_image_scale_is_clamped_to_something_sensible() -> None:
     for bad in (0.0, -1.0, 5.0):
         img = _open(compose_key_image(_appearance(background="#0000ff"), _ICON_SVG, "", plugin_image_scale=bad))
         assert_that(img.size).is_equal_to((144, 144))
+
+
+def test_appearance_title_opts_in_to_templates() -> None:
+    from decker.common.appearance_schema import APPEARANCE_SCHEMA
+
+    title = next(e for e in APPEARANCE_SCHEMA if e.get("key") == "title")
+    assert_that(title["template"]).is_true()
