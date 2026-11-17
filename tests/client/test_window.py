@@ -1,5 +1,6 @@
 """Tests for decker.client.window.MainWindow."""
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,6 +23,7 @@ from decker.client.events import (
 from decker.client.events.event_manager import EventManager
 from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
+from decker.client.widgets import plugins_tab
 from decker.client.widgets.plugins_tab import refresh_install_allowed
 from decker.client.window import MainWindow, _should_close_to_tray
 from decker.common.model import DevicePages, PageInfo
@@ -470,13 +472,26 @@ class TestDropInstall:
         event.acceptProposedAction.assert_called_once()
 
 
+def _settle_calls(window, qapp):  # pylint: disable=redefined-outer-name
+    window._call_bridge.join()  # pylint: disable=protected-access
+    qapp.processEvents()
+
+
 class TestUpdateToast:
+    @pytest.fixture(autouse=True)
+    def _allowed(self):
+        plugins_tab._install_allowed_cache = True
+        yield
+        plugins_tab._install_allowed_cache = False
+
     @staticmethod
     def _report(version="2.0.0"):
         updates = [{"id": "a.b", "name": "A", "installed": "1.0.0", "available": version}]
         return PluginUpdatesAvailableEvent(updates=updates, missing=[])
 
-    def test_toast_action_shown_for_updates(self, window, connection_manager):  # pylint: disable=redefined-outer-name
+    def test_toast_action_shown_for_updates(
+        self, window, connection_manager, qapp
+    ):  # pylint: disable=redefined-outer-name
         connection_manager.call.return_value = "job-1"
 
         window.dispatch(self._report())
@@ -486,6 +501,7 @@ class TestUpdateToast:
         assert_that(action.isHidden()).is_false()
         assert_that(action.text()).is_equal_to("Update all")
         action.click()
+        _settle_calls(window, qapp)
         connection_manager.call.assert_called_with("plugin_install_from_repository", "a.b")
 
     def test_toast_for_missing_plugins(self, window):  # pylint: disable=redefined-outer-name
@@ -506,10 +522,11 @@ class TestUpdateToast:
         window.dispatch(self._report("3.0.0"))
         assert_that(window._toast.isHidden()).is_false()  # pylint: disable=protected-access
 
-    def test_summary_toast_after_run(self, window, connection_manager):  # pylint: disable=redefined-outer-name
+    def test_summary_toast_after_run(self, window, connection_manager, qapp):  # pylint: disable=redefined-outer-name
         connection_manager.call.return_value = "job-1"
         window.dispatch(self._report())
         window._toast_action.click()  # pylint: disable=protected-access
+        _settle_calls(window, qapp)
 
         window.dispatch(
             PluginInstallFinishedEvent(
@@ -521,3 +538,42 @@ class TestUpdateToast:
             "1 plugin installed or updated"
         )  # pylint: disable=protected-access
         assert_that(window._toast_action.isHidden()).is_true()  # pylint: disable=protected-access
+
+    def test_toast_has_no_action_when_installs_are_not_allowed(self, window):  # pylint: disable=redefined-outer-name
+        plugins_tab._install_allowed_cache = False
+
+        window.dispatch(self._report())
+
+        assert_that(window._toast.text()).is_equal_to("1 plugin update available")  # pylint: disable=protected-access
+        assert_that(window._toast_action.isHidden()).is_true()  # pylint: disable=protected-access
+
+    def test_disconnect_resets_a_run_in_flight(
+        self, window, connection_manager, qapp
+    ):  # pylint: disable=redefined-outer-name
+        connection_manager.call.return_value = "job-1"
+        window.dispatch(self._report())
+        window._toast_action.click()  # pylint: disable=protected-access
+        _settle_calls(window, qapp)
+        assert_that(window._update_runner.busy).is_true()  # pylint: disable=protected-access
+
+        window.dispatch(ServerDisconnectedEvent(reason="gone"))
+
+        assert_that(window._update_runner.busy).is_false()  # pylint: disable=protected-access
+        assert_that(window._toast.text()).contains("a.b", "Interrupted")  # pylint: disable=protected-access
+
+    def test_start_call_runs_off_the_ui_thread(
+        self, window, connection_manager, qapp
+    ):  # pylint: disable=redefined-outer-name
+        threads: list[int] = []
+
+        def call(*_args):
+            threads.append(threading.get_ident())
+            return "job-1"
+
+        connection_manager.call.side_effect = call
+        window.dispatch(self._report())
+        window._toast_action.click()  # pylint: disable=protected-access
+        _settle_calls(window, qapp)
+
+        assert_that(threads).is_length(1)
+        assert_that(threads[0]).is_not_equal_to(threading.get_ident())

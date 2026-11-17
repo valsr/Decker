@@ -8,16 +8,36 @@ from typing import Any
 RESULT_OK = "ok"
 
 
+Submit = Callable[[Callable[[], Any], Callable[[Any], None]], None]
+
+
+def _run_inline(work: Callable[[], Any], done: Callable[[Any], None]) -> None:
+    try:
+        result: Any = work()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        result = exc
+    done(result)
+
+
 class UpdateRunner:
     """Runs `plugin_install_from_repository` for a list of plugin ids, one job after another.
 
-    Qt-free. Feed every `plugin_install_finished` event to `on_finished`; it may arrive before the start call
-    returns the job id, in which case it is held and replayed.
+    Qt-free. `submit(work, done)` must run `work` off the UI thread and call `done(result)` on the thread that
+    owns the runner (an exception from `work` is passed as the result); the default runs inline. Feed every
+    `plugin_install_finished` event to `on_finished`; it may arrive before the start call returns the job id, in
+    which case it is held and replayed.
     """
 
-    def __init__(self, call: Callable[..., Any], on_complete: Callable[[dict[str, str]], None] | None = None) -> None:
+    def __init__(
+        self,
+        call: Callable[..., Any],
+        on_complete: Callable[[dict[str, str]], None] | None = None,
+        submit: Submit = _run_inline,
+    ) -> None:
         self._call = call
         self._on_complete = on_complete
+        self._submit = submit
+        self._epoch: int = 0
         self._queue: deque[str] = deque()
         self._current: str | None = None
         self._job_id: str | None = None
@@ -59,35 +79,58 @@ class UpdateRunner:
         self._current = None
         self._job_id = None
 
-    def _advance(self) -> None:
-        while self._queue:
-            plugin_id = self._queue.popleft()
-            self._current, self._job_id, self._early = plugin_id, None, None
-            error = self._start(plugin_id)
-            if error is not None:
-                self.results[plugin_id] = error
-                self._current = None
-                continue
-            if self._early is not None:
-                early_job, ok, message = self._early
-                self._early = None
-                if early_job == self._job_id:
-                    self._finish_current(ok, message)
-                    continue
+    def reset(self, reason: str = "Interrupted: the connection to the server was lost") -> None:
+        """Abandon the run (e.g. after a disconnect), recording the interrupted item and reporting completion."""
+        if not self.busy:
             return
+        if self._current is not None:
+            self.results[self._current] = reason
+        self._queue.clear()
+        self._epoch += 1
+        self._current, self._job_id, self._early = None, None, None
+        self._complete()
+
+    def _advance(self) -> None:
+        if not self._queue:
+            self._complete()
+            return
+        plugin_id = self._queue.popleft()
+        self._current, self._job_id, self._early = plugin_id, None, None
+        epoch = self._epoch
+        self._submit(
+            lambda: self._call("plugin_install_from_repository", plugin_id),
+            lambda outcome: self._started(epoch, plugin_id, outcome),
+        )
+
+    def _complete(self) -> None:
         if self._on_complete is not None:
             self._on_complete(dict(self.results))
 
-    def _start(self, plugin_id: str) -> str | None:
-        """Start the job for plugin_id; returns an error text when it could not be started."""
-        try:
-            job_id = self._call("plugin_install_from_repository", plugin_id)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logging.exception("Could not start install of %s", plugin_id)
-            return f"Could not reach the server: {exc}"
-        if not isinstance(job_id, str) or not job_id:
+    def _started(self, epoch: int, plugin_id: str, outcome: Any) -> None:
+        if epoch != self._epoch or self._current != plugin_id:
+            return  # the run was reset while the call was in flight
+        error = self._start_error(plugin_id, outcome)
+        if error is not None:
+            self.results[plugin_id] = error
+            self._current = None
+            self._advance()
+            return
+        self._job_id = str(outcome)
+        if self._early is not None:
+            early_job, ok, message = self._early
+            self._early = None
+            if early_job == self._job_id:
+                self._finish_current(ok, message)
+                self._advance()
+
+    @staticmethod
+    def _start_error(plugin_id: str, outcome: Any) -> str | None:
+        """Return an error text when the job could not be started."""
+        if isinstance(outcome, Exception):
+            logging.error("Could not start install of %s: %s", plugin_id, outcome)
+            return f"Could not reach the server: {outcome}"
+        if not isinstance(outcome, str) or not outcome:
             return "Could not reach the server."
-        if job_id.startswith("error:"):
-            return job_id.removeprefix("error:").strip() or "Install refused."
-        self._job_id = job_id
+        if outcome.startswith("error:"):
+            return outcome.removeprefix("error:").strip() or "Install refused."
         return None

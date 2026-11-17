@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 
 from decker.client import config as client_config
 from decker.client.assets import ICON_PATH
+from decker.client.call_bridge import CallBridge
 from decker.client.connection_manager import ConnectionManager
 from decker.client.context import AppContext
 from decker.client.events import (
@@ -85,8 +86,9 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         self._toast_action: QPushButton = QPushButton(self)
         self._toast_serial: int = 0
         self._last_updates_key: tuple[Any, ...] | None = None
+        self._call_bridge: CallBridge = CallBridge(self)
         self._update_runner: UpdateRunner = UpdateRunner(
-            connection_manager.call, on_complete=self._on_update_run_complete
+            connection_manager.call, on_complete=self._on_update_run_complete, submit=self._call_bridge.submit
         )
         # Created before the window's own handlers so it observes events the window consumes.
         self._settings_dialog: SettingsDialog = SettingsDialog(self)
@@ -250,6 +252,7 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         if self._active != ViewName.CONNECTING:
             self._last_view = self._active
         self.switch_to(ViewName.CONNECTING)
+        self._update_runner.reset()
         return True
 
     def _on_server_connected(self, _event: ServerConnectedEvent) -> bool:
@@ -334,7 +337,7 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         self._toast.move(12, self.height() - self._toast.height() - 12)
         self._toast.show()
         self._toast_action.hide()
-        if action_text and plugin_ids:
+        if action_text and plugin_ids and install_allowed():
             ids = list(plugin_ids)
             self._toast_action.setText(action_text)
             self._toast_action.adjustSize()
