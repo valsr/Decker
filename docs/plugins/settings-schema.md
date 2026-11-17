@@ -16,14 +16,15 @@ and stored as `null`), `placeholder`, `help`.
 |------|------------|-------|
 | `int` | `min`, `max`, `step`, `special_value` (text shown at `min`, e.g. "no limit") | integer |
 | `float` | `min`, `max`, `step`, `decimals` | finite number |
-| `text` | `multiline`, `template` (boolean, default `false`: expand `{page_name}`, `{page_index}`, `{page_count}` before delivery; `{{`/`}}` are literal braces, unknown names stay as typed) | string |
+| `text` | `multiline`, `template` (boolean, default `false`: expand `{page_name}`, `{page_index}`, `{page_count}`, `{current_profile}`, `{profile_id}` before delivery; `{{`/`}}` are literal braces, unknown names stay as typed) | string |
 | `bool` | | boolean |
 | `choice` | `options`: `[{ "label": "...", "value": ... }]` (non-empty) | one of the option values |
 | `color` | `alpha` (boolean; when `true` the picker has an opacity slider and `#rrggbbaa` is also valid, alpha last) | `#rrggbb` (or `#rrggbbaa`) |
 | `font` | | font family name |
 | `icon` | | an object, see [Icon](#icon); `default` may be partial |
 | `text_style` | `template` (as for `text`; only its `text`) | an object, see [Text style](#text-style); `default` may be partial |
-| `page` | | a page of the key's device: stored as its page id (string, default `""`), delivered as `{"page_id", "name", "index"}`; action settings only, not allowed in `global_settings` |
+| `page` | `profile_field` (key of a `profile` field of the same schema: the dropdown then lists that profile's pages; blank or absent: the key's own profile) | a page of the key's device: stored as its page id (string, default `""`), delivered as `{"page_id", "name", "index", "profile_id"}` (`index` is 1-based within its profile; `profile_id` is `-1` when the page is gone); action settings only, not allowed in `global_settings` |
+| `profile` | | a profile of the key's device: stored as the decimal profile id (`""`, the default, follows the current profile), delivered as `{"profile_id", "name", "index", "icon"}` (`index` is the 1-based dropdown position, `icon` an icon ref, `decker:logo` for the Decker icon; an unset or deleted profile arrives as `{"profile_id": -1, "name": "", "index": 0, "icon": ""}`). Profile ids are small per-device integers and are **reused** after a profile is deleted, so a stored id can later mean a new profile; action settings only, not allowed in `global_settings` |
 
 ## Text style
 
