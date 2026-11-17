@@ -226,3 +226,28 @@ class TestDeviceManagerPages:
         assert_that(store.get_key_label("dev1", "p-active", 0)).is_none()
         assert_that(store.get_key_label("dev1", "other", 0)).is_equal_to("y")
         store.destroy()
+
+
+class TestBlankKey:
+    def test_clears_the_cached_state_and_the_hardware_key(self, tmp_path):
+        helper = TestDeviceManagerPages()
+        dm, store = helper._manager_with_store(tmp_path, "p1")  # pylint: disable=protected-access
+        device = helper._open(dm, _make_deck("ABC123"))  # pylint: disable=protected-access
+        assert device is not None
+        store.save_key_label(device.device_id, "p1", 2, "Two")
+        state = dm.get_device_state(device.device_id)
+        assert state is not None
+        state.update_key_label(2, "Two")
+
+        with patch.object(device, "clear_key_image") as clear_image:
+            dm.blank_key(device.device_id, 2)
+
+        clear_image.assert_called_once_with(2)
+        assert_that(store.get_key_label(device.device_id, "p1", 2)).is_none()
+        store.destroy()
+
+    def test_unavailable_device_is_a_no_op(self):
+        dm = _manager()
+        with patch("decker.server.devices.manager._HardwareDeviceManager") as mock_dm:
+            mock_dm.return_value.enumerate.return_value = []
+            dm.blank_key("nope", 0)
