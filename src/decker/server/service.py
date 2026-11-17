@@ -484,6 +484,27 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         return True
 
     @exposed
+    def key_preview(self, device_id: str, page_id: str, key_index: int, appearance_json: str) -> str:
+        """
+        Compose a live key with a draft appearance without saving or showing it.
+
+        Returns:
+            str: base64 PNG, or "" if the key is unassigned, not live or the draft is invalid.
+        """
+        if self._context is None:
+            return ""
+        try:
+            raw = json.loads(appearance_json)
+        except ValueError:
+            return ""
+        assignment = self._context.key_assignment_store.get(device_id, page_id, key_index)
+        if not isinstance(raw, dict) or assignment is None:
+            return ""
+        draft = {k: v for k, v in raw.items() if k in APPEARANCE_KEYS}
+        image = self._context.plugin_manager.preview_image(assignment.target, draft)
+        return base64.b64encode(image).decode("ascii") if image else ""
+
+    @exposed
     @api_response
     def pages_list(self, device_id: str) -> DevicePages | None:
         """Return the device's pages in order, its default page and the page shown on the device."""

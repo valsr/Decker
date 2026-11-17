@@ -617,6 +617,33 @@ class TestIconOverride:
         assert_that(env.image()).is_equal_to(_BARE_COUNTER)
 
 
+class TestPreviewImage:
+    def test_draft_appearance_is_composed_without_changing_the_key(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+        live_image = env.image()
+        sent = list(env.dm.hardware_images)
+
+        preview = env.manager.preview_image(COUNTER_TARGET, {"background": "#ff0000"})
+
+        assert preview is not None
+        assert_that(_pixel(preview, 5, 5)).is_equal_to((255, 0, 0))
+        assert_that(env.image()).is_equal_to(live_image)
+        assert_that(env.dm.hardware_images).is_equal_to(sent)
+        assert_that(env.manager._live["ctx-1"].appearance).is_not_equal_to(  # pylint: disable=protected-access
+            {"background": "#ff0000"}
+        )
+
+    def test_draft_icon_override_is_previewed(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+
+        preview = env.manager.preview_image(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#ff0000"}})
+
+        assert_that(_pixel(preview, 72, 72)).is_equal_to((255, 0, 0))
+
+    def test_not_live_returns_none(self, env):
+        assert_that(env.manager.preview_image(COUNTER_TARGET, {})).is_none()
+
+
 class TestSetImageIcon:
     def test_icon_reference_composes_the_pack_icon_in_the_colour(self, env, tmp_path):
         _icon_env(env, tmp_path)
