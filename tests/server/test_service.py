@@ -7,10 +7,13 @@ import pytest
 from assertpy import assert_that
 
 from decker.plugin.events import PluginLoadFailedEvent
+from decker.plugin.repository_index import IndexPlugin, IndexVersion
 from decker.plugin.target import ActionTarget
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.page_controller import PageController
 from decker.server.pages import PageStore, initial_page_id
+from decker.server.plugin_installer import PluginInstallError
+from decker.server.repositories import CatalogEntry, RepositoryError, RepositoryInfo
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
 
@@ -468,3 +471,118 @@ class TestIconPackRpcs:
         assert_that(json.loads(svc.iconpacks_list())).is_equal_to([])
         assert_that(json.loads(svc.iconpack_icons("p"))).is_equal_to([])
         assert_that(svc.iconpack_icon("p", "a.png")).is_equal_to("")
+
+
+def _version(version: str, decker: str | None = None) -> IndexVersion:
+    return IndexVersion(
+        version=version,
+        decker=decker,
+        url=f"https://example.com/{version}.deckerplugin",
+        size=10,
+        sha256="0" * 64,
+        released="2026-01-01",
+        contributes={"actions": ["a"]},
+    )
+
+
+def _entry(*versions: IndexVersion) -> CatalogEntry:
+    plugin = IndexPlugin(
+        id="com.repo",
+        name="Repo Plugin",
+        author="me",
+        description="d",
+        category="misc",
+        homepage="",
+        icon_url=None,
+        versions=tuple(versions),
+    )
+    return CatalogEntry(plugin=plugin, repository_url="https://example.com/index.json", shadowed_by=None)
+
+
+@pytest.fixture()
+def repo_service(store, manager):
+    ctx = _make_context(manager, store)
+    ctx.repository_store = MagicMock()
+    ctx.update_checker = MagicMock()
+    ctx.plugin_installer = MagicMock()
+    manager.plugins.return_value = []
+    DeckerService.configure_context(ctx)
+    return DeckerService(), ctx
+
+
+class TestRepositoryRpcs:
+    def test_list_add_remove(self, repo_service):
+        svc, ctx = repo_service
+        ctx.repository_store.list_repositories.return_value = [RepositoryInfo("u", "n", 2, 1.0, None)]
+        assert_that(svc.repositories_list()).is_equal_to(
+            [{"url": "u", "name": "n", "plugin_count": 2, "last_checked": 1.0, "error": None}]
+        )
+        with patch.object(DeckerService, "_install_allowed", return_value=True):
+            assert_that(svc.repository_add("u")).is_equal_to("")
+            ctx.repository_store.add.side_effect = RepositoryError("bad")
+            assert_that(svc.repository_add("u")).is_equal_to("bad")
+            ctx.repository_store.remove.return_value = True
+            assert_that(svc.repository_remove("u")).is_true()
+
+    def test_catalog_icon_and_updates(self, repo_service, manager):
+        svc, ctx = repo_service
+        installed = MagicMock()
+        installed.manifest.id = "com.repo"
+        installed.manifest.version = "1.0"
+        manager.plugins.return_value = [installed]
+        ctx.repository_store.catalog.return_value = [_entry(_version("1.0"), _version("2.0"), _version("3.0", ">=999"))]
+        item = svc.repository_catalog()[0]
+        assert_that(item["installed_version"]).is_equal_to("1.0")
+        assert_that(item["latest_compatible"]).is_equal_to("2.0")
+        assert_that([v["compatible"] for v in item["versions"]]).is_equal_to([True, True, False])
+        ctx.repository_store.icon.return_value = b"png"
+        assert_that(svc.repository_icon("com.repo")).is_equal_to("cG5n")
+        ctx.repository_store.icon.return_value = None
+        assert_that(svc.repository_icon("x")).is_equal_to("")
+        payload: dict[str, list] = {"updates": [], "missing": []}
+        ctx.update_checker.check_now.return_value.to_payload.return_value = payload
+        ctx.update_checker.report.return_value.to_payload.return_value = payload
+        assert_that(svc.repositories_check()).is_equal_to(payload)
+        assert_that(svc.plugin_updates()).is_equal_to(payload)
+
+    def test_schedule(self, repo_service):
+        svc, ctx = repo_service
+        ctx.update_checker.schedule.return_value = "weekly"
+        assert_that(svc.update_check_schedule()).is_equal_to("weekly")
+        with patch.object(DeckerService, "_install_allowed", return_value=True):
+            assert_that(svc.update_check_set_schedule("daily")).is_true()
+            ctx.update_checker.set_schedule.side_effect = ValueError("x")
+            assert_that(svc.update_check_set_schedule("nope")).is_false()
+
+    def test_install_from_repository_latest_and_busy(self, repo_service):
+        svc, ctx = repo_service
+        ctx.repository_store.find.return_value = _entry(_version("1.0"), _version("2.0"))
+        ctx.plugin_installer.install_from_repository.return_value = "job1"
+        with patch.object(DeckerService, "_install_allowed", return_value=True):
+            assert_that(svc.plugin_install_from_repository("com.repo")).is_equal_to("job1")
+            assert_that(ctx.plugin_installer.install_from_repository.call_args.args[1].version).is_equal_to("2.0")
+            ctx.plugin_installer.install_from_repository.side_effect = PluginInstallError("busy")
+            assert_that(svc.plugin_install_from_repository("com.repo", "1.0")).is_equal_to("error: busy")
+            ctx.repository_store.find.return_value = None
+            assert_that(svc.plugin_install_from_repository("zzz")).starts_with("error:")
+
+    def test_install_incompatible_version_refused(self, repo_service):
+        svc, ctx = repo_service
+        ctx.repository_store.find.return_value = _entry(_version("1.0"), _version("3.0", ">=999"))
+        with patch.object(DeckerService, "_install_allowed", return_value=True):
+            result = svc.plugin_install_from_repository("com.repo", "3.0")
+        assert_that(result).starts_with("error:")
+        ctx.plugin_installer.install_from_repository.assert_not_called()
+
+    def test_mutating_repository_rpcs_refused_for_remote_peer(self, repo_service):
+        svc, ctx = repo_service
+        svc._peer_host = "203.0.113.5"  # pylint: disable=protected-access
+        with patch("decker.server.service.config.get_as_or_default", return_value=False):
+            assert_that(svc.repository_add("u")).is_not_empty()
+            assert_that(svc.repository_remove("u")).is_false()
+            assert_that(svc.update_check_set_schedule("daily")).is_false()
+            assert_that(svc.plugin_install_from_repository("com.repo")).starts_with("error:")
+        ctx.repository_store.add.assert_not_called()
+        ctx.repository_store.remove.assert_not_called()
+        ctx.update_checker.set_schedule.assert_not_called()
+        ctx.plugin_installer.install_from_repository.assert_not_called()

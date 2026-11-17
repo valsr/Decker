@@ -22,8 +22,10 @@ from decker.server.page_controller import PageController
 from decker.server.pages import PageStore
 from decker.server.plugin_installer import PluginInstaller
 from decker.server.plugins import PluginManager
+from decker.server.repositories import RepositoryStore
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
+from decker.server.update_checker import UpdateChecker
 
 
 class ServerProcess:
@@ -239,6 +241,13 @@ class ServerProcess:
                 state_store.delete_all_key_state()
 
         ctx.plugin_installer = PluginInstaller(decker_paths.plugins(), ctx, decker_version())
+        ctx.repository_store = RepositoryStore(decker_paths.repositories())
+        ctx.update_checker = UpdateChecker(
+            ctx.repository_store,
+            ctx.plugin_manager,
+            ctx.key_assignment_store,
+            lambda event, payload: ctx.event_bus.push(event, json.dumps(payload)),
+        )
         self._restore_devices(device_id_filter=matched_device_id)
 
         server = ThreadPoolServer(
@@ -250,9 +259,11 @@ class ServerProcess:
         self._context.server = server
         DeckerService.configure_context(self._context)
         logging.info("RPyC server listening on %s:%d", self.host, self.port)
+        ctx.update_checker.start()
         try:
             server.start()
         finally:
+            ctx.update_checker.stop()
             for manager in reversed(managers):
                 self._try_destroy_manager(manager)
         # Normal return -> subprocess exits with code 0 (intentional stop)
