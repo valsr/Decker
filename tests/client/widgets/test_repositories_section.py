@@ -146,3 +146,21 @@ def test_controls_disabled_when_not_allowed(manager, qapp):
     assert_that(widget._add_btn.isEnabled()).is_false()
     assert_that(widget._remove_btn.isEnabled()).is_false()
     assert_that(widget._schedule.isEnabled()).is_false()
+
+
+def test_check_when_not_connected_restores_controls(section):
+    AppContext.get().connection_manager = None
+    section._check_btn.click()
+
+    assert_that(section._check_btn.isEnabled()).is_true()
+    assert_that(section._status.text()).is_equal_to("Not connected to the server.")
+
+
+def test_failed_schedule_change_reverts_combo(section, manager, qapp):
+    manager.answers["update_check_set_schedule"] = False
+    section._schedule.setCurrentText("Daily")
+    _settle(section, qapp)
+    _settle(section, qapp)
+
+    assert_that(section._schedule.currentText()).is_equal_to("Monthly")
+    assert_that(section._status.text()).is_equal_to("Could not change the schedule.")

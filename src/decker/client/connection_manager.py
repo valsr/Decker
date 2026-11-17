@@ -34,7 +34,7 @@ from decker.common.model import DeviceHardwareInfo, DevicePages, KeyInfo, PageIn
 
 _RETRY_INTERVAL_S = 3.0
 _HEARTBEAT_INTERVAL_S = 5.0
-_LONG_CALL_TIMEOUTS: dict[str, float] = {"plugin_install": 120.0}
+_LONG_CALL_TIMEOUTS: dict[str, float] = {"plugin_install": 120.0, "repositories_check": 120.0, "repository_add": 60.0}
 
 
 class ServerState(StrEnum):
