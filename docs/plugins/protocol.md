@@ -26,7 +26,7 @@ discarded.
 
 | Event | Context | Payload |
 |-------|---------|---------|
-| `hello` | | `{"protocol": 1, "decker_version": "0.2.0", "plugin_id": "com.example.hello", "global_settings": {...}}` (first message) |
+| `hello` | | `{"protocol": 1, "decker_version": "0.3.0", "plugin_id": "com.example.hello", "global_settings": {...}}` (first message) |
 | `will_appear` | yes | `{"action": "<action id>", "device": "<device id>", "key": {"index": 0, "column": 0, "row": 0}, "settings": {...}, "state": 0}` |
 | `will_disappear` | yes | none |
 | `key_down`, `key_up` | yes | none (raw key events) |
