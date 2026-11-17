@@ -20,6 +20,7 @@ _FailureCallback = Callable[[str, str], None]
 class _Pack:
     plugin_id: str
     plugin_name: str
+    plugin_version: str
     name: str
     description: str
     root: Path
@@ -48,7 +49,9 @@ class IconPackRegistry:
                     self._on_failure(plugin_id, f"icon pack {spec.id}: {error}")
                 continue
             with self._lock:
-                self._packs[spec.id] = _Pack(plugin_id, plugin.manifest.name, spec.name, spec.description, root)
+                self._packs[spec.id] = _Pack(
+                    plugin_id, plugin.manifest.name, plugin.manifest.version, spec.name, spec.description, root
+                )
 
     def unregister(self, plugin_id: str) -> None:
         """Drop every pack the plugin contributed."""
@@ -66,6 +69,7 @@ class IconPackRegistry:
                 "description": pack.description,
                 "plugin_id": pack.plugin_id,
                 "plugin_name": pack.plugin_name,
+                "plugin_version": pack.plugin_version,
                 "icon_count": len(self._icons_of(pack)),
             }
             for pack_id, pack in sorted(packs, key=lambda item: item[1].name)
