@@ -2,11 +2,13 @@
 
 # pylint: disable=protected-access,unused-argument
 import base64
+import json
 from typing import Any
 
 from assertpy import assert_that
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from decker.client.icon_cache import IconThumbnailCache
 from decker.client.widgets.icon_edit import IconEdit
 
 _CURRENT = (
@@ -15,21 +17,30 @@ _CURRENT = (
 _REF = "pack:com.x.p/house.svg"
 
 
+_PACKS = [{"id": "com.x.p", "name": "Pack", "plugin_id": "com.x", "plugin_version": "1.0.0"}]
+
+
 class FakeRpc:
-    def __init__(self, svg: bytes | None = _CURRENT) -> None:
+    def __init__(self, svg: bytes | None = _CURRENT, packs: list | None = None) -> None:
         self.svg = svg
+        self.packs = packs
         self.calls: list[tuple[Any, ...]] = []
 
     def call(self, method: str, *args: Any) -> str | None:
         self.calls.append((method, *args))
         if method == "iconpack_icon" and self.svg is not None:
             return base64.b64encode(self.svg).decode()
+        if method == "iconpacks_list" and self.packs is not None:
+            return json.dumps(self.packs)
         return None
 
+    def methods(self, name: str) -> list[tuple[Any, ...]]:
+        return [c for c in self.calls if c[0] == name]
 
-def _edit(rpc: FakeRpc | None = None) -> IconEdit:
+
+def _edit(rpc: FakeRpc | None = None, cache: IconThumbnailCache | None = None) -> IconEdit:
     fake = rpc if rpc is not None else FakeRpc()
-    return IconEdit(lambda: fake)
+    return IconEdit(lambda: fake, cache=cache)
 
 
 def _centre(edit: IconEdit) -> tuple[int, int, int, int]:
@@ -200,3 +211,107 @@ class TestIconEdit:
             assert_that(rpc.calls).is_not_empty()
         finally:
             AppContext.get().connection_manager = None
+
+
+class TestIconEditCache:
+    def _cache(self, root, versioned: bool = True) -> IconThumbnailCache:
+        cache = IconThumbnailCache(root)
+        if versioned:
+            cache.update_packs(_PACKS)
+        return cache
+
+    def test_cached_preview_makes_no_rpc_at_all(self, qapp, tmp_path):
+        warm = self._cache(tmp_path / "c")
+        first = _edit(FakeRpc(packs=_PACKS), warm)
+        first.set_value({"ref": _REF, "color": "#ff0000"})
+        rpc = FakeRpc(packs=_PACKS)
+
+        second = _edit(rpc, warm)
+        second.set_value({"ref": _REF, "color": "#ff0000"})
+
+        assert_that(rpc.calls).is_empty()
+        assert_that(_centre(second)).is_equal_to((255, 0, 0, 255))
+
+    def test_first_preview_lists_packs_once_then_caches(self, qapp, tmp_path):
+        rpc = FakeRpc(packs=_PACKS)
+        edit = _edit(rpc, self._cache(tmp_path / "c", versioned=False))
+
+        edit.set_value({"ref": _REF, "color": "#ff0000"})
+        edit.set_value({"ref": "pack:com.x.p/other.svg", "color": "#ff0000"})
+
+        assert_that(rpc.methods("iconpacks_list")).is_length(1)
+        assert_that(rpc.methods("iconpack_icon")).is_length(2)
+        assert_that(list((tmp_path / "c").rglob("*.png"))).is_length(2)
+
+    def test_second_edit_in_a_new_process_hits_the_disk_cache(self, qapp, tmp_path):
+        first = _edit(FakeRpc(packs=_PACKS), self._cache(tmp_path / "c", versioned=False))
+        first.set_value({"ref": _REF, "color": "#ff0000"})
+        rpc = FakeRpc(packs=_PACKS)
+
+        second = _edit(rpc, IconThumbnailCache(tmp_path / "c"))  # knows no versions yet
+        second.set_value({"ref": _REF, "color": "#ff0000"})
+
+        assert_that(rpc.methods("iconpack_icon")).is_empty()
+        assert_that(rpc.methods("iconpacks_list")).is_length(1)
+        assert_that(_centre(second)).is_equal_to((255, 0, 0, 255))
+
+    def test_colour_change_is_a_separate_cache_entry_without_refetching_the_icon(self, qapp, tmp_path):
+        rpc = FakeRpc(packs=_PACKS)
+        edit = _edit(rpc, self._cache(tmp_path / "c", versioned=False))
+        edit.set_value({"ref": _REF, "color": "#ff0000"})
+
+        edit._colour.set_color("#0000ff")
+        edit._on_colour_changed("#0000ff")
+
+        assert_that(rpc.methods("iconpack_icon")).is_length(1)
+        assert_that(_centre(edit)).is_equal_to((0, 0, 255, 255))
+        assert_that(list((tmp_path / "c").rglob("*.png"))).is_length(2)
+
+    def test_older_server_without_plugin_version_still_previews_and_writes_nothing(self, qapp, tmp_path):
+        legacy = [{k: v for k, v in pack.items() if k != "plugin_version"} for pack in _PACKS]
+        edit = _edit(FakeRpc(packs=legacy), self._cache(tmp_path / "c", versioned=False))
+
+        edit.set_value({"ref": _REF, "color": "#ff0000"})
+
+        assert_that(_centre(edit)).is_equal_to((255, 0, 0, 255))
+        assert_that(list((tmp_path / "c").rglob("*"))).is_empty()
+
+    def test_failed_pack_list_does_not_break_the_preview(self, qapp, tmp_path):
+        edit = _edit(FakeRpc(packs=None), self._cache(tmp_path / "c", versioned=False))  # iconpacks_list -> None
+
+        edit.set_value({"ref": _REF, "color": "#ff0000"})
+
+        assert_that(_centre(edit)).is_equal_to((255, 0, 0, 255))
+        assert_that(list((tmp_path / "c").rglob("*.png"))).is_empty()
+
+    def test_unreadable_icon_is_not_cached(self, qapp, tmp_path):
+        edit = _edit(FakeRpc(svg=None, packs=_PACKS), self._cache(tmp_path / "c", versioned=False))
+
+        edit.set_value({"ref": _REF, "color": "#ff0000"})
+
+        assert_that(edit._name.text()).is_equal_to("house")
+        assert_that(list((tmp_path / "c").rglob("*.png"))).is_empty()
+
+    def test_cache_failure_does_not_break_the_preview(self, qapp, tmp_path):
+        class Broken(IconThumbnailCache):
+            def get(self, *args, **kwargs):
+                raise OSError("disk on fire")
+
+            def put(self, *args, **kwargs):
+                raise OSError("disk on fire")
+
+            def update_packs(self, *args, **kwargs):
+                raise OSError("disk on fire")
+
+        edit = _edit(FakeRpc(packs=_PACKS), Broken(tmp_path / "c"))
+
+        edit.set_value({"ref": _REF, "color": "#ff0000"})
+
+        assert_that(_centre(edit)).is_equal_to((255, 0, 0, 255))
+
+    def test_no_connection_does_not_list_packs_or_crash(self, qapp, tmp_path):
+        edit = IconEdit(lambda: None, cache=self._cache(tmp_path / "c", versioned=False))
+
+        edit.set_value({"ref": _REF, "color": "#ff0000"})
+
+        assert_that(edit._name.text()).is_equal_to("house")

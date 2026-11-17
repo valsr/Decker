@@ -1,5 +1,7 @@
 """Settings control for an icon: preview, name, Browse…, clear and a fill colour."""
 
+import json
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QToolButton, QWidg
 
 from decker.client.action_icons import decode_icon, placeholder_pixmap
 from decker.client.context import AppContext
+from decker.client.icon_cache import IconThumbnailCache, icon_cache
 from decker.client.icon_picker import IconBrowserDialog, RpcCaller
 from decker.client.widgets.color_button import ColorButton
 from decker.common.icon_ref import make_icon_ref, normalize_icon_value, parse_icon_ref
@@ -26,9 +29,16 @@ class IconEdit(QWidget):
 
     value_changed = pyqtSignal()
 
-    def __init__(self, rpc: Callable[[], RpcCaller | None] | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        rpc: Callable[[], RpcCaller | None] | None = None,
+        parent: QWidget | None = None,
+        cache: IconThumbnailCache | None = None,
+    ) -> None:
         super().__init__(parent)
         self._rpc = rpc or _app_rpc
+        self._cache = cache if cache is not None else icon_cache()
+        self._packs_listed = False
         self._ref = ""
         self._color = "#ffffff"
         self._raw: dict[str, str] = {}
@@ -97,16 +107,57 @@ class IconEdit(QWidget):
             blank = QPixmap(_PREVIEW_SIZE, _PREVIEW_SIZE)
             blank.fill(Qt.GlobalColor.transparent)
             return blank
+        pack_id, path = parsed
+        self._ensure_versions(pack_id)
+        cached = self._cache_get(pack_id, path)
+        if cached is not None:
+            return cached
         raw = self._raw_icon(parsed)
         pixmap = decode_icon(raw, self._color) if raw else None
         if pixmap is None:
-            return placeholder_pixmap(parsed[1], _PREVIEW_SIZE)
-        return pixmap.scaled(
+            return placeholder_pixmap(path, _PREVIEW_SIZE)  # a letter tile, never cached
+        thumb = pixmap.scaled(
             _PREVIEW_SIZE,
             _PREVIEW_SIZE,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        self._cache_put(pack_id, path, thumb)
+        return thumb
+
+    def _ensure_versions(self, pack_id: str) -> None:
+        """Learn the packs' plugin versions (one RPC per control) so thumbnails can be cached by version."""
+        if self._packs_listed or self._cache_version(pack_id) is not None:
+            return
+        rpc = self._rpc()
+        if rpc is None:
+            return
+        self._packs_listed = True
+        try:
+            packs = json.loads(rpc.call("iconpacks_list") or "null")
+            if isinstance(packs, list):
+                self._cache.update_packs(packs)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logging.debug("Could not list icon packs for the thumbnail cache", exc_info=True)
+
+    def _cache_version(self, pack_id: str) -> str | None:
+        try:
+            return self._cache.version_of(pack_id)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+
+    def _cache_get(self, pack_id: str, path: str) -> QPixmap | None:
+        try:
+            return self._cache.get(pack_id, path, _PREVIEW_SIZE, self._color)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logging.warning("Icon thumbnail cache lookup failed", exc_info=True)
+            return None
+
+    def _cache_put(self, pack_id: str, path: str, pixmap: QPixmap) -> None:
+        try:
+            self._cache.put(pack_id, path, _PREVIEW_SIZE, self._color, pixmap)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logging.warning("Icon thumbnail cache store failed", exc_info=True)
 
     def _raw_icon(self, parsed: tuple[str, str]) -> str | None:
         ref = make_icon_ref(*parsed)
