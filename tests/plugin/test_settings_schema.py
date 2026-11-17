@@ -211,3 +211,37 @@ def test_apply_schema_text_style_returns_copy() -> None:
 def test_text_style_round_trips_through_schema_to_json() -> None:
     schema = _text_style_schema({"position": "top"})
     assert_that(parse_settings_schema(schema_to_json(schema), "t")).is_equal_to(schema)
+
+
+def _color_schema(**extra: Any) -> tuple[Any, ...]:
+    return parse_settings_schema([{"key": "c", "type": "color", "label": "C", **extra}], "t")
+
+
+def test_color_alpha_accepts_rrggbbaa() -> None:
+    schema = _color_schema(alpha=True, default="#11223380")
+    assert_that(schema[0].default).is_equal_to("#11223380")
+    assert_that(apply_schema(schema, {"c": "#aabbccdd"})["c"]).is_equal_to("#aabbccdd")
+    assert_that(apply_schema(schema, {"c": "#aabbcc"})["c"]).is_equal_to("#aabbcc")
+
+
+def test_color_without_alpha_rejects_rrggbbaa() -> None:
+    with pytest.raises(ValueError, match="default"):
+        _color_schema(default="#11223380")
+    schema = _color_schema(default="#112233")
+    assert_that(apply_schema(schema, {"c": "#aabbccdd"})["c"]).is_equal_to("#112233")
+
+
+def test_color_alpha_must_be_boolean() -> None:
+    with pytest.raises(ValueError, match="alpha"):
+        _color_schema(alpha="yes")
+
+
+def test_color_alpha_round_trips_through_schema_to_json() -> None:
+    schema = _color_schema(alpha=True)
+    assert_that(schema_to_json(schema)[0]).contains_entry({"alpha": True})
+    assert_that(parse_settings_schema(schema_to_json(schema), "t")).is_equal_to(schema)
+
+
+def test_color_alpha_garbage_falls_back_to_default() -> None:
+    schema = _color_schema(alpha=True, default="#112233")
+    assert_that(apply_schema(schema, {"c": "#1122334"})["c"]).is_equal_to("#112233")
