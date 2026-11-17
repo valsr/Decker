@@ -24,6 +24,7 @@ from decker.client.events import (
     PluginLoadFailedEvent,
     PluginsChangedEvent,
     PluginUpdatesAvailableEvent,
+    RepositoriesCheckFinishedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
 )
@@ -602,6 +603,15 @@ class TestPageRefresh:  # pylint: disable=protected-access
         assert isinstance(event, PluginUpdatesAvailableEvent)
         assert_that(event.updates).is_equal_to(payload["updates"])
         assert_that(event.missing).is_equal_to([])
+
+    def test_check_finished_event_routed(self):
+        payload = {"repositories": [{"url": "u", "name": "N", "plugin_count": 1, "last_checked": 1.0, "error": None}]}
+        self.manager._on_server_event(
+            "repositories_check_finished", json.dumps(payload)
+        )  # pylint: disable=protected-access
+        (event,) = EventManager.get().drain()
+        assert isinstance(event, RepositoriesCheckFinishedEvent)
+        assert_that(event.repositories).is_equal_to(payload["repositories"])
 
     def test_updates_fetched_on_connect(self):
         conn = _healthy_conn()
