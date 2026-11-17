@@ -17,7 +17,12 @@ single unnamed profile; this story names it and lets the user add more.
 ## Goals
 
 - **Data:** a device has one or more profiles. Each profile owns an ordered list of pages and its own default page. A new
-  profile starts with one page, `Page 1`. Names default to `Profile N` (first unused N).
+  profile starts with one page, `Page 1`.
+- **Profile ids** are small integers, unique per device, and assigned as the **lowest unused id starting at 0**: a device's first
+  profile is `0`, adding two profiles gives `1` and `2`; deleting `1` and adding another reuses `1`. The id is not the display
+  order: the dropdown lists profiles in the order they were added, so that sequence reads `Default (0)`, `Profile 2`,
+  `Profile 1`. The first profile is named `Default`; new ones are named `Profile <id>` (so the reused id 1 is `Profile 1` again;
+  the name is only a default and can be edited).
 - **Switching:** activating a profile hides the current page's actions, makes the profile active and shows **its default
   page**. The active profile is persisted per device and restored at server start (the active *page* is not: a start shows the
   profile's default page, as today).
@@ -27,14 +32,13 @@ single unnamed profile; this story names it and lets the user add more.
 - **Edit profile dialog:** name, icon (default: the Decker icon), **Delete** (confirmation warns that its pages and keys are
   deleted too), **Clone**. The last profile of a device cannot be deleted. Deleting the active profile first switches to a
   neighbour (next, else previous), like pages.
-- **Clone:** copies the name (`<name> copy`, uniquified), icon, pages (names, order, default page) and every key assignment with
+- **Clone:** takes the next free profile id, copies the name (`<name> copy`, uniquified), icon, pages (names, order, default page) and every key assignment with
   its settings and appearance. Each copied key gets a fresh action instance (new context id) so no plugin state is shared; the
   clone does not become active.
-- **Variables:** `{current_profile}` (profile name) and `{profile_id}` (1-based position in the dropdown; a raw id would be
-  unreadable on a key). Same rules as the page variables: opt-in `template` fields, unknown names stay, live refresh when a
+- **Variables:** `{current_profile}` (profile name) and `{profile_id}` (the profile's id on its device, e.g. `0`, `1`, `2`). Same rules as the page variables: opt-in `template` fields, unknown names stay, live refresh when a
   profile is renamed, added, deleted or switched.
 - **Plugin settings types** (alongside `page`): `profile` (dropdown of the key's device profiles; stored as the profile id,
-  `""` = follow the current profile; delivered resolved as `{profile_id, name, index, icon}`). The `page` type gains an optional
+  `""` = follow the current profile; the id is the decimal string of the integer id; delivered resolved as `{profile_id, name, index, icon}`). The `page` type gains an optional
   schema key `"profile_field": "<key of a profile field>"`: its dropdown lists the pages of the profile chosen in that field
   (the current profile when it is blank), and the resolved value gains `profile_id`. Both are action settings only.
 - **Protocol / SDK:** plugin to server `switch_page` accepts a page of any profile of the device (`{"page_id"}` already
@@ -56,6 +60,9 @@ single unnamed profile; this story names it and lets the user add more.
 
 ## Anti-goals
 
+- Surprise from id reuse: a stored `profile` setting holds the id, so after profile `1` is deleted, a key that pointed at it
+  follows the *new* profile `1`. This is the accepted consequence of reusing ids (page ids are never reused); the plugin's
+  resolved value always carries the current name.
 - Losing or rewriting existing keys on upgrade; breaking stored `page` settings.
 - A profile switch that deadlocks the page controller / plugin manager (keep the lock order the page switch already uses).
 - Clones that share plugin instance state with the original.
@@ -71,14 +78,16 @@ single unnamed profile; this story names it and lets the user add more.
 
 ### decker (branch `feat/profiles`)
 
-- **Model** (`common/model.py`): `ProfileInfo(profile_id, name, icon)` (`icon` is an icon ref string, `""` = Decker icon);
-  `DeviceProfiles(device_id, profiles, active_profile_id)`; `DevicePages` gains `profile_id`.
+- **Model** (`common/model.py`): `ProfileInfo(profile_id: int, name, icon)` (`icon` is an icon ref string, `""` = Decker icon);
+  `DeviceProfiles(device_id, profiles in dropdown order, active_profile_id: int)`; `DevicePages` gains `profile_id`.
 - **Store** — `server/pages.py` grows a profile layer (or a sibling `server/profiles.py` the plan may split out):
-  - tables `profiles(profile_id PK, device_id, name, icon, position)`, `profile_defaults(profile_id PK, page_id)` (replaces
-    `page_defaults`), `active_profiles(device_id PK, profile_id)`; `pages` gains `profile_id`.
+  - tables `profiles(device_id, profile_id INTEGER, name, icon, position, PRIMARY KEY(device_id, profile_id))`,
+    `profile_defaults(device_id, profile_id, page_id, PRIMARY KEY(device_id, profile_id))` (replaces `page_defaults`),
+    `active_profiles(device_id PK, profile_id)`; `pages` gains `profile_id INTEGER`. `position` is the dropdown order (append on
+    add); the id is allocated as the smallest non-negative integer not used on that device.
   - **Migration** (idempotent, in `create`): add the column if missing; per device that has pages, create profile
-    `initial_profile_id(device_id)` = `"<device>-profile-1"` named `Profile 1`, point its pages at it, carry `page_defaults`
-    into `profile_defaults`, mark it active. A device with nothing gets its first profile (and `Page 1`) on first access, as
+    `0` named `Default`, point its pages at it, carry `page_defaults`
+    into `profile_defaults`, mark it active. A device with nothing gets profile `0` `Default` (and `Page 1`) on first access, as
     pages do today.
   - Page API takes/uses a profile: `list_pages(device_id, profile_id=None)` (None = active profile), `add_page(..., profile_id=None)`.
     `profile_of_page(device_id, page_id)`. Profile API: `list_profiles`, `add_profile`, `rename_profile`, `set_profile_icon`,
@@ -119,7 +128,7 @@ single unnamed profile; this story names it and lets the user add more.
 ## Testing
 
 TDD per task (RED then GREEN), as in the previous stories. Store: migration of a pre-profile database (pages, defaults, keys all
-intact, one `Profile 1`), add/rename/delete/clone invariants (last profile refused, default page passes on, clone makes fresh
+intact, one `Default` with id 0), add/rename/delete/clone invariants (lowest-unused id allocation incl. reuse after delete and dropdown order, last profile refused, default page passes on, clone makes fresh
 context ids and shares nothing). Controller: profile switch hides/shows the right actions, restores the active profile after a
 restart, deleting the active profile falls back. Variables and delivery: new variables, `profile` and profile-aware `page`
 resolution, stale ids. Protocol/SDK: `switch_profile`, `switch_page` across profiles. Client (offscreen Qt): selector
