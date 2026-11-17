@@ -317,3 +317,33 @@ def test_fake_bold_when_family_has_no_bold_face(monkeypatch: pytest.MonkeyPatch)
 def test_all_styles_together_do_not_crash() -> None:
     img = _styled(bold=True, italic=True, underline=True, strike=True, outline="#ff000080", outline_width=3)
     assert_that(img.size).is_equal_to((144, 144))
+
+
+def test_translucent_background_blends_over_black() -> None:
+    img = _open(compose_key_image(_appearance(background="#ffffff80"), None, ""))
+    assert_that(_pixel(img, 0, 0)).is_equal_to((128, 128, 128))
+
+
+def test_fully_transparent_background_is_not_rendered() -> None:
+    img = _open(compose_key_image(_appearance(background="#ff000000"), None, ""))
+    assert_that(_pixel(img, 0, 0)).is_equal_to((0, 0, 0))
+
+
+def test_transparent_background_still_renders_plugin_image_and_title() -> None:
+    appearance = _appearance(background="#ff000000", title={"text": "WWWW", "position": "middle", "size": 24})
+    img = _open(compose_key_image(appearance, _png("#00ff00"), ""))
+    assert_that(_pixel(img, 5, 5)).is_equal_to((0, 255, 0))
+    assert_that(_lit(img)).is_greater_than(0)
+
+
+def test_translucent_background_sits_under_plugin_image() -> None:
+    img = _open(compose_key_image(_appearance(background="#ffffff40"), _png("#0000ff"), ""))
+    assert_that(_pixel(img, 72, 72)).is_equal_to((0, 0, 255))
+
+
+def test_background_keeps_alpha_when_resolved() -> None:
+    assert_that(resolve_appearance({}, {"background": "#11223380"})["background"]).is_equal_to("#11223380")
+
+
+def test_invalid_background_falls_back_to_default() -> None:
+    assert_that(resolve_appearance({}, {"background": "#1122"})["background"]).is_equal_to("#000000")

@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageColor, ImageDraw, ImageFont
 
 from decker.asset.renderer import AssetRenderer
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
@@ -143,7 +143,9 @@ def compose_key_image(
     appearance: Mapping[str, Any], plugin_image: bytes | None, plugin_title: str, size: int = 144
 ) -> bytes:
     """Compose background, plugin image and title into a size x size PNG."""
-    img = Image.new("RGBA", (size, size), appearance["background"])
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 255))  # the hardware has no transparency: black underneath
+    if ImageColor.getcolor(appearance["background"], "RGBA")[3]:  # type: ignore[index]
+        img.alpha_composite(Image.new("RGBA", (size, size), appearance["background"]))
     if plugin_image:
         try:
             layer = _RENDERER.render_bytes(plugin_image, size, size)
