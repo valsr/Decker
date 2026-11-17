@@ -120,14 +120,14 @@ QToolButton:hover {
 }
 
 /* The hover pencil on a key: a small disc, so its glyph is not squeezed by the generic tool-button padding. */
-QToolButton#keyEditButton {
+QToolButton#keyRunButton {
     background-color: $raised;
     border: none;
     border-radius: 15px;
     padding: 0;
 }
 
-QToolButton#keyEditButton:hover {
+QToolButton#keyRunButton:hover {
     background-color: $hover;
 }
 
