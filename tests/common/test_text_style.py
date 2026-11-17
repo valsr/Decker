@@ -2,7 +2,11 @@ from typing import Any
 
 from assertpy import assert_that
 
-from decker.common.text_style import TEXT_STYLE_DEFAULTS, fold_legacy_title, normalize_text_style
+from decker.common.text_style import (
+    TEXT_STYLE_DEFAULTS,
+    fold_legacy_title,
+    normalize_text_style,
+)
 
 
 def test_normalize_fills_defaults() -> None:
