@@ -135,6 +135,10 @@ class UpdateChecker:
                 self._store.mark_checked(self._clock())
             return self._recompute(push_if_changed=True)
 
+    def refresh_local(self) -> UpdateReport:
+        """Recompute from the cached indexes (no network) and push the report if it changed."""
+        return self._recompute(push_if_changed=True)
+
     def _run(self) -> None:
         while not self._stop.wait(_WAKE_SECONDS):
             try:

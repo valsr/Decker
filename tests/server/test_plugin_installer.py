@@ -667,3 +667,60 @@ def test_busy_while_job_running(env, repo, tmp_path):
 
     assert _wait_for(lambda: len(env.bus.of("plugin_install_finished")) > before)
     assert_that(env.bus.of("plugin_install_finished")[-1]["ok"]).is_true()
+
+
+class TestUpdateReportRefresh:
+    @pytest.fixture(autouse=True)
+    def _checker(self, env, tmp_path):
+        from decker.common import (  # pylint: disable=import-outside-toplevel
+            config,
+            paths,
+        )
+        from decker.server.repositories import (
+            RepositoryStore,  # pylint: disable=import-outside-toplevel
+        )
+        from decker.server.update_checker import (
+            UpdateChecker,  # pylint: disable=import-outside-toplevel
+        )
+        from tests.server.test_update_checker import (  # pylint: disable=import-outside-toplevel
+            _version,
+            _write_index,
+        )
+
+        config.configure_prefix(tmp_path / "config" / "config.yaml")
+        url = _write_index(tmp_path / "index.json", {"com.example.tool": [_version("2.0.0")]})
+        config.set("plugin.repositories", [url])
+        store = RepositoryStore(tmp_path / "cache")
+        store.refresh_all()
+        env.checker = UpdateChecker(
+            store, env.manager, env.key_store, lambda name, payload: env.bus.push(name, json.dumps(payload))
+        )
+        env.context.update_checker = env.checker
+        yield
+        config.configure_prefix(paths.config_yaml())
+
+    def test_install_of_newer_version_clears_the_update(self, env, tmp_path):
+        env.install(_package(tmp_path / "v1.log"))
+        assert_that(env.bus.of("plugin_updates_available")[-1]["updates"]).extracting("available").is_equal_to(
+            ["2.0.0"]
+        )
+
+        env.install(_package(tmp_path / "v2.log", _manifest("2.0.0")))
+
+        assert_that(env.bus.of("plugin_updates_available")[-1]["updates"]).is_empty()
+        assert_that(env.checker.report().is_empty()).is_true()
+
+    def test_uninstall_refreshes_the_report(self, env, tmp_path):
+        env.install(_package(tmp_path / "v1.log"))
+        assert_that(env.checker.report().updates).is_length(1)
+
+        env.installer.uninstall("com.example.tool")
+
+        assert_that(env.bus.of("plugin_updates_available")[-1]["updates"]).is_empty()
+
+    def test_refresh_failure_does_not_break_install(self, env, tmp_path, monkeypatch):
+        monkeypatch.setattr(env.checker, "refresh_local", MagicMock(side_effect=RuntimeError("boom")))
+
+        finished = env.install(_package(tmp_path / "v1.log"))
+
+        assert_that(finished["ok"]).is_true()
