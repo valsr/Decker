@@ -356,6 +356,7 @@ def test_page_default_must_be_a_string() -> None:
 
 def test_profile_type_defaults_to_empty_string() -> None:
     (entry,) = parse_settings_schema([{"key": "p", "type": "profile"}], "here")
+    assert isinstance(entry, SettingField)
 
     assert_that(entry.default).is_equal_to("")
 
