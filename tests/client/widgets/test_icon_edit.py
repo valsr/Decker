@@ -80,7 +80,7 @@ class TestIconEdit:
         assert_that(edit.value()["ref"]).is_equal_to(_REF)
         assert_that(emitted).is_length(1)
 
-    def test_browse_passes_the_fill_colour_to_the_dialog(self, qapp, monkeypatch):
+    def test_browse_leaves_thumbnail_tint_to_the_theme_not_the_fill_colour(self, qapp, monkeypatch):
         import decker.client.widgets.icon_edit as module
 
         seen: dict[str, Any] = {}
@@ -97,11 +97,11 @@ class TestIconEdit:
 
         monkeypatch.setattr(module, "IconBrowserDialog", FakeDialog)
         edit = _edit()
-        edit.set_value({"color": "#ff0000"})
+        edit.set_value({"color": "#000000"})  # a black fill must not make the thumbnails vanish on a dark theme
 
         edit._browse()
 
-        assert_that(seen["tint"]).is_equal_to("#ff0000")
+        assert_that(seen["tint"]).is_none()
 
     def test_clear_resets_ref_keeps_colour_and_emits(self, qapp):
         edit = _edit()

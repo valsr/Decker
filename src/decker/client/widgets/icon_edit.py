@@ -67,7 +67,7 @@ class IconEdit(QWidget):
         self._refresh()
 
     def _browse(self) -> None:
-        dialog = IconBrowserDialog(self, self._rpc(), tint=self._color)
+        dialog = IconBrowserDialog(self, self._rpc())
         dialog.icon_chosen.connect(self._on_icon_chosen)
         dialog.exec()
 

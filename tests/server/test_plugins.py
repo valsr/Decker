@@ -513,6 +513,23 @@ class TestSetImageIcon:
 
         assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
 
+    def test_pack_icon_leaves_a_margin_so_the_title_stays_readable(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+
+        _send_set_image(env, {"icon": _DOT_REF, "color": "#ff0000"})
+
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
+        assert_that(_pixel(env.image(), 5, 5)).is_equal_to(
+            (31, 97, 141)
+        )  # the counter's background shows in the margin
+
+    def test_raster_plugin_image_stays_full_bleed(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+
+        _send_set_image(env, {"image": base64.b64encode(_RED_PNG).decode(), "format": "png"})
+
+        assert_that(_pixel(env.image(), 5, 5)).is_equal_to((255, 0, 0))
+
     def test_icon_without_colour_renders_untinted(self, env, tmp_path):
         _icon_env(env, tmp_path)
 

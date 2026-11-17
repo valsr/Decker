@@ -34,7 +34,11 @@ from decker.plugin.runtime.supervisor import PluginSupervisor, SupervisorPolicy
 from decker.plugin.settings_schema import apply_schema, schema_to_json
 from decker.plugin.settings_store import PluginSettingsStore
 from decker.plugin.target import ActionTarget
-from decker.server.appearance import compose_key_image, resolve_appearance
+from decker.server.appearance import (
+    PACK_ICON_SCALE,
+    compose_key_image,
+    resolve_appearance,
+)
 from decker.server.contributions import ContributionRegistry
 
 if TYPE_CHECKING:
@@ -468,7 +472,11 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             image = read_icon(plugin.plugin_dir, state.image) if plugin is not None else None
         title = plugin_title or (state.title if state is not None and state.title else "")
         return compose_key_image(
-            resolve_appearance(spec.appearance, stored), image, title, plugin_image_color=image_color
+            resolve_appearance(spec.appearance, stored),
+            image,
+            title,
+            plugin_image_color=image_color,
+            plugin_image_scale=PACK_ICON_SCALE if icon_ref is not None else 1.0,
         )
 
     def _notify_state(self, device_id: str, key_index: int) -> None:

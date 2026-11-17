@@ -389,3 +389,26 @@ def test_plugin_icon_without_colour_is_unchanged() -> None:
 def test_translucent_plugin_icon_colour_blends_with_background() -> None:
     img = _open(compose_key_image(_appearance(background="#000000"), _ICON_SVG, "", plugin_image_color="#ffffff80"))
     assert_that(_pixel(img, 72, 72)[0]).is_between(120, 135)
+
+
+def test_plugin_image_scale_shrinks_and_centres_the_image() -> None:
+    img = _open(
+        compose_key_image(
+            _appearance(background="#0000ff"), _ICON_SVG, "", plugin_image_color="#ff0000", plugin_image_scale=0.5
+        )
+    )
+    assert_that(_pixel(img, 72, 72)).is_equal_to((255, 0, 0))  # centre: the icon
+    assert_that(_pixel(img, 40, 40)).is_equal_to((255, 0, 0))  # inside the 72 px square at offset 36
+    assert_that(_pixel(img, 20, 20)).is_equal_to((0, 0, 255))  # margin: background
+    assert_that(_pixel(img, 130, 130)).is_equal_to((0, 0, 255))
+
+
+def test_plugin_image_scale_defaults_to_full_bleed() -> None:
+    img = _open(compose_key_image(_appearance(background="#0000ff"), _ICON_SVG, "", plugin_image_color="#ff0000"))
+    assert_that(_pixel(img, 2, 2)).is_equal_to((255, 0, 0))
+
+
+def test_plugin_image_scale_is_clamped_to_something_sensible() -> None:
+    for bad in (0.0, -1.0, 5.0):
+        img = _open(compose_key_image(_appearance(background="#0000ff"), _ICON_SVG, "", plugin_image_scale=bad))
+        assert_that(img.size).is_equal_to((144, 144))

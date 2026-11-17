@@ -63,7 +63,8 @@ An icon from an installed icon pack is shown by reference: `{"icon": "pack:<pack
 (`color` is optional and may be `#rrggbbaa`). The server reads the icon itself, so the plugin never touches pack
 files. `image` and `icon` are mutually exclusive (a payload with both is dropped). A reference the server cannot read
 (malformed, unknown pack, path outside the pack, too large, pack uninstalled later) clears the image and is logged.
-`color` recolours SVG icons: it sets the SVG's `color` (so `fill="currentColor"` follows it) and a default `fill`, and
+A pack icon is drawn at 70% of the key and centred, so the key's title stays readable around it (images sent with
+`image` still fill the key). `color` recolours SVG icons: it sets the SVG's `color` (so `fill="currentColor"` follows it) and a default `fill`, and
 the alpha becomes the SVG's opacity. Raster icons ignore it, and an invalid colour leaves the icon untinted.
 
 Raster images larger than 4096 x 4096 pixels are rejected. Decker scales the image to the key and draws it over
