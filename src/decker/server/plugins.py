@@ -416,8 +416,15 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             logging.warning("Could not compose preview for context %s", target.context_id, exc_info=True)
             return None
 
-    def activate_action(self, target: ActionTarget, appearance: dict[str, Any] | None = None) -> None:
-        """Tell the action's plugin that an instance appeared, starting the plugin if needed."""
+    def activate_action(
+        self, target: ActionTarget, appearance: dict[str, Any] | None = None, draw: bool = True
+    ) -> None:
+        """Tell the action's plugin that an instance appeared, starting the plugin if needed.
+
+        ``draw=False`` skips the first, plugin-less draw of the key: the caller has just put the key's last image
+        on the hardware, and drawing the bare background and title over it only makes the key flicker until the
+        plugin's own image arrives.
+        """
         spec = self._action_spec(target.plugin_uuid, target.action_uuid)
         with self._lock:
             plugin = self._plugins.get(target.plugin_uuid)
@@ -443,7 +450,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         )
         with self._lock:
             self._live[target.context_id] = live
-        self._recompose(live)
+        if draw:
+            self._recompose(live)
         if spec.static:
             return
         self._supervisor.acquire(target.plugin_uuid)
@@ -642,9 +650,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def _key_position(self, target: ActionTarget) -> tuple[int, int]:
         try:
             device = self._device_manager.open_device(target.device_id)
-            key = device.get_hw_info().keys[target.key_index]
-            if isinstance(key.col, int) and isinstance(key.row, int):
-                return key.col, key.row
+            position = device.key_position(target.key_index)
+            if position is not None:
+                return position
         except Exception:  # pylint: disable=broad-except
             logging.debug("No key layout for %s key %d", target.device_id, target.key_index)
         return target.key_index, 0

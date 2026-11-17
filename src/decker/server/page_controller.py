@@ -242,13 +242,17 @@ class PageController(Manager):
             plugins.deactivate_action(assignment.target)
 
     def _show(self, device_id: str, page_id: str) -> None:
-        if not self._ctx.device_manager.show_page(device_id, page_id):
+        drawn = self._ctx.device_manager.show_page(device_id, page_id)
+        if not drawn:
             logging.warning("PageController: device %s is not available; page %s not drawn", device_id, page_id)
+        state = self._ctx.device_manager.get_device_state(device_id) if drawn else None
         plugins = self._ctx.plugin_manager
-        for _key_index, assignment in self._ctx.key_assignment_store.all_for_page(device_id, page_id):
+        for key_index, assignment in self._ctx.key_assignment_store.all_for_page(device_id, page_id):
             target = assignment.target
             plugins.store_settings(target, assignment.settings)
-            plugins.activate_action(target, assignment.appearance)
+            # a key whose last image is already on the hardware is not redrawn bare before its plugin answers
+            cached = state is not None and state.has_image(key_index)
+            plugins.activate_action(target, assignment.appearance, draw=not cached)
 
     def _notify(self, device_id: str, profiles: bool = False) -> None:
         payload = json.dumps({"device_id": device_id})

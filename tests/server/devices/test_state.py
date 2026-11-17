@@ -216,3 +216,22 @@ class TestDeviceStatePages:
         state.switch_page("p2")
 
         assert_that(state.get_all_images()).is_empty()
+
+
+class TestUnchangedImages:
+    def test_an_identical_image_is_not_written_to_the_store_again(self):
+        store = MagicMock()
+        state = DeviceState(device_id="dev1", store=store, press_state_getter=lambda _: KeyPressState.UP, page_id="p1")
+
+        state.update_key_image(0, b"one")
+        state.update_key_image(0, b"one")
+        state.update_key_image(0, b"two")
+
+        assert_that(store.save_key_image.call_count).is_equal_to(2)
+
+    def test_has_image_reports_cached_keys(self):
+        state = _make_state()
+        state.update_key_image(2, b"png")
+
+        assert_that(state.has_image(2)).is_true()
+        assert_that(state.has_image(3)).is_false()

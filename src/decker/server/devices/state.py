@@ -51,9 +51,15 @@ class DeviceState:
     def update_key_image(self, key_index: int, image: bytes) -> None:
         """Store the rendered PNG for a key in memory and persist it."""
         with self._lock:
+            unchanged = self._images.get(key_index) == image
             self._images[key_index] = image
-        if self._store is not None:
+        if self._store is not None and not unchanged:
             self._store.save_key_image(self._device_id, self._page_id, key_index, image)
+
+    def has_image(self, key_index: int) -> bool:
+        """Whether an image is held for the key."""
+        with self._lock:
+            return key_index in self._images
 
     def update_key_label(self, key_index: int, label: str) -> None:
         """Store the display label for a key in memory and persist it."""
