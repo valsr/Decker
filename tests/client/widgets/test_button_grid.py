@@ -1,7 +1,7 @@
 import json
 
 from assertpy import assert_that
-from PyQt6.QtCore import QByteArray, QEvent, QMimeData, QPoint, QPointF, Qt
+from PyQt6.QtCore import QByteArray, QEvent, QMimeData, QPointF, Qt
 from PyQt6.QtGui import QDropEvent, QEnterEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
@@ -30,19 +30,63 @@ class TestButtonGridWidget:
         grid.build(_make_keys(8))
         assert_that(grid._grid_layout.count()).is_equal_to(8)  # pylint: disable=protected-access
 
-    def test_clicking_key_emits_key_selected(self, qapp):  # pylint: disable=unused-argument
-        grid = ButtonGridWidget()
-        grid.build(_make_keys(6))
-        received: list[int] = []
-        grid.key_selected.connect(received.append)
-
-        layout_item = grid._grid_layout.itemAt(2)  # pylint: disable=protected-access
+    def _button(self, grid: ButtonGridWidget, index: int) -> KeyButtonWidget:
+        layout_item = grid._grid_layout.itemAt(index)  # pylint: disable=protected-access
         assert layout_item is not None
         button = layout_item.widget()
         assert isinstance(button, KeyButtonWidget)
-        button.click()
+        return button
 
-        assert_that(received).is_equal_to([2])
+    def test_clicking_key_emits_key_pressed_only(self, qapp):  # pylint: disable=unused-argument
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(6))
+        pressed: list[int] = []
+        edits: list[int] = []
+        grid.key_pressed.connect(pressed.append)
+        grid.key_edit_requested.connect(edits.append)
+
+        self._button(grid, 2).click()
+
+        assert_that(pressed).is_equal_to([2])
+        assert_that(edits).is_empty()
+
+    def test_clicking_the_pencil_emits_key_edit_requested_only(self, qapp):  # pylint: disable=unused-argument
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(6))
+        pressed: list[int] = []
+        edits: list[int] = []
+        grid.key_pressed.connect(pressed.append)
+        grid.key_edit_requested.connect(edits.append)
+
+        self._button(grid, 4)._edit_button.click()  # pylint: disable=protected-access
+
+        assert_that(edits).is_equal_to([4])
+        assert_that(pressed).is_empty()
+
+    def test_every_key_gets_a_pencil(self, qapp):  # pylint: disable=unused-argument
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(6))
+
+        for index in range(6):
+            assert_that(
+                self._button(grid, index)._edit_button.toolTip()
+            ).is_equal_to(  # pylint: disable=protected-access
+                "Edit this key"
+            )
+
+    def test_rebuilding_while_hovered_leaves_no_stale_pencil(self, qapp):  # pylint: disable=unused-argument
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(6))
+        grid.show()
+        _enter(self._button(grid, 2))
+        grid.build(_make_keys(4))
+        qapp.processEvents()
+
+        assert_that(grid.key_count).is_equal_to(4)
+        for index in range(4):
+            assert_that(
+                self._button(grid, index)._edit_button.isVisible()
+            ).is_false()  # pylint: disable=protected-access
 
     def test_set_key_label_updates_button_text(self, qapp):  # pylint: disable=unused-argument
         grid = ButtonGridWidget()
@@ -149,24 +193,6 @@ class TestKeyEditPencil:  # pylint: disable=protected-access,unused-argument
         assert_that(button._long_press_timer.isActive()).is_false()
         assert_that(long_presses).is_empty()
         QTest.mouseRelease(button._edit_button, Qt.MouseButton.LeftButton)  # type: ignore[call-overload]
-
-    def test_pencil_stays_visible_when_the_pointer_moves_onto_it_and_hides_when_it_leaves(self, qapp):
-        button = _key()
-        button.move(100, 100)
-        button.show()
-        qapp.processEvents()
-
-        QTest.mouseMove(button, QPoint(10, 50))  # type: ignore[call-overload]
-        qapp.processEvents()
-        assert_that(button._edit_button.isVisible()).described_as("after entering the key").is_true()
-
-        QTest.mouseMove(button._edit_button, QPoint(10, 10))  # type: ignore[call-overload]
-        qapp.processEvents()
-        assert_that(button._edit_button.isVisible()).described_as("pointer now on the pencil").is_true()
-
-        QTest.mouseMove(button, QPoint(10, 50))  # type: ignore[call-overload]
-        qapp.processEvents()
-        assert_that(button._edit_button.isVisible()).described_as("back on the key body").is_true()
 
     def test_pencil_does_not_swallow_drops(self, qapp):
         button = _key(4)

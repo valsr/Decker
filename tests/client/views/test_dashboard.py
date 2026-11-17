@@ -356,13 +356,82 @@ class TestKeyInteractions:
     def setup_method(self):
         AppContext._instance = None  # pylint: disable=protected-access
 
-    def test_key_selected_without_slot_shows_placeholder(self, qapp, tmp_path):  # pylint: disable=unused-argument
+    def test_edit_requested_without_slot_shows_placeholder(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
         view._grid.build(_KEYS_6)  # pylint: disable=protected-access
-        view._on_key_selected(0)  # pylint: disable=protected-access
+        view._on_key_edit_requested(0)  # pylint: disable=protected-access
         assert_that(view._config_panel.currentIndex()).is_equal_to(0)
 
-    def test_key_selected_with_slot_simulates_press(self, qapp, tmp_path):  # pylint: disable=unused-argument
+    def test_key_press_with_slot_simulates_press(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        mock_cm = MagicMock()
+        AppContext.get().connection_manager = mock_cm
+        view._key_slots[3] = {  # pylint: disable=protected-access
+            "plugin_uuid": "p",
+            "action_uuid": "a",
+            "context_id": "c",
+            "settings": {},
+        }
+        view._on_key_pressed(3)  # pylint: disable=protected-access
+        mock_cm.call.assert_called_once_with("key_simulate_press", "dev1", 3)
+
+    def test_pencil_selects_the_key_without_pressing(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        mock_cm = MagicMock()
+        AppContext.get().connection_manager = mock_cm
+        view._key_slots[3] = {  # pylint: disable=protected-access
+            "plugin_uuid": "p",
+            "action_uuid": "a",
+            "context_id": "c",
+            "settings": {},
+        }
+
+        view._on_key_edit_requested(3)  # pylint: disable=protected-access
+
+        assert_that(view._selected_key).is_equal_to(3)  # pylint: disable=protected-access
+        pressed = [c for c in mock_cm.call.call_args_list if c.args and c.args[0] == "key_simulate_press"]
+        assert_that(pressed).is_empty()
+
+    def test_key_press_does_not_change_the_selection(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        AppContext.get().connection_manager = MagicMock()
+        view._key_slots[3] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": "c", "settings": {}}
+        view._key_slots[4] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": "d", "settings": {}}
+        view._on_key_edit_requested(4)  # pylint: disable=protected-access
+
+        view._on_key_pressed(3)  # pylint: disable=protected-access
+
+        assert_that(view._selected_key).is_equal_to(4)  # pylint: disable=protected-access
+
+    def test_key_press_without_a_slot_calls_nothing(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        mock_cm = MagicMock()
+        AppContext.get().connection_manager = mock_cm
+
+        view._on_key_pressed(2)  # pylint: disable=protected-access
+
+        mock_cm.call.assert_not_called()
+
+    def test_key_press_without_a_connection_does_not_raise(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        AppContext.get().connection_manager = None
+        view._key_slots[3] = {
+            "plugin_uuid": "p",
+            "action_uuid": "a",
+            "context_id": "c",
+            "settings": {},
+        }  # pylint: disable=protected-access
+
+        view._on_key_pressed(3)  # pylint: disable=protected-access
+
+    def test_long_press_simulates_a_long_press_and_does_not_select(  # pylint: disable=unused-argument
+        self, qapp, tmp_path
+    ):
         view = _make_view(tmp_path)
         _active_dev1(view)
         mock_cm = MagicMock()
@@ -373,7 +442,33 @@ class TestKeyInteractions:
             "context_id": "c",
             "settings": {},
         }  # pylint: disable=protected-access
-        view._on_key_selected(3)  # pylint: disable=protected-access
+
+        view._on_key_long_pressed(3)  # pylint: disable=protected-access
+
+        mock_cm.call.assert_called_once_with("key_simulate_long_press", "dev1", 3)
+        assert_that(view._selected_key).is_none()  # pylint: disable=protected-access
+
+    def test_grid_pencil_reaches_the_dashboard_and_key_click_presses(  # pylint: disable=unused-argument
+        self, qapp, tmp_path
+    ):
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        mock_cm = MagicMock()
+        AppContext.get().connection_manager = mock_cm
+        view._key_slots[3] = {
+            "plugin_uuid": "p",
+            "action_uuid": "a",
+            "context_id": "c",
+            "settings": {},
+        }  # pylint: disable=protected-access
+        view._grid.build(_KEYS_6)  # pylint: disable=protected-access
+        button = view._grid._buttons[3]  # pylint: disable=protected-access
+
+        button._edit_button.click()  # pylint: disable=protected-access
+        assert_that(view._selected_key).is_equal_to(3)  # pylint: disable=protected-access
+        mock_cm.call.assert_not_called()
+
+        button.click()
         mock_cm.call.assert_called_once_with("key_simulate_press", "dev1", 3)
 
     def test_key_long_pressed_simulates_long_press(self, qapp, tmp_path):  # pylint: disable=unused-argument
@@ -437,7 +532,7 @@ class TestKeyInteractions:
             "settings": {"step": 4},
         }
 
-        view._on_key_selected(3)  # pylint: disable=protected-access
+        view._on_key_edit_requested(3)  # pylint: disable=protected-access
 
         panel = view._config_panel  # pylint: disable=protected-access
         assert_that(panel.currentIndex()).is_equal_to(1)
@@ -466,11 +561,11 @@ class TestKeyInteractions:
                 "context_id": f"c{key}",
                 "settings": {"step": 2},
             }
-        view._on_key_selected(3)  # pylint: disable=protected-access
+        view._on_key_edit_requested(3)  # pylint: disable=protected-access
         panel = view._config_panel  # pylint: disable=protected-access
         panel._settings_form._fields["step"].set(8)  # pylint: disable=protected-access
 
-        view._on_key_selected(4)  # pylint: disable=protected-access
+        view._on_key_edit_requested(4)  # pylint: disable=protected-access
 
         assert_that(panel._settings_form.values()).is_equal_to({"step": 2})  # pylint: disable=protected-access
 
