@@ -649,6 +649,7 @@ class TestPages:  # pylint: disable=protected-access
     ):  # pylint: disable=unused-argument
         view, _cm = self._view(tmp_path)
         view._grid.build(_KEYS_15)  # pylint: disable=protected-access
+        view._key_slots[3] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": "c", "settings": {}}
 
         view._on_key_edit_requested(3)  # pylint: disable=protected-access
         assert_that(view._grid._buttons[3].property("selected")).is_true()  # pylint: disable=protected-access
@@ -864,3 +865,102 @@ class TestKeyEditorWiring:  # pylint: disable=protected-access
         view._on_display_states_updated("dev1", [{"key_index": 3, "image_b64": "TElWRQ=="}])
 
         assert_that(shown).is_empty()
+
+
+class TestFinalReviewFixes:  # pylint: disable=protected-access
+    def setup_method(self):
+        AppContext._instance = None  # pylint: disable=protected-access
+
+    def _view(self, tmp_path):
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        cm = MagicMock()
+        cm.call.return_value = ""
+        AppContext.get().connection_manager = cm
+        view.handle_event(
+            ActionListUpdatedEvent(
+                actions=[{"plugin_uuid": "com.p", "action_uuid": "com.p.a", "action_name": "A", "settings_schema": []}]
+            )
+        )
+        return view
+
+    def _assign(self, view, key):
+        view._key_slots[key] = {
+            "plugin_uuid": "com.p",
+            "action_uuid": "com.p.a",
+            "context_id": f"c{key}",
+            "settings": {},
+        }
+
+    def test_empty_key_shows_the_placeholder_without_an_outline(
+        self, qapp, tmp_path
+    ):  # pylint: disable=unused-argument
+        view = self._view(tmp_path)
+
+        view._on_key_edit_requested(2)
+
+        assert_that(view._config_panel.currentIndex()).is_equal_to(0)
+        assert_that(view._grid._buttons[2].property("selected")).is_false()
+
+    def test_outline_returns_when_the_selected_key_gets_an_action(
+        self, qapp, tmp_path
+    ):  # pylint: disable=unused-argument
+        view = self._view(tmp_path)
+        view._on_key_edit_requested(2)
+
+        self._assign(view, 2)
+        view._refresh_config_panel()
+
+        assert_that(view._grid._buttons[2].property("selected")).is_true()
+
+    def test_outline_clears_when_the_edited_key_is_unassigned(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = self._view(tmp_path)
+        self._assign(view, 2)
+        view._on_key_edit_requested(2)
+        assert_that(view._grid._buttons[2].property("selected")).is_true()
+
+        view._key_slots.pop(2)
+        view._refresh_config_panel()
+
+        assert_that(view._grid._buttons[2].property("selected")).is_false()
+
+    def test_device_switch_clears_the_outline(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = self._view(tmp_path)
+        self._assign(view, 2)
+        view._on_key_edit_requested(2)
+        other = DeviceHardwareInfo(id="dev2", type="Stream Deck", vendor_id=0, product_id=0, num_keys=6, keys=_KEYS_6)
+
+        view._refresh_grid_for_device(other)
+
+        assert_that(view._selected_key).is_none()
+        assert_that([b.property("selected") for b in view._grid._buttons.values()]).does_not_contain(True)
+
+    def test_unpreviewable_key_does_not_show_the_previous_keys_picture(  # pylint: disable=unused-argument
+        self, qapp, tmp_path
+    ):
+        view = self._view(tmp_path)
+        self._assign(view, 0)
+        self._assign(view, 1)
+        view._on_display_states_updated("dev1", [{"key_index": 0, "image_b64": "TElWRQ=="}])
+        view._on_key_edit_requested(0)
+        shown: list[str | None] = []
+        panel = view._config_panel
+        setattr(panel._preview, "set_image", shown.append)
+
+        view._on_key_edit_requested(1)  # no image of its own and the preview RPC returns ""
+
+        assert_that(shown[-1]).is_none()
+
+    def test_switching_to_a_key_seeds_the_preview_with_its_own_image(
+        self, qapp, tmp_path
+    ):  # pylint: disable=unused-argument
+        view = self._view(tmp_path)
+        self._assign(view, 0)
+        self._assign(view, 1)
+        view._on_display_states_updated("dev1", [{"key_index": 1, "image_b64": "T1RIRVI="}])
+        shown: list[str | None] = []
+        setattr(view._config_panel._preview, "set_image", shown.append)
+
+        view._on_key_edit_requested(1)
+
+        assert_that(shown).contains("T1RIRVI=")

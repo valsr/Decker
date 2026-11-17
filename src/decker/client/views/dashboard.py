@@ -54,6 +54,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._pages: DevicePages | None = None  # the active device's pages, from the server
         self._devices: list[DeviceHardwareInfo] = []
         self._selected_key: int | None = None
+        self._key_images: dict[int, str] = {}  # last composed image per key, to seed the editor preview
         self._key_slots: dict[int, dict[str, Any]] = {}  # key_index → assignment metadata
         self._active_device_id: str | None = None
         self._actions: list[dict[str, Any]] = []  # action list from the server (with settings schemas)
@@ -256,6 +257,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
 
     def _reset_key_selection(self) -> None:
         self._key_slots = {}
+        self._key_images = {}
         self._selected_key = None
         self._grid.set_selected(None)
         self._config_panel.show_placeholder()
@@ -303,8 +305,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     def _on_key_edit_requested(self, index: int) -> None:
         if index != self._selected_key:
             self._config_panel.forget_loaded()
+            self._config_panel.set_preview_image(self._key_images.get(index))
         self._selected_key = index
-        self._grid.set_selected(index)
         self._refresh_config_panel()
 
     def _on_key_pressed(self, index: int) -> None:
@@ -365,6 +367,10 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
                 continue
             image_b64: str | None = state.get("image_b64")
             self._grid.set_key_image(key_index, image_b64)
+            if image_b64:
+                self._key_images[key_index] = image_b64
+            else:
+                self._key_images.pop(key_index, None)
             if key_index == self._selected_key and image_b64 and not self._config_panel.is_dirty:
                 self._config_panel.set_preview_image(image_b64)
             if not image_b64:
@@ -378,8 +384,10 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             return
         slot = self._key_slots.get(index)
         if slot is None:
+            self._grid.set_selected(None)
             self._config_panel.show_placeholder()
             return
+        self._grid.set_selected(index)
         action = next(
             (
                 a
