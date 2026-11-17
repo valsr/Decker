@@ -21,7 +21,7 @@ and stored as `null`), `placeholder`, `help`.
 | `choice` | `options`: `[{ "label": "...", "value": ... }]` (non-empty) | one of the option values |
 | `color` | `alpha` (boolean; when `true` the picker has an opacity slider and `#rrggbbaa` is also valid, alpha last) | `#rrggbb` (or `#rrggbbaa`) |
 | `font` | | font family name |
-| `icon` | | a file path (reserved for the icon library) |
+| `icon` | | an object, see [Icon](#icon); `default` may be partial |
 | `text_style` | | an object, see [Text style](#text-style); `default` may be partial |
 
 ## Text style
@@ -50,6 +50,25 @@ never the whole value):
 
 Two text areas on one key are two `text_style` fields. Decker's own key title (appearance key `title`) is a
 `text_style` field.
+
+## Icon
+
+`icon` is a control for picking an icon from the installed icon packs: a preview, the icon's name, **Browse…** (a
+searchable browser with the packs grouped by plugin) and a fill colour (RGBA). Declare it like any other field:
+
+```json
+{ "key": "icon", "type": "icon", "label": "Icon", "default": { "color": "#ffffff" } }
+```
+
+The value is an object; missing or invalid fields fall back to the field's default (per field, never the whole value):
+
+| Field | Type | Default |
+|-------|------|---------|
+| `ref` | `""` (no icon) or `pack:<pack id>/<icon path>` | `""` |
+| `color` | `#rrggbb` or `#rrggbbaa` (alpha last) | `"#ffffff"` |
+
+To show the icon on the key, pass both to the SDK: `ctx.set_icon(settings["icon"]["ref"], settings["icon"]["color"])`
+(see [protocol](protocol.md#images)). References with a `..` segment or an absolute path are treated as invalid.
 
 ## Validation
 

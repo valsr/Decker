@@ -92,8 +92,9 @@ class TestSchemaForm:  # pylint: disable=protected-access
         assert_that(form.values()["f"]).is_instance_of(str).is_not_empty()
 
     def test_icon_round_trips(self, qapp):  # pylint: disable=unused-argument
-        form = _form([{"key": "i", "type": "icon"}], {"i": "/tmp/a.png"})
-        assert_that(form.values()["i"]).is_equal_to("/tmp/a.png")
+        value = {"ref": "pack:p/a.svg", "color": "#112233"}
+        form = _form([{"key": "i", "type": "icon"}], {"i": value})
+        assert_that(form.values()["i"]).is_equal_to(value)
 
     def test_sections_render_as_headings(self, qapp):  # pylint: disable=unused-argument
         form = _form([{"section": "Counting"}, {"key": "n", "type": "bool"}])
@@ -217,3 +218,23 @@ class TestInlineSchemaForm:  # pylint: disable=protected-access
 
         assert_that(list(form.values())).is_equal_to(["title"])
         assert_that([lb.text() for lb in form.findChildren(QLabel)]).is_equal_to(["Title:"])
+
+
+class TestIconField:  # pylint: disable=protected-access
+    def test_builds_an_icon_edit(self, qapp):  # pylint: disable=unused-argument
+        from decker.client.widgets.icon_edit import (
+            IconEdit,  # pylint: disable=import-outside-toplevel
+        )
+
+        form = _form([{"key": "i", "type": "icon", "label": "Icon"}])
+        assert isinstance(form._fields["i"].widget, IconEdit)
+        assert_that([lb.text() for lb in form.findChildren(QLabel)]).contains("Icon:")
+
+    def test_default_applied(self, qapp):  # pylint: disable=unused-argument
+        default = {"ref": "pack:p/a.svg", "color": "#ff0000"}
+        form = _form([{"key": "i", "type": "icon", "default": default}])
+        assert_that(form.values()["i"]).is_equal_to(default)
+
+    def test_garbage_value_uses_defaults(self, qapp):  # pylint: disable=unused-argument
+        form = _form([{"key": "i", "type": "icon"}], {"i": "/tmp/a.png"})
+        assert_that(form.values()["i"]).is_equal_to({"ref": "", "color": "#ffffff"})
