@@ -145,6 +145,11 @@ class _Live:  # pylint: disable=too-many-instance-attributes
     delivered: dict[str, Any] = field(default_factory=dict)
 
 
+def _uses_pack_icon(live: _Live) -> bool:
+    icon = live.appearance.get("icon")
+    return live.plugin_icon_ref is not None or (isinstance(icon, dict) and bool(icon.get("ref")))
+
+
 def _gestures_from(names: Any) -> frozenset[Gesture]:
     if not isinstance(names, (list, tuple, set, frozenset)):
         return frozenset()
@@ -238,6 +243,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         except Exception as exc:  # pylint: disable=broad-except
             logging.exception("Registering plugin %s failed", manifest.id)
             self._record_failure(manifest.id, str(exc))
+        self._recompose_icon_users()
 
     def register_actions(self, plugin: InstalledPlugin) -> None:
         """Register a plugin's actions with the supervisor (the "actions" contribution handler)."""
@@ -270,6 +276,14 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._plugins.pop(plugin_id, None)
             self._icon_cache.clear()
             self._drop_failure(plugin_id)
+        self._recompose_icon_users()
+
+    def _recompose_icon_users(self) -> None:
+        """Redraw the keys showing a pack icon, since the set of installed packs just changed."""
+        with self._lock:
+            users = [live for live in self._live.values() if _uses_pack_icon(live)]
+        for live in users:
+            self._recompose(live)
 
     def unregister_actions(self, plugin_id: str) -> None:
         """Stop a plugin's process and drop its live instances (the "actions" contribution handler)."""

@@ -617,6 +617,33 @@ class TestIconOverride:
         assert_that(env.image()).is_equal_to(_BARE_COUNTER)
 
 
+class TestPackChangesRedrawOverrides:
+    def test_uninstalling_the_pack_redraws_a_key_that_uses_it(self, env, tmp_path):
+        plugin = _install_pack(env, tmp_path)
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(env.counter_drawn)
+        env.manager._live["ctx-1"].plugin_image = None  # pylint: disable=protected-access
+        env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#ff0000"}})
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
+
+        env.manager.remove_plugin(plugin.manifest.id)
+
+        assert_that(env.image()).is_equal_to(_BARE_COUNTER)
+
+    def test_installing_the_pack_redraws_a_key_waiting_for_it(self, env, tmp_path):
+        plugin = _install_pack(env, tmp_path)
+        env.manager.remove_plugin(plugin.manifest.id)
+        env.manager.activate_action(COUNTER_TARGET)
+        assert _wait_for(env.counter_drawn)
+        env.manager._live["ctx-1"].plugin_image = None  # pylint: disable=protected-access
+        env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#ff0000"}})
+        assert_that(env.image()).is_equal_to(_BARE_COUNTER)
+
+        env.manager.add_plugin(plugin)
+
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
+
+
 class TestPreviewImage:
     def test_draft_appearance_is_composed_without_changing_the_key(self, env, tmp_path):
         _icon_env(env, tmp_path)

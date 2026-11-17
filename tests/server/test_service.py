@@ -278,6 +278,18 @@ class TestKeyPreview:
     def test_without_context_returns_empty(self):
         assert_that(DeckerService().key_preview("dev1", P1, 0, "{}")).is_equal_to("")
 
+    @pytest.mark.parametrize("payload", [None, 123, b"{}"])
+    def test_non_string_payload_returns_empty(self, service, store, payload):
+        store.assign("dev1", P1, 0, _make_target(), {})
+
+        assert_that(service.key_preview("dev1", P1, 0, payload)).is_equal_to("")
+
+    def test_composer_failure_returns_empty(self, service, manager, store):
+        store.assign("dev1", P1, 0, _make_target(), {})
+        manager.preview_image.side_effect = RuntimeError("boom")
+
+        assert_that(service.key_preview("dev1", P1, 0, "{}")).is_equal_to("")
+
 
 class TestKeyGetStates:
     def _make_mock_device(self, num_keys: int = 2):
