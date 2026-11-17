@@ -236,3 +236,56 @@ def test_page_in_action_settings_is_accepted() -> None:
     data["contributes"]["actions"][0]["settings"] = [{"key": "where", "type": "page", "label": "Where"}]
     manifest = PluginManifest.from_dict(data)
     assert_that(manifest.actions[0].settings[0].type).is_equal_to("page")
+
+
+def _static_action(**extra: Any) -> dict[str, Any]:
+    return {"id": "com.decker.counter.preset", "name": "Preset", "static": True, **extra}
+
+
+def _without_runtime(actions: list[dict[str, Any]]) -> dict[str, Any]:
+    data = _counter()
+    del data["runtime"]
+    data["contributes"] = {"actions": actions}
+    return data
+
+
+def test_static_action_without_runtime_is_valid() -> None:
+    manifest = PluginManifest.from_dict(_without_runtime([_static_action()]))
+    assert_that(manifest.runtime).is_none()
+    assert_that(manifest.actions[0].static).is_true()
+
+
+def test_non_static_action_without_runtime_is_still_rejected() -> None:
+    plain = {"id": "com.decker.counter.plain", "name": "Plain"}
+    with pytest.raises(ManifestValidationError, match="no runtime.*com.decker.counter.plain"):
+        PluginManifest.from_dict(_without_runtime([_static_action(), plain]))
+
+
+def test_mixed_actions_with_runtime() -> None:
+    data = _counter()
+    data["contributes"]["actions"].append(_static_action())
+    manifest = PluginManifest.from_dict(data)
+    assert_that([a.static for a in manifest.actions]).is_equal_to([False, True])
+
+
+def test_static_must_be_boolean() -> None:
+    with pytest.raises(ManifestValidationError, match="static"):
+        PluginManifest.from_dict(_without_runtime([_static_action(static="yes")]))
+
+
+def test_static_action_with_settings_rejected() -> None:
+    action = _static_action(settings=[{"key": "a", "type": "bool"}])
+    with pytest.raises(ManifestValidationError, match="static.*settings"):
+        PluginManifest.from_dict(_without_runtime([action]))
+
+
+def test_static_action_with_gestures_rejected() -> None:
+    with pytest.raises(ManifestValidationError, match="static.*gestures"):
+        PluginManifest.from_dict(_without_runtime([_static_action(gestures=["press"])]))
+
+
+def test_static_action_keeps_appearance_defaults_and_states() -> None:
+    action = _static_action(appearance={"title": {"text": "{page_index}"}}, states=[{"title": "x"}])
+    spec = PluginManifest.from_dict(_without_runtime([action])).actions[0]
+    assert_that(spec.appearance).is_equal_to({"title": {"text": "{page_index}"}})
+    assert_that(spec.states[0].title).is_equal_to("x")
