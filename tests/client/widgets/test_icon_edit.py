@@ -152,6 +152,11 @@ class TestIconEdit:
         edit.set_value({"ref": "pack:com.x.p/sub/house-alt.svg"})
         assert_that(edit._name.text()).is_equal_to("house-alt")
 
+    def test_name_label_shows_a_dotted_system_icon_name_whole(self, qapp):
+        edit = _edit()
+        edit.set_value({"ref": "pack:decker.system.mimetypes/org.gnome.Foo"})
+        assert_that(edit._name.text()).is_equal_to("org.gnome.Foo")
+
     def test_preview_uses_fill_colour(self, qapp):
         edit = _edit()
 

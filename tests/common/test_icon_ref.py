@@ -86,3 +86,24 @@ def test_normalize_returns_fresh_dict() -> None:
     first = normalize_icon_value({})
     first["ref"] = "pack:p/a.svg"
     assert_that(normalize_icon_value({})["ref"]).is_equal_to("")
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("solid/house.svg", "house"),
+        ("org.gnome.Foo", "org.gnome.Foo"),
+        ("a/b/Icon.PNG", "Icon"),
+        ("x.tar.svg", "x.tar"),
+        ("photo.JPEG", "photo"),
+        ("pic.jpg", "pic"),
+        ("noext", "noext"),
+        (".svg", ".svg"),
+        ("", ""),
+        ("dir/", ""),
+    ],
+)
+def test_icon_display_name_drops_one_image_suffix_only(path: str, expected: str) -> None:
+    from decker.common.icon_ref import icon_display_name
+
+    assert_that(icon_display_name(path)).is_equal_to(expected)

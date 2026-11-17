@@ -11,6 +11,22 @@ DEFAULT_ICON_COLOR = "#ffffff"
 _DEFAULTS: Mapping[str, Any] = {"ref": "", "color": DEFAULT_ICON_COLOR}
 
 
+_DISPLAY_SUFFIXES = (".svg", ".png", ".jpg", ".jpeg")
+
+
+def icon_display_name(path: str) -> str:
+    """The name to show for an icon path: its last segment without one trailing image suffix.
+
+    System icon names keep their dots (``org.gnome.Foo``), which ``Path.stem`` would cut at the last one.
+    """
+    name = path.rsplit("/", 1)[-1]
+    lowered = name.lower()
+    for suffix in _DISPLAY_SUFFIXES:
+        if lowered.endswith(suffix) and len(name) > len(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
 def make_icon_ref(pack_id: str, path: str) -> str:
     """The reference for icon ``path`` of pack ``pack_id``."""
     return f"{ICON_REF_PREFIX}{pack_id}/{path}"
