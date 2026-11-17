@@ -106,8 +106,14 @@ def test_install_calls_rpc_and_disables_buttons(dialog, manager, qapp):
     assert_that(installs).is_equal_to([("plugin_install_from_repository", "a.fresh")])
     assert_that(dialog._rows["a.fresh"].button.isEnabled()).is_false()
     assert_that(dialog._rows["a.update"].button.isEnabled()).is_false()
+    dialog._on_progress(PluginInstallProgressEvent(job_id="other", message="Uploading x"))
+    assert_that(dialog._rows["a.fresh"].button.text()).is_equal_to("Installing…")
     dialog._on_progress(PluginInstallProgressEvent(job_id="job-1", message="Downloading…"))
     assert_that(dialog._rows["a.fresh"].button.text()).is_equal_to("Downloading…")
+    dialog._on_finished(
+        PluginInstallFinishedEvent(job_id="other", ok=True, plugin_id="x", version="1", previous_version="", message="")
+    )
+    assert_that(dialog._installing).is_equal_to("a.fresh")
 
 
 def test_install_error_is_reported_and_buttons_return(dialog, manager, qapp):
@@ -153,3 +159,41 @@ def test_icons_load_incrementally(dialog, manager, qapp):
 def test_human_size():
     assert_that(human_size(512)).is_equal_to("512 B")
     assert_that(human_size(3 * 1024 * 1024)).is_equal_to("3.0 MiB")
+
+
+def test_not_connected_reports_and_keeps_buttons_usable(dialog, qapp):
+    AppContext.get().connection_manager = None
+    dialog.refresh()
+    assert_that(dialog._status.text()).contains("Not connected")
+
+    dialog._rows["a.fresh"].button.click()
+    assert_that(dialog._installing).is_none()
+    assert_that(dialog._status.text()).contains("Not connected")
+    assert_that(dialog._rows["a.fresh"].button.isEnabled()).is_true()
+
+
+def test_rpc_exception_restores_buttons(dialog, manager, qapp):
+    manager.call.side_effect = RuntimeError("boom")
+    dialog._rows["a.fresh"].button.click()
+    _settle(dialog, qapp)
+
+    assert_that(dialog._installing).is_none()
+    assert_that(dialog._status.text()).contains("Install failed")
+    assert_that(dialog._rows["a.fresh"].button.isEnabled()).is_true()
+
+    dialog.refresh()
+    _settle(dialog, qapp)
+    assert_that(dialog._status.text()).contains("Could not load")
+
+
+def test_finished_before_job_id_is_replayed(dialog, manager, qapp):
+    dialog._installing = "a.fresh"
+    dialog._on_finished(
+        PluginInstallFinishedEvent(
+            job_id="job-1", ok=True, plugin_id="a.fresh", version="2.0.0", previous_version="", message=""
+        )
+    )
+    assert_that(dialog._installing).is_equal_to("a.fresh")
+    dialog._after_start("job-1")
+    _settle(dialog, qapp)
+    assert_that(dialog._installing).is_none()
