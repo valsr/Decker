@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import stat
@@ -13,6 +14,7 @@ from assertpy import assert_that
 
 from decker.common import config
 from decker.plugin.environment import EnvironmentBuildError
+from decker.plugin.repository_index import IndexVersion
 from decker.plugin.settings_store import PluginSettingsStore
 from decker.plugin.target import ActionTarget
 from decker.server import plugin_installer as installer_module
@@ -23,6 +25,7 @@ from decker.server.plugin_installer import PluginInstaller, PluginInstallError
 from decker.server.plugins import PluginManager
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
+from tests.server.http_fixture import FixtureServer
 
 _SCRIPT = f"""#!{sys.executable}
 import json, sys
@@ -558,3 +561,109 @@ def test_uninstall_removes_a_folder_whose_manifest_failed_to_load(env):
     assert_that(broken.exists()).is_false()
     with pytest.raises(PluginInstallError, match="not installed"):
         env.installer.uninstall("../escape")
+
+
+# ----------------------------------------------------------------------
+# Install from a repository
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture(name="repo")
+def repo_fixture(tmp_path):
+    root = tmp_path / "served"
+    root.mkdir()
+    server = FixtureServer(root).start()
+    yield root, server
+    server.stop()
+
+
+def _index_version(root, server, data: bytes, version="1.0.0", **overrides) -> IndexVersion:
+    (root / "tool.deckerplugin").write_bytes(data)
+    fields = {
+        "version": version,
+        "decker": None,
+        "url": f"{server.base_url}/tool.deckerplugin",
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "released": "2026-01-01",
+        "contributes": {},
+    }
+    fields.update(overrides)
+    return IndexVersion(**fields)
+
+
+def _install_from_repo(env, version: IndexVersion) -> dict:
+    before = len(env.bus.of("plugin_install_finished"))
+    job = env.installer.install_from_repository("com.example.tool", version)
+    assert _wait_for(lambda: len(env.bus.of("plugin_install_finished")) > before)
+    finished = env.bus.of("plugin_install_finished")[-1]
+    assert_that(finished["job_id"]).is_equal_to(job)
+    return finished
+
+
+def test_repository_install_succeeds(env, repo, tmp_path):
+    root, server = repo
+
+    finished = _install_from_repo(env, _index_version(root, server, _package(tmp_path / "v.log")))
+
+    assert_that(finished).contains_entry({"ok": True}, {"plugin_id": "com.example.tool"}, {"version": "1.0.0"})
+    assert_that([p.manifest.id for p in env.manager.plugins()]).contains("com.example.tool")
+
+
+def test_download_progress_events(env, repo, tmp_path):
+    root, server = repo
+
+    _install_from_repo(env, _index_version(root, server, _package(tmp_path / "v.log")))
+
+    messages = [p["message"] for p in env.bus.of("plugin_install_progress")]
+    assert_that([m for m in messages if m.startswith("Downloading com.example.tool 1.0.0 (")]).is_not_empty()
+
+
+def test_sha_mismatch_fails_and_keeps_installed_version(env, repo, tmp_path):
+    root, server = repo
+    env.install(_package(tmp_path / "v1.log"))
+    data = _package(tmp_path / "v2.log", _manifest("2.0.0"))
+
+    finished = _install_from_repo(env, _index_version(root, server, data, "2.0.0", sha256="0" * 64))
+
+    assert_that(finished["ok"]).is_false()
+    assert_that(finished["message"]).contains("checksum")
+    installed = {p.manifest.id: p for p in env.manager.plugins()}["com.example.tool"]
+    assert_that(installed.manifest.version).is_equal_to("1.0.0")
+
+
+def test_truncated_download_fails(env, repo, tmp_path):
+    root, server = repo
+    data = _package(tmp_path / "v.log")
+
+    finished = _install_from_repo(env, _index_version(root, server, data, size=len(data) + 100))
+
+    assert_that(finished["ok"]).is_false()
+    assert_that(finished["message"]).contains("bytes")
+    assert_that(env.manager.plugins()).extracting("manifest").extracting("id").does_not_contain("com.example.tool")
+
+
+def test_manifest_mismatch_fails(env, repo, tmp_path):
+    root, server = repo
+    data = _package(tmp_path / "v.log", _manifest("1.0.0"))
+
+    finished = _install_from_repo(env, _index_version(root, server, data, "2.0.0"))
+
+    assert_that(finished["ok"]).is_false()
+    assert_that(finished["message"]).is_equal_to("package is com.example.tool 1.0.0, index says com.example.tool 2.0.0")
+
+
+def test_busy_while_job_running(env, repo, tmp_path):
+    root, server = repo
+    server.delay = 0.5
+    version = _index_version(root, server, _package(tmp_path / "v.log"))
+    before = len(env.bus.of("plugin_install_finished"))
+    env.installer.install_from_repository("com.example.tool", version)
+
+    with pytest.raises(PluginInstallError, match="busy"):
+        env.installer.install_from_repository("com.example.tool", version)
+    with pytest.raises(PluginInstallError, match="busy"):
+        env.installer.install("tool.deckerplugin", b"")
+
+    assert _wait_for(lambda: len(env.bus.of("plugin_install_finished")) > before)
+    assert_that(env.bus.of("plugin_install_finished")[-1]["ok"]).is_true()
