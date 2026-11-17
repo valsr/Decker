@@ -310,3 +310,57 @@ def test_disconnect_resets_the_in_flight_install(dialog, manager, qapp):
     assert_that(dialog._installing).is_none()
     assert_that(dialog._status.text()).contains("a.fresh", "interrupted")
     assert_that(dialog._rows["a.fresh"].button.isEnabled()).is_true()
+
+
+def _finish_install(dialog, plugin_id, version="2.0.0", ok=True, message=""):
+    dialog._installing = plugin_id
+    dialog._job_id = "job-1"
+    dialog._on_finished(
+        PluginInstallFinishedEvent(
+            job_id="job-1", ok=ok, plugin_id=plugin_id, version=version, previous_version="", message=message
+        )
+    )
+
+
+def test_installed_plugin_shows_installed_at_once_not_after_the_catalog_reloads(dialog, manager, qapp):
+    # The server's fresh catalog has not arrived yet (no _settle): the row must already say Installed.
+    _finish_install(dialog, "a.fresh")
+
+    button = dialog._rows["a.fresh"].button
+    assert_that((button.text(), button.isEnabled())).is_equal_to(("Installed", False))
+    _settle(dialog, qapp)
+
+
+def test_updated_plugin_shows_installed_at_once(dialog, manager, qapp):
+    _finish_install(dialog, "a.update", version="2.0.0")
+
+    button = dialog._rows["a.update"].button
+    assert_that((button.text(), button.isEnabled())).is_equal_to(("Installed", False))
+    _settle(dialog, qapp)
+
+
+def test_failed_install_does_not_mark_the_plugin_installed(dialog, manager, qapp):
+    _finish_install(dialog, "a.fresh", ok=False, message="boom")
+
+    button = dialog._rows["a.fresh"].button
+    assert_that((button.text(), button.isEnabled())).is_equal_to(("Install", True))
+    _settle(dialog, qapp)
+
+
+def test_servers_fresh_catalog_still_wins_after_an_install(dialog, manager, qapp):
+    manager.answers["repository_catalog"] = [_plugin("a.fresh", "Fresh", installed_version="2.0.0")]
+
+    _finish_install(dialog, "a.fresh")
+    _settle(dialog, qapp)
+
+    assert_that(list(dialog._rows)).is_equal_to(["a.fresh"])
+    assert_that(dialog._rows["a.fresh"].button.text()).is_equal_to("Installed")
+
+
+def test_installing_a_plugin_leaves_the_other_rows_alone(dialog, manager, qapp):
+    _finish_install(dialog, "a.fresh")
+
+    states = {pid: row.button.text() for pid, row in dialog._rows.items()}
+    assert_that(states["a.update"]).is_equal_to("Update")
+    assert_that(states["a.done"]).is_equal_to("Installed")
+    _settle(dialog, qapp)
