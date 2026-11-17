@@ -285,3 +285,15 @@ class TestInstallPackageFile:
             install_package_file(tmp_path / "missing.deckerplugin")
 
         warning.assert_called_once()
+
+
+def test_get_more_button_opens_single_dialog(manager, qapp):
+    tab = PluginsTab()
+    tab._get_more_btn.click()
+    first = tab._get_more_dialog
+    tab._get_more_btn.click()
+
+    assert_that(first).is_not_none()
+    assert_that(tab._get_more_dialog).is_same_as(first)
+    assert_that(first.isModal()).is_false()
+    first.close()
