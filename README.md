@@ -59,6 +59,12 @@ poe cli plugin remove com.example.hello
 You can also install from Settings, Plugins in the client, or by dropping a package on the main window. Installing
 is only allowed from the server's own machine unless `server.allow_remote_plugin_install` is `true`.
 
+Plugins can also come from repositories: Settings, Plugins, "Get More Plugins…" lets you search, install and update
+plugins from the repositories you have added (the default is `https://valsr.github.io/decker-plugins/index.json`).
+Decker checks them for updates daily, weekly (default), monthly or only on demand and shows a notification when updates
+are available. A repository can provide any plugin and plugins run with your user's permissions, so only add
+repositories you trust. See [plugin repositories](docs/plugins/repositories.md), including how to host your own.
+
 Writing a plugin: see the [plugin documentation](docs/plugins/README.md) (package format and manifest, settings
 schema, protocol, Python SDK and limits).
 
