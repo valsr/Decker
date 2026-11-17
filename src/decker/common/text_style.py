@@ -44,12 +44,13 @@ def _is_int_in(value: Any, bounds: tuple[int, int]) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and bounds[0] <= value <= bounds[1]
 
 
-def _is_color(value: Any) -> bool:
+def is_color(value: Any) -> bool:
+    """True for ``#rrggbb`` or ``#rrggbbaa``."""
     return isinstance(value, str) and _COLOR_PATTERN.match(value) is not None
 
 
 def _is_outline(value: Any) -> bool:
-    return value is None or value == "" or _is_color(value)
+    return value is None or value == "" or is_color(value)
 
 
 _VALIDATORS: dict[str, Callable[[Any], bool]] = {
@@ -62,7 +63,7 @@ _VALIDATORS: dict[str, Callable[[Any], bool]] = {
     "underline": lambda v: isinstance(v, bool),
     "strike": lambda v: isinstance(v, bool),
     "position": lambda v: v in POSITIONS,
-    "color": _is_color,
+    "color": is_color,
     "outline": _is_outline,
     "outline_width": lambda v: _is_int_in(v, OUTLINE_WIDTH_RANGE),
 }
