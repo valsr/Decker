@@ -75,10 +75,11 @@ class KeyAssignmentStore(Manager):
         self._db.commit()
 
     def destroy(self) -> None:
-        """Close the database connection."""
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        """Close the database connection once any statement running on another thread has finished."""
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
 
     @property
     def _db(self) -> sqlite3.Connection:

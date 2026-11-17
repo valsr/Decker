@@ -214,3 +214,39 @@ class TestAppearance:
         assert_that(counter.settings).is_equal_to({"step": 2, "title": "stale client value"})
         assert_that(counter.appearance).is_equal_to({"background": "#ff0000", "title": "A"})
         second.destroy()
+
+
+class TestDestroyWhileInUse:
+    """Closing the shared sqlite connection while another thread runs a statement on it crashes the process."""
+
+    def test_destroy_waits_for_an_in_flight_statement(self, store):
+        import threading
+        import time
+
+        finished = threading.Event()
+
+        def close_store() -> None:
+            store.destroy()
+            finished.set()
+
+        with store._lock:  # pylint: disable=protected-access  # stands in for a statement running in another thread
+            closer = threading.Thread(target=close_store)
+            closer.start()
+            time.sleep(0.2)
+
+            assert_that(finished.is_set()).described_as("destroy() closed the connection mid-statement").is_false()
+            assert_that(store._conn).is_not_none()  # pylint: disable=protected-access
+
+        closer.join(5)
+        assert_that(finished.is_set()).is_true()
+        assert_that(store._conn).is_none()  # pylint: disable=protected-access
+
+    def test_use_after_destroy_raises_instead_of_crashing(self, store):
+        store.destroy()
+
+        with pytest.raises(AssertionError):
+            store.plugin_ids()
+
+    def test_destroy_twice_is_harmless(self, store):
+        store.destroy()
+        store.destroy()
