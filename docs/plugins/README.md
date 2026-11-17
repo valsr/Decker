@@ -8,6 +8,7 @@ to build one without reading Decker's source.
 - [Protocol](protocol.md): the newline-delimited JSON messages exchanged with the Decker server
 - [Python SDK and CLI quick start](sdk-quickstart.md): `poe cli plugin new|pack|install`
 - [Limits, lifecycle and the launch environment](limits.md)
+- [Plugin repositories](repositories.md): index format, update checks, hosting your own repository
 
 Plugins run with your user's permissions and are not sandboxed. Only install plugins from authors you trust.
 
