@@ -22,6 +22,34 @@ and stored as `null`), `placeholder`, `help`.
 | `color` | | `#rrggbb` |
 | `font` | | font family name |
 | `icon` | | a file path (reserved for the icon library) |
+| `text_style` | | an object, see [Text style](#text-style); `default` may be partial |
+
+## Text style
+
+`text_style` is one text field with a cog that opens a formatting toolbar (font, size, bold, italic, underline,
+strikethrough, position, colour, outline, outline width, visible). Declare it like any other field:
+
+```json
+{ "key": "label", "type": "text_style", "label": "Label", "default": { "position": "top", "size": 14 } }
+```
+
+The value is an object with these fields; missing or invalid fields fall back to the field's default (per field,
+never the whole value):
+
+| Field | Type | Default |
+|-------|------|---------|
+| `text` | string | `""` |
+| `visible` | boolean | `true` |
+| `font` | font family name | `"DejaVu Sans"` |
+| `size` | integer 4–48 | `12` |
+| `bold`, `italic`, `underline`, `strike` | boolean | `false` |
+| `position` | `"top"`, `"middle"` or `"bottom"` | `"bottom"` |
+| `color` | `#rrggbb` or `#rrggbbaa` (alpha last) | `"#ffffff"` |
+| `outline` | `#rrggbb`, `#rrggbbaa` or `null` (no outline) | `null` |
+| `outline_width` | integer 1–6 | `1` |
+
+Two text areas on one key are two `text_style` fields. Decker's own key title (appearance key `title`) is a
+`text_style` field.
 
 ## Validation
 

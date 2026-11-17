@@ -4,6 +4,8 @@ from assertpy import assert_that
 from PyQt6.QtWidgets import QCheckBox, QLabel, QLineEdit, QPlainTextEdit, QSpinBox
 
 from decker.client.widgets.schema_form import SchemaForm
+from decker.client.widgets.text_style_edit import TextStyleEdit
+from decker.common.text_style import TEXT_STYLE_DEFAULTS
 
 
 def _form(schema: list[dict[str, Any]], values: dict[str, Any] | None = None) -> SchemaForm:
@@ -106,3 +108,28 @@ class TestSchemaForm:  # pylint: disable=protected-access
         form = _form([{"key": "a", "type": "bool"}])
         form.set_schema([{"key": "b", "type": "bool"}], {})
         assert_that(form.values()).contains_key("b").does_not_contain_key("a")
+
+
+class TestTextStyleField:  # pylint: disable=protected-access
+    _ENTRY: dict[str, Any] = {"key": "label", "type": "text_style", "label": "Label"}
+
+    def test_round_trips(self, qapp):  # pylint: disable=unused-argument
+        form = _form([self._ENTRY], {"label": {"text": "Hi", "bold": True}})
+        assert isinstance(form._fields["label"].widget, TextStyleEdit)
+        assert_that(form.values()["label"]).is_equal_to({**TEXT_STYLE_DEFAULTS, "text": "Hi", "bold": True})
+
+    def test_default_applied(self, qapp):  # pylint: disable=unused-argument
+        default = {**TEXT_STYLE_DEFAULTS, "position": "top"}
+        form = _form([{**self._ENTRY, "default": default}])
+        assert_that(form.values()["label"]).is_equal_to(default)
+
+    def test_two_fields_are_independent(self, qapp):  # pylint: disable=unused-argument
+        form = _form([self._ENTRY, {**self._ENTRY, "key": "other", "label": "Other"}], {"label": {"text": "A"}})
+        form._fields["other"].set({"text": "B", "italic": True})
+        assert_that(form.values()["label"]["text"]).is_equal_to("A")
+        assert_that(form.values()["label"]["italic"]).is_false()
+        assert_that(form.values()["other"]).contains_entry({"text": "B"}, {"italic": True})
+
+    def test_row_label(self, qapp):  # pylint: disable=unused-argument
+        form = _form([self._ENTRY])
+        assert_that([lb.text() for lb in form.findChildren(QLabel)]).contains("Label:")
