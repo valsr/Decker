@@ -61,7 +61,8 @@ class TestDisplay:
 
         assert_that(asked).contains("pack:a/b.svg")
         assert_that(widget.icon().isNull()).is_false()  # the Decker icon
-        assert_that(all(not widget.popup_list.item(i).icon().isNull() for i in (0, 2))).is_true()
+        items = [widget.popup_list.item(i) for i in (0, 2)]
+        assert_that(all(item is not None and not item.icon().isNull() for item in items)).is_true()
 
 
 class TestSelecting:

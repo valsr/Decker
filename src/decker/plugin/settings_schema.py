@@ -103,14 +103,18 @@ def _parse_extra(type_: str, data: dict[str, Any], where: str) -> dict[str, Any]
                 raise ValueError(f"{where}: '{name}' must be an integer for an int field")
     if "special_value" in extra and not isinstance(extra["special_value"], str):
         raise ValueError(f"{where}: 'special_value' must be a string")
-    if "profile_field" in data and type_ != "page":
-        raise ValueError(f"{where}: 'profile_field' is only valid on page fields")
-    if "profile_field" in extra and not isinstance(extra["profile_field"], str):
-        raise ValueError(f"{where}: 'profile_field' must be a string")
+    _check_profile_field(type_, data, extra, where)
     for name in ("multiline", "alpha", "template"):
         if name in extra and not isinstance(extra[name], bool):
             raise ValueError(f"{where}: '{name}' must be a boolean")
     return extra
+
+
+def _check_profile_field(type_: str, data: dict[str, Any], extra: Mapping[str, Any], where: str) -> None:
+    if "profile_field" in data and type_ != "page":
+        raise ValueError(f"{where}: 'profile_field' is only valid on page fields")
+    if "profile_field" in extra and not isinstance(extra["profile_field"], str):
+        raise ValueError(f"{where}: 'profile_field' must be a string")
 
 
 def _in_range(value: float, extra: Mapping[str, Any]) -> bool:
