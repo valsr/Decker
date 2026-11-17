@@ -96,6 +96,8 @@ class TextStyleToolbar(QFrame):  # pylint: disable=too-many-instance-attributes
 
     style_changed = pyqtSignal()
     closed = pyqtSignal()
+    picker_opened = pyqtSignal()
+    picker_closed = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Popup)
@@ -221,6 +223,9 @@ class TextStyleToolbar(QFrame):  # pylint: disable=too-many-instance-attributes
         self._color.color_changed.connect(self._changed)
         self._outline.color_changed.connect(self._on_outline_changed)
         self._width.valueChanged.connect(self._changed)
+        for button in (self._color, self._outline):
+            button.picker_opened.connect(self.picker_opened)
+            button.picker_closed.connect(self.picker_closed)
         for widget in (self._color, self._outline, self._width_minus, self._width, self._width_plus):
             self._row.addWidget(widget)
         self._row.addWidget(_separator())

@@ -30,6 +30,8 @@ class ColorToolButton(QToolButton):
     """A glyph over a colour bar; the main part opens an RGBA picker and the arrow menu offers "None"."""
 
     color_changed = pyqtSignal(object)
+    picker_opened = pyqtSignal()
+    picker_closed = pyqtSignal()
 
     def __init__(self, icon_text: str, allow_none: bool = False, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -65,11 +67,17 @@ class ColorToolButton(QToolButton):
 
     def _pick(self) -> None:
         initial = self._color if self._color is not None else QColor("#ffffff")
-        chosen = QColorDialog.getColor(initial, self, "Choose colour", QColorDialog.ColorDialogOption.ShowAlphaChannel)
-        if chosen.isValid() and chosen != self._color:
-            self._color = chosen
-            self._refresh()
-            self.color_changed.emit(self.color)
+        self.picker_opened.emit()
+        try:
+            chosen = QColorDialog.getColor(
+                initial, self, "Choose colour", QColorDialog.ColorDialogOption.ShowAlphaChannel
+            )
+            if chosen.isValid() and chosen != self._color:
+                self._color = chosen
+                self._refresh()
+                self.color_changed.emit(self.color)
+        finally:
+            self.picker_closed.emit()
 
     def _clear(self) -> None:
         if self._color is not None:

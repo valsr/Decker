@@ -3,7 +3,7 @@
 # pylint: disable=protected-access,unused-argument
 from assertpy import assert_that
 from PyQt6.QtCore import QRect, Qt
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtGui import QColor, QGuiApplication
 from PyQt6.QtTest import QTest
 
 from decker.client.widgets.text_style_edit import TextStyleEdit
@@ -114,3 +114,54 @@ class TestTextStyleEdit:
         field_bottom = edit.mapToGlobal(edit.rect().bottomLeft()).y()
         assert_that(edit._toolbar.geometry().top()).is_greater_than_or_equal_to(field_bottom)
         edit._toolbar.close()
+
+
+class TestPopupSurvivesColourDialog:
+    def _dialog_that_hides_popup(self, edit: TextStyleEdit, result: QColor):
+        def fake(*_a, **_k) -> QColor:
+            edit._toolbar.hide()  # what a Popup-type window does when a modal dialog opens
+            return result
+
+        return fake
+
+    def test_popup_reopens_after_picking_a_colour(self, qapp, monkeypatch):  # pylint: disable=unused-argument
+        edit = TextStyleEdit()
+        edit.show()
+        edit._cog.trigger()
+        monkeypatch.setattr(
+            "decker.client.widgets.color_tool_button.QColorDialog.getColor",
+            self._dialog_that_hides_popup(edit, QColor("#00ff00")),
+        )
+
+        edit._toolbar._color.click()
+
+        assert_that(edit._toolbar.isVisible()).is_true()
+        assert_that(edit._cog.isChecked()).is_true()
+        assert_that(edit.value()["color"]).is_equal_to("#00ff00")
+        edit._toolbar.close()
+
+    def test_popup_reopens_after_cancelled_outline_dialog(self, qapp, monkeypatch):  # pylint: disable=unused-argument
+        edit = TextStyleEdit()
+        edit.show()
+        edit._cog.trigger()
+        monkeypatch.setattr(
+            "decker.client.widgets.color_tool_button.QColorDialog.getColor",
+            self._dialog_that_hides_popup(edit, QColor()),
+        )
+
+        edit._toolbar._outline.click()
+
+        assert_that(edit._toolbar.isVisible()).is_true()
+        assert_that(edit.value()["outline"]).is_none()
+        edit._toolbar.close()
+
+    def test_closed_popup_stays_closed_after_dialog(self, qapp, monkeypatch):  # pylint: disable=unused-argument
+        edit = TextStyleEdit()
+        edit.show()
+        monkeypatch.setattr(
+            "decker.client.widgets.color_tool_button.QColorDialog.getColor", lambda *_a, **_k: QColor("#00ff00")
+        )
+
+        edit._toolbar._color.click()
+
+        assert_that(edit._toolbar.isVisible()).is_false()
