@@ -198,14 +198,6 @@ def test_install_new_plugin_registers_and_announces(env, tmp_path):
     assert_that([p.name for p in env.plugins_dir.iterdir()]).is_equal_to(["com.example.tool"])
 
 
-def test_install_refuses_bundled_id(env, tmp_path):
-    finished = env.install(_package(tmp_path / "x.log", _manifest(plugin_id="com.decker.counter")))
-
-    assert_that(finished["ok"]).is_false()
-    assert_that(finished["message"]).contains("bundled")
-    assert_that(env.plugins_dir.exists() and list(env.plugins_dir.iterdir())).is_false()
-
-
 def test_install_refuses_incompatible_decker_version(env, tmp_path):
     finished = env.install(_package(tmp_path / "x.log", _manifest(decker=">=9.0")))
 
@@ -367,11 +359,6 @@ def test_uninstall_clears_keys_on_all_pages_and_removes_folder(env, tmp_path):
     assert_that(store.get_settings("com.example.tool", ACTION, "a")).is_empty()
 
 
-def test_uninstall_bundled_refused(env):
-    with pytest.raises(PluginInstallError, match="bundled"):
-        env.installer.uninstall("com.decker.counter")
-
-
 def test_uninstall_unknown_refused(env):
     with pytest.raises(PluginInstallError, match="not installed"):
         env.installer.uninstall("com.example.missing")
@@ -472,10 +459,9 @@ class TestServiceRules:
         listed = {p["id"]: p for p in json.loads(service.plugins_list())}
 
         tool = listed["com.example.tool"]
-        assert_that(tool).contains_entry({"name": "Tool"}, {"version": "1.0.0"}, {"bundled": False}, {"actions": 1})
+        assert_that(tool).contains_entry({"name": "Tool"}, {"version": "1.0.0"}, {"actions": 1})
         assert_that(tool).contains_entry({"icon_packs": 0}, {"icon_b64": ""}, {"global_settings": {"token": "none"}})
         assert_that(tool["global_settings_schema"][0]["key"]).is_equal_to("token")
-        assert_that(listed["com.decker.counter"]["bundled"]).is_true()
 
     def test_global_settings_validated_persisted_and_sent(self, env, tmp_path):
         log = tmp_path / "v1.log"

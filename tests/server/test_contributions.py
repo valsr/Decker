@@ -8,7 +8,7 @@ from decker.plugin.loader import InstalledPlugin, PluginLoader
 from decker.plugin.manifest import PluginManifest
 from decker.plugin.settings_store import PluginSettingsStore
 from decker.server.contributions import ContributionRegistry
-from decker.server.plugins import _BUNDLED_PLUGINS_DIR, PluginManager
+from decker.server.plugins import PluginManager
 
 
 class _Recorder:
@@ -38,7 +38,7 @@ def _plugin(tmp_path: Path, contributes: dict, runtime: bool = False) -> Install
     }
     if runtime:
         data["runtime"] = {"type": "python", "entry": "plugin.py"}
-    return InstalledPlugin(PluginManifest.from_dict(data), tmp_path, False)
+    return InstalledPlugin(PluginManifest.from_dict(data), tmp_path)
 
 
 _PACK = {"icon_packs": [{"id": "com.t.p.icons", "name": "Pack", "path": "pack"}]}
@@ -122,16 +122,16 @@ def test_bad_pack_path_is_a_load_failure_but_keeps_actions(tmp_path):
         manager.destroy()
 
 
-def test_counter_contributes_example_pack(tmp_path):
-    scan = PluginLoader(_BUNDLED_PLUGINS_DIR, bundled=True).scan()
-    counter = next(p for p in scan.plugins if p.manifest.id == "com.decker.counter")
+def test_fixture_contributes_example_pack(tmp_path):
+    scan = PluginLoader(Path(__file__).parents[1] / "fixtures" / "plugins").scan()
+    counter = next(p for p in scan.plugins if p.manifest.id == "com.decker.testfixture")
     registry = IconPackRegistry()
 
     registry.register(counter)
 
-    assert_that(registry.list_packs()).extracting("id").is_equal_to(["com.decker.counter.icons"])
-    icons = registry.list_icons("com.decker.counter.icons")
+    assert_that(registry.list_packs()).extracting("id").is_equal_to(["com.decker.testfixture.icons"])
+    icons = registry.list_icons("com.decker.testfixture.icons")
     assert_that(icons).is_not_empty()
-    data = registry.read_icon("com.decker.counter.icons", icons[0])
+    data = registry.read_icon("com.decker.testfixture.icons", icons[0])
     assert data is not None
     assert_that(data[:4]).is_equal_to(b"\x89PNG")

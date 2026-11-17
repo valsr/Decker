@@ -172,7 +172,7 @@ def _run(argv, conn):
 class TestPluginSubcommand:
     def test_app_routes_plugin_subcommands(self, capsys, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        conn = _FakeConn({"plugins_list": [{"id": "com.x.y", "version": "1.0.0", "name": "Y", "bundled": False}]})
+        conn = _FakeConn({"plugins_list": [{"id": "com.x.y", "version": "1.0.0", "name": "Y"}]})
         assert_that(_run(["plugin", "new", "com.x.y"], conn)).is_equal_to(0)
         assert_that(_run(["plugin", "pack", "com.x.y"], conn)).is_equal_to(0)
         package = tmp_path / "com.x.y-0.1.0.deckerplugin"

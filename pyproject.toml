@@ -82,7 +82,7 @@ exclude = [
     "build",
     "docs",
     "src/decker/assets/rasterize.py",
-    "src/decker/bundled_plugins",
+    "tests/fixtures",
 ]
 
 [[tool.mypy.overrides]]

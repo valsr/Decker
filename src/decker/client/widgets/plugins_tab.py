@@ -210,9 +210,8 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         self._plugin_list.blockSignals(True)
         self._plugin_list.clear()
         for plugin_id, plugin in sorted(self._plugins.items(), key=lambda kv: str(kv[1].get("name", kv[0])).lower()):
-            kind = "bundled" if plugin.get("bundled") else "installed"
             text = (
-                f"{plugin.get('name', plugin_id)}  v{plugin.get('version', '')} · {plugin.get('author', '')} · {kind}\n"
+                f"{plugin.get('name', plugin_id)}  v{plugin.get('version', '')} · {plugin.get('author', '')}\n"
                 f"{_contribution_summary(plugin)}"
             )
             if plugin_id in self._updates:
@@ -234,8 +233,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
 
     def _show_selection(self) -> None:
         plugin = self._plugins.get(self._selected_id or "")
-        removable = plugin is not None and not plugin.get("bundled")
-        self._uninstall_btn.setEnabled(removable and install_allowed())
+        self._uninstall_btn.setEnabled(plugin is not None and install_allowed())
         self._uninstall_btn.setToolTip("" if install_allowed() else NOT_ALLOWED_TOOLTIP)
         schema = plugin.get("global_settings_schema") if plugin else None
         if plugin is None or not schema:
@@ -268,7 +266,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
     def _on_uninstall_clicked(self) -> None:
         plugin = self._plugins.get(self._selected_id or "")
         manager = AppContext.get().connection_manager
-        if plugin is None or manager is None or plugin.get("bundled"):
+        if plugin is None or manager is None:
             return
         usage = manager.call("plugin_usage", plugin["id"])
         if usage is None:

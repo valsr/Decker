@@ -2,12 +2,14 @@ import base64
 import io
 import json
 import os
+import shutil
 import signal
 import stat
 import sys
 import threading
 import time
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -17,7 +19,6 @@ from PIL import Image
 
 from decker.common.model import DeviceHardwareInfo, KeyInfo
 from decker.plugin.gestures import Gesture
-from decker.plugin.loader import PluginLoader
 from decker.plugin.manifest import StateSpec
 from decker.plugin.protocol import Message
 from decker.plugin.runtime.supervisor import SupervisorPolicy
@@ -66,8 +67,9 @@ _REC_MANIFEST = {
     },
 }
 
-_COUNTER = "com.decker.counter"
-_COUNTER_ACTION = "com.decker.counter.counter"
+_FIXTURE_DIR = Path(__file__).parents[1] / "fixtures" / "plugins" / "com.decker.testfixture"
+_COUNTER = "com.decker.testfixture"
+_COUNTER_ACTION = "com.decker.testfixture.counter"
 _REC_ACTION = "com.decker.rec.show"
 _FAST = SupervisorPolicy(idle_grace_s=30.0, backoff_s=(0.05,), max_crashes=1, ping_interval_s=30.0)
 _RESTARTING = SupervisorPolicy(idle_grace_s=30.0, backoff_s=(0.05,), max_crashes=5, ping_interval_s=30.0)
@@ -164,6 +166,7 @@ class Env:
         script = self.rec_dir / "rec.py"
         script.write_text(_RECORDER)
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        shutil.copytree(_FIXTURE_DIR, self.plugins_dir / _COUNTER)
         self.dm = FakeDeviceManager()
         self.bus = FakeBus()
         self.persisted: list[tuple[ActionTarget, dict]] = []
@@ -240,13 +243,20 @@ class TestListing:
 
         assert_that(env.manager.list_actions()).is_not_empty()
 
-    def test_bundled_counter_is_loaded_alongside_user_plugins(self, env):
-        plugins = {p.manifest.id: p for p in env.manager.plugins()}
+    def test_installed_plugins_are_loaded(self, env):
+        plugins = {p.manifest.id for p in env.manager.plugins()}
 
-        assert_that(plugins).contains_key(_COUNTER, "com.decker.rec")
-        assert_that(plugins[_COUNTER].bundled).is_true()
-        assert_that(plugins["com.decker.rec"].bundled).is_false()
+        assert_that(plugins).is_equal_to({_COUNTER, "com.decker.rec"})
         assert_that(env.manager.load_failures()).is_empty()
+
+    def test_key_for_missing_plugin_keeps_assignment_and_label(self, env):
+        missing = _target("com.example.gone", "com.example.gone.act")
+
+        env.manager.activate_action(missing)
+
+        assert_that(env.label()).is_equal_to("Plugin missing")
+        assert_that(env.dm.cleared).contains(0)
+        assert_that(env.manager.live_targets("com.example.gone")).is_empty()
 
     def test_complete_settings_fills_defaults(self, env):
         assert_that(env.manager.complete_settings(REC_TARGET, {"n": "3", "junk": 1})).is_equal_to({"n": 3, "t": "x"})
@@ -797,22 +807,14 @@ def test_plugins_dir_loader_failure_is_reported(tmp_path):
         manager.destroy()
 
 
-def test_user_plugin_with_bundled_id_is_rejected(tmp_path):
-    dup = tmp_path / "com.decker.counter"
-    dup.mkdir()
-    bundled = PluginLoader(
-        __import__(
-            "decker.server.plugins", fromlist=["_BUNDLED_PLUGINS_DIR"]
-        )._BUNDLED_PLUGINS_DIR  # pylint: disable=protected-access
-    ).scan()
-    (dup / "manifest.json").write_text(
-        json.dumps({**json.loads((bundled.plugins[0].plugin_dir / "manifest.json").read_text())})
-    )
+def test_duplicate_plugin_id_is_rejected(tmp_path):
+    shutil.copytree(_FIXTURE_DIR, tmp_path / "a")
+    shutil.copytree(_FIXTURE_DIR, tmp_path / "b")
     manager = PluginManager(tmp_path, _FAST, PluginSettingsStore(tmp_path / "db.sqlite"))
     manager.create(SimpleNamespace(device_manager=FakeDeviceManager(), event_bus=FakeBus()))  # type: ignore[arg-type]
     try:
         assert_that(manager.load_failures()).extracting("error").contains("duplicate plugin id")
-        assert_that([p for p in manager.plugins() if p.manifest.id == "com.decker.counter"][0].bundled).is_true()
+        assert_that(manager.plugins()).is_length(1)
     finally:
         manager.destroy()
 
