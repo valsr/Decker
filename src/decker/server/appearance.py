@@ -5,6 +5,7 @@ import io
 import logging
 import subprocess
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
@@ -17,31 +18,38 @@ from decker.plugin.settings_schema import apply_schema, parse_settings_schema
 _BASE_SIZE = 72  # title sizes in settings are relative to a 72 px key
 _FALLBACK_FONT = "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
 _TITLE_MARGIN = 4
+_BOLD_WEIGHT = 180  # fontconfig weight at or above which a face counts as really bold (FC_WEIGHT_BOLD is 200)
 _PARSED_SCHEMA = parse_settings_schema(APPEARANCE_SCHEMA, "appearance")
 _RENDERER = AssetRenderer()
 
 
-@functools.lru_cache(maxsize=32)
-def _font_file(family: str) -> str | None:
-    """Resolve a font family to a file with fontconfig; None if it is unavailable."""
+@functools.lru_cache(maxsize=64)
+def _font_file(family: str, bold: bool = False, italic: bool = False) -> tuple[str | None, bool]:
+    """Resolve a family (and style) to ``(file, is_really_bold)`` with fontconfig; the file is None if unavailable."""
+    pattern = family + (":bold" if bold else "") + (":italic" if italic else "")
     try:
         result = subprocess.run(
-            ["fc-match", family, "--format=%{file}"], capture_output=True, text=True, timeout=2, check=True
+            ["fc-match", pattern, "--format=%{file}\n%{weight}"], capture_output=True, text=True, timeout=2, check=True
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        logging.debug("fc-match failed for %r: %s", family, exc)
-        return None
-    return result.stdout.strip() or None
+        logging.debug("fc-match failed for %r: %s", pattern, exc)
+        return None, False
+    path, _, weight = result.stdout.partition("\n")
+    return (path.strip() or None), weight.strip().isdigit() and int(weight) >= _BOLD_WEIGHT
 
 
-def _font(family: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    for path in (_font_file(family), _FALLBACK_FONT):
-        if path:
+def _font(
+    family: str, size: int, bold: bool = False, italic: bool = False
+) -> tuple[ImageFont.FreeTypeFont | ImageFont.ImageFont, bool]:
+    """The font and whether it is really bold (so the caller knows when to fake it)."""
+    path, real_bold = _font_file(family, bold, italic)
+    for candidate, is_bold in ((path, real_bold), (_FALLBACK_FONT, True)):
+        if candidate:
             try:
-                return ImageFont.truetype(path, size)
+                return ImageFont.truetype(candidate, size), is_bold
             except OSError:
                 continue
-    return ImageFont.load_default(size)
+    return ImageFont.load_default(size), False
 
 
 def resolve_appearance(action_defaults: Mapping[str, Any], stored: Mapping[str, Any]) -> dict[str, Any]:
@@ -54,22 +62,74 @@ def resolve_appearance(action_defaults: Mapping[str, Any], stored: Mapping[str, 
     return apply_schema(_PARSED_SCHEMA, merged)
 
 
+@dataclass(frozen=True)
+class _TitleDraw:
+    text: str
+    xy: tuple[int, int]
+    anchor: str
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont
+    color: str
+    outline: str | None
+    outline_width: int
+    fake_bold: int
+
+
+def _draw_text_passes(draw: ImageDraw.ImageDraw, t: _TitleDraw) -> None:
+    if t.outline:
+        draw.text(
+            t.xy,
+            t.text,
+            fill=t.outline,
+            font=t.font,
+            anchor=t.anchor,
+            stroke_width=t.outline_width + t.fake_bold,
+            stroke_fill=t.outline,
+        )
+    draw.text(t.xy, t.text, fill=t.color, font=t.font, anchor=t.anchor, stroke_width=t.fake_bold, stroke_fill=t.color)
+
+
+def _decoration_rects(
+    draw: ImageDraw.ImageDraw, t: _TitleDraw, px: int, style: Mapping[str, Any]
+) -> list[tuple[int, int, int, int]]:
+    """Underline / strike rectangles (left, top, right, bottom) derived from the measured text box."""
+    left, top, right, _ = draw.textbbox(t.xy, t.text, font=t.font, anchor=t.anchor, stroke_width=t.fake_bold)
+    baseline = top - t.font.getbbox(t.text, anchor="ls")[1]
+    thickness = max(1, round(px / 14))
+    rects = []
+    if style["underline"]:
+        rects.append((left, baseline + thickness, right, baseline + 2 * thickness - 1))
+    if style["strike"]:
+        middle = baseline - round(px * 0.3)
+        rects.append((left, middle - thickness // 2, right, middle - thickness // 2 + thickness - 1))
+    return rects
+
+
 def _draw_title(draw: ImageDraw.ImageDraw, text: str, style: Mapping[str, Any], size: int) -> None:
     scale = size / _BASE_SIZE
     margin = round(_TITLE_MARGIN * scale)
-    anchor, y = {"top": ("mt", margin), "middle": ("mm", size // 2), "bottom": ("mb", size - margin)}[
-        style["position"]
-    ]
+    anchor, y = {"top": ("mt", margin), "middle": ("mm", size // 2), "bottom": ("mb", size - margin)}[style["position"]]
+    px = max(1, round(style["size"] * scale))
+    font, real_bold = _font(style["font"] or "DejaVu Sans", px, style["bold"], style["italic"])
     outline = style["outline"] or None
-    draw.text(
-        (size // 2, y),
-        text,
-        fill=style["color"],
-        font=_font(style["font"] or "DejaVu Sans", max(1, round(style["size"] * scale))),
+    t = _TitleDraw(
+        text=text,
+        xy=(size // 2, y),
         anchor=anchor,
-        stroke_width=round(style["outline_width"] * scale) if outline else 0,
-        stroke_fill=outline,
+        font=font,
+        color=style["color"],
+        outline=outline,
+        outline_width=round(style["outline_width"] * scale) if outline else 0,
+        fake_bold=max(1, round(px / 24)) if style["bold"] and not real_bold else 0,
     )
+    rects = _decoration_rects(draw, t, px, style)
+    if outline:
+        for l, tp, r, b in rects:
+            draw.rectangle(
+                (l - t.outline_width, tp - t.outline_width, r + t.outline_width, b + t.outline_width), fill=outline
+            )
+    _draw_text_passes(draw, t)
+    for rect in rects:
+        draw.rectangle(rect, fill=t.color)
 
 
 def compose_key_image(
