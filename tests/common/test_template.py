@@ -54,4 +54,6 @@ def test_very_long_text_is_linear():
 
 
 def test_variable_names_are_published():
-    assert_that(TEMPLATE_VARIABLES).is_equal_to(("page_name", "page_index", "page_count"))
+    assert_that(TEMPLATE_VARIABLES).is_equal_to(
+        ("page_name", "page_index", "page_count", "current_profile", "profile_id")
+    )

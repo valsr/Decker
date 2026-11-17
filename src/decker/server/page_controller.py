@@ -51,7 +51,7 @@ class PageController(Manager):
         locks, so taking the controller lock here would invert the lock order against page switches.
         """
         recorded = self._active.get(device_id)
-        if recorded is not None and self._in_active_profile(device_id, recorded):
+        if recorded is not None and self._ctx.page_store.get(device_id, recorded) is not None:
             return recorded
         with self._lock:
             page_id = self._active.get(device_id)
@@ -169,7 +169,7 @@ class PageController(Manager):
                 return None
             clone, mapping = cloned
             for source, target in mapping.items():
-                self._ctx.key_assignment_store.copy_page(device_id, source, target)
+                self._ctx.key_assignment_store.copy_page(device_id, source, target, mapping)
                 self._ctx.device_state_store.copy_page_state(device_id, source, target)
         self._notify(device_id, profiles=True)
         return clone

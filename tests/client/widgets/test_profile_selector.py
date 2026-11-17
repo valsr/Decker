@@ -169,3 +169,23 @@ class TestRename:
         selector.start_rename(9)
 
         assert_that(_editor(selector)).is_none()
+
+
+class TestRefresh:
+    def test_an_identical_refresh_keeps_a_rename_in_progress(self, selector):
+        selector.show_popup()
+        selector.start_rename(1)
+        _editor(selector).setText("Gam")
+
+        selector.set_profiles(_PROFILES, 2)
+
+        assert_that(selector._rename_edit).is_not_none()
+        assert_that(selector._rename_edit.text()).is_equal_to("Gam")
+
+    def test_a_changed_profile_list_cancels_the_rename(self, selector):
+        selector.show_popup()
+        selector.start_rename(1)
+
+        selector.set_profiles(_PROFILES[:2], 2)
+
+        assert_that(selector._rename_edit).is_none()

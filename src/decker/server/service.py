@@ -539,7 +539,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
     @api_response
     def profile_add(self, device_id: str, name: str = "") -> ProfileInfo | None:
         """Append a new profile with one page (named "Profile <id>" unless a name is given)."""
-        if self._context is None:
+        if self._context is None or not isinstance(name, str):
             return None
         return self._context.page_controller.add_profile(device_id, name or None)
 
@@ -547,7 +547,9 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
     def profile_rename(self, device_id: str, profile_id: int, name: str) -> bool:
         """Rename a profile. Returns False for an unknown profile or a blank name."""
         controller = self._controller_for(profile_id)
-        return controller is not None and controller.rename_profile(device_id, profile_id, name)
+        return (
+            controller is not None and isinstance(name, str) and controller.rename_profile(device_id, profile_id, name)
+        )
 
     @exposed
     def profile_set_icon(self, device_id: str, profile_id: int, icon: str) -> bool:

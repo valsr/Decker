@@ -284,15 +284,6 @@ class TestProfiles:
         assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(page.page_id)
         assert_that(_names(_events(context))).contains(PROFILES_CHANGED_EVENT)
 
-    def test_active_page_follows_active_profile_when_store_changes(self, context):
-        profile = context.page_store.add_profile(DEV)
-        context.page_controller.active_page_id(DEV)  # records PAGE1
-        context.page_store.set_active_profile(DEV, profile.profile_id)
-
-        assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(
-            context.page_store.default_page_id(DEV, profile.profile_id)
-        )
-
     def test_device_pages_snapshot_is_the_active_profiles(self, context):
         profile = context.page_controller.add_profile(DEV)
         context.page_controller.activate_profile(DEV, profile.profile_id)
@@ -405,3 +396,33 @@ class TestProfiles:
         assert_that(context.page_controller.delete_page(DEV, extra.page_id)).is_true()
 
         assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(PAGE1)
+
+    def test_clone_points_page_settings_at_the_copied_pages(self, context):
+        second = context.page_store.add_page(DEV, "Second")
+        context.key_assignment_store.assign(DEV, PAGE1, 0, _target(0, "go"), {"where": second.page_id})
+        other = context.page_controller.add_profile(DEV)
+        foreign = context.page_store.list_pages(DEV, other.profile_id)[0]
+        context.key_assignment_store.assign(DEV, PAGE1, 1, _target(1, "far"), {"where": foreign.page_id})
+
+        clone = context.page_controller.clone_profile(DEV, 0)
+
+        pages = context.page_store.list_pages(DEV, clone.profile_id)
+        copied = dict(context.key_assignment_store.all_for_page(DEV, pages[0].page_id))
+        assert_that(copied[0].settings["where"]).is_equal_to(pages[1].page_id)
+        assert_that(copied[1].settings["where"]).is_equal_to(foreign.page_id)
+
+    def test_active_page_is_read_without_the_lock_during_a_profile_switch(self, context):
+        controller = context.page_controller
+        profile = context.page_store.add_profile(DEV)
+        expected = controller.active_page_id(DEV)
+        context.page_store.set_active_profile(DEV, profile.profile_id)  # the window inside a switch
+        result: list[str] = []
+
+        with controller._lock:  # pylint: disable=protected-access
+            thread = threading.Thread(target=lambda: result.append(controller.active_page_id(DEV)))
+            thread.start()
+            thread.join(2)
+            finished = not thread.is_alive()
+
+        assert_that(finished).is_true()
+        assert_that(result).is_equal_to([expected])

@@ -13,7 +13,7 @@ from decker.plugin.settings_schema import SettingEntry, SettingField
 
 EMPTY_PAGE: dict[str, Any] = {"page_id": "", "name": "", "index": 0, "profile_id": -1}
 EMPTY_PROFILE: dict[str, Any] = {"profile_id": -1, "name": "", "index": 0, "icon": ""}
-_PROFILE_ID = re.compile(r"^[0-9]+$")
+_PROFILE_ID = re.compile(r"[0-9]+\Z")
 
 
 @dataclass(frozen=True)

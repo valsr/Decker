@@ -60,7 +60,7 @@ class TestResolveProfile:
             {"profile_id": 1, "name": "Play", "index": 3, "icon": DECKER_ICON_REF}
         )
 
-    @pytest.mark.parametrize("value", ["7", None, 5, "x", "-1", " 1", True])
+    @pytest.mark.parametrize("value", ["7", None, 5, "x", "-1", " 1", True, "1\n"])
     def test_unknown_or_garbage_is_empty(self, value):
         assert_that(resolve_profile(_layout(), value)).is_equal_to(
             {"profile_id": -1, "name": "", "index": 0, "icon": ""}

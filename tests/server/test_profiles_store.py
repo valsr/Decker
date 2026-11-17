@@ -220,3 +220,14 @@ class TestMigration:
             assert_that([p.page_id for p in store.list_pages("d")]).is_equal_to(["p1", "p2"])
             assert_that(store.default_page_id("d")).is_equal_to("p2")
             store.destroy()
+
+
+class TestAddPageValidation:
+    def test_unknown_profile_is_refused_and_leaves_no_orphan(self, store):
+        store.list_profiles("d")
+
+        with pytest.raises(ValueError):
+            store.add_page("d", "X", profile_id=42)
+
+        assert_that(store.list_pages("d", 42)).is_empty()
+        assert_that([p.name for p in store.list_pages("d")]).is_equal_to(["Page 1"])

@@ -409,3 +409,17 @@ class TestProfileFields:  # pylint: disable=protected-access
         form = _form(list(reversed(self._SCHEMA)), {"who": "2", "where": "w1"})
 
         assert_that(form.findChild(PageEdit).value()).is_equal_to("w1")
+
+    def test_changing_the_profile_never_reports_a_stale_page(self, qapp):  # pylint: disable=unused-argument
+        from decker.client.widgets.profile_edit import ProfileEdit
+
+        form = _form(self._SCHEMA, {"who": "", "where": "p2"})
+        reported: list[dict[str, Any]] = []
+        form.changed.connect(lambda: reported.append(form.values()))
+        profile = form.findChild(ProfileEdit)
+
+        profile.setCurrentIndex(2)
+        profile.activated.emit(2)
+
+        assert_that(reported).is_not_empty()
+        assert_that(all(values["where"] == "" for values in reported)).is_true()

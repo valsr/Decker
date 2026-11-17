@@ -272,3 +272,11 @@ class TestCopyPage:
 
     def test_copy_of_empty_page_is_empty(self, store):
         assert_that(store.copy_page("dev1", "nothing", "p2")).is_empty()
+
+    def test_copy_remaps_page_ids_found_in_settings(self, store):
+        store.assign("dev1", "p1", 0, _target(ctx="c0"), {"where": "p1", "other": "px", "n": 3})
+
+        copied = store.copy_page("dev1", "p1", "p2", {"p1": "p2"})
+
+        assert_that(copied[0][1].settings).is_equal_to({"where": "p2", "other": "px", "n": 3})
+        assert_that(store.get("dev1", "p1", 0).settings["where"]).is_equal_to("p1")

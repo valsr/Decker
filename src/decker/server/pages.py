@@ -243,8 +243,10 @@ class PageStore(Manager):
     def add_page(self, device_id: str, name: str | None = None, profile_id: int | None = None) -> PageInfo:
         """Append a page, named "Page N" (first unused N) unless a non-blank name is given."""
         with self._lock:
-            pages = self.list_pages(device_id, profile_id)
             target = self.active_profile_id(device_id) if profile_id is None else profile_id
+            if self.get_profile(device_id, target) is None:
+                raise ValueError(f"device {device_id!r} has no profile {target}")
+            pages = self.list_pages(device_id, target)
             page = PageInfo(page_id=uuid.uuid4().hex, name=(name or "").strip() or _next_page_name(pages))
             self._insert(device_id, page, self._next_position(device_id), target)
             return page
