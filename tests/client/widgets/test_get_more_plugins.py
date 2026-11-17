@@ -1,5 +1,6 @@
 """Tests for decker.client.widgets.get_more_plugins."""
 
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,9 +11,15 @@ from decker.client.events import (
     PluginInstallFinishedEvent,
     PluginInstallProgressEvent,
     PluginsChangedEvent,
+    ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
-from decker.client.widgets.get_more_plugins import GetMorePluginsDialog, human_size
+from decker.client.widgets import plugins_tab
+from decker.client.widgets.get_more_plugins import (
+    GetMorePluginsDialog,
+    button_state,
+    human_size,
+)
 
 # pylint: disable=protected-access,redefined-outer-name,unused-argument
 
@@ -60,15 +67,19 @@ def manager(qapp):
     cm.call.side_effect = lambda method, *args: answers.get(method)
     cm.answers = answers
     AppContext.get().connection_manager = cm
+    plugins_tab._install_allowed_cache = True
     yield cm
     AppContext.reset()
     EventManager.reset()
+    plugins_tab._install_allowed_cache = False
 
 
 def _settle(dialog, qapp):
-    while dialog._worker is not None and dialog._worker.is_alive():
-        dialog._worker.join(1)
-    qapp.processEvents()
+    for _ in range(3):
+        for worker in (dialog._worker, dialog._icon_worker):
+            while worker is not None and worker.is_alive():
+                worker.join(1)
+        qapp.processEvents()
 
 
 @pytest.fixture
@@ -153,9 +164,8 @@ def test_details_pane_shows_size_and_repository(dialog):
     assert_that(text).contains("Do it")
 
 
-def test_icons_load_incrementally(dialog, manager, qapp):
-    qapp.processEvents()
-    qapp.processEvents()
+def test_icons_load_one_at_a_time_off_the_ui_thread(dialog, manager, qapp):
+    _settle(dialog, qapp)
     ids = [c.args[1] for c in manager.call.call_args_list if c.args[0] == "repository_icon"]
     assert_that(ids).contains("a.fresh", "a.old")
 
@@ -222,3 +232,81 @@ def test_plugins_changed_ignored_while_installing(dialog, manager, qapp):
     _settle(dialog, qapp)
 
     assert_that(dialog._rows).is_length(4)
+
+
+def test_icon_rpc_runs_on_a_worker_thread(manager, qapp):
+    threads: list[int] = []
+
+    def fake(method, *args):
+        if method == "repository_icon":
+            threads.append(threading.get_ident())
+        return {"repository_catalog": [_plugin("a.fresh", "Fresh")]}.get(method, "")
+
+    manager.call.side_effect = fake
+    widget = GetMorePluginsDialog()
+    _settle(widget, qapp)
+
+    assert_that(threads).is_length(1)
+    assert_that(threads[0]).is_not_equal_to(threading.get_ident())
+    widget.close()
+
+
+def test_shadowed_duplicates_are_hidden_and_noted_on_the_winner(manager, qapp):
+    manager.answers["repository_catalog"] = [
+        _plugin("a.dup", "Dup", repository="https://one.example/index.json"),
+        _plugin(
+            "a.dup",
+            "Dup",
+            repository="https://two.example/index.json",
+            shadowed_by="https://one.example/index.json",
+            installed_version="1.0.0",
+        ),
+    ]
+    widget = GetMorePluginsDialog()
+    _settle(widget, qapp)
+
+    assert_that(widget._list.count()).is_equal_to(1)
+    assert_that(widget._rows["a.dup"].button.text()).is_equal_to("Install")
+    widget._list.setCurrentRow(0)
+    text = widget._details.text()
+    assert_that(text).contains("Also offered by https://two.example/index.json (not used)")
+    assert_that(text).contains("Repository: https://one.example/index.json")
+    widget.close()
+
+
+def test_fallback_uses_the_newest_version_when_none_is_compatible():
+    plugin = _plugin(
+        "a.old",
+        "Old",
+        latest_compatible=None,
+        versions=[
+            {"version": "9.0.0", "decker": ">=9", "size": 1, "contributes": {}},
+            {"version": "1.0.0", "decker": ">=1", "size": 1, "contributes": {}},
+        ],
+    )
+    assert_that(button_state(plugin)).is_equal_to(("Requires Decker >=9", False))
+
+
+def test_install_controls_disabled_when_not_allowed(manager, qapp):
+    plugins_tab._install_allowed_cache = False
+    widget = GetMorePluginsDialog()
+    _settle(widget, qapp)
+
+    assert_that(widget._rows["a.fresh"].button.isEnabled()).is_false()
+    assert_that(widget._rows["a.update"].button.isEnabled()).is_false()
+    assert_that(widget._rows["a.fresh"].button.toolTip()).is_not_empty()
+    widget._on_install("a.fresh")
+    assert_that(widget._installing).is_none()
+    widget.close()
+
+
+def test_disconnect_resets_the_in_flight_install(dialog, manager, qapp):
+    dialog._rows["a.fresh"].button.click()
+    _settle(dialog, qapp)
+    assert_that(dialog._installing).is_equal_to("a.fresh")
+
+    EventManager.get().emit(ServerDisconnectedEvent(reason="gone"))
+
+    assert_that(dialog._installing).is_none()
+    assert_that(dialog._status.text()).contains("a.fresh", "interrupted")
+    assert_that(dialog._rows["a.fresh"].button.isEnabled()).is_true()
