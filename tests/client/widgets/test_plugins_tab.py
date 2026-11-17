@@ -29,7 +29,6 @@ _PLUGINS = [
         "version": "1.0.0",
         "author": "Decker",
         "description": "",
-        "bundled": True,
         "actions": 2,
         "icon_packs": 1,
         "icon_b64": base64.b64encode(b"").decode(),
@@ -42,7 +41,6 @@ _PLUGINS = [
         "version": "2.1.0",
         "author": "Acme",
         "description": "Extra things",
-        "bundled": False,
         "actions": 1,
         "icon_packs": 0,
         "icon_b64": "",
@@ -90,8 +88,8 @@ def test_lists_plugins_with_contribution_summary(tab):
     texts = [tab._plugin_list.item(i).text() for i in range(tab._plugin_list.count())]
 
     assert_that(texts).is_length(2)
-    assert_that(texts[0]).contains("Core", "v1.0.0", "Decker", "bundled", "2 actions · 1 icon pack")
-    assert_that(texts[1]).contains("Extra", "Acme", "installed", "1 action")
+    assert_that(texts[0]).contains("Core", "v1.0.0", "Decker", "2 actions · 1 icon pack")
+    assert_that(texts[1]).contains("Extra", "Acme", "1 action")
 
 
 def test_uninstall_confirms_with_usage_count_and_calls_rpc(tab, manager):
@@ -111,9 +109,7 @@ def test_uninstall_declined_does_not_call_rpc(tab, manager):
     assert_that([c.args[0] for c in manager.call.call_args_list]).does_not_contain("plugin_uninstall")
 
 
-def test_bundled_plugin_has_no_uninstall(tab):
-    _select(tab, "com.decker.core")
-
+def test_uninstall_enabled_for_selected_plugin(tab):
     assert_that(tab._uninstall_btn.isEnabled()).is_false()
     _select(tab, "com.acme.extra")
     assert_that(tab._uninstall_btn.isEnabled()).is_true()

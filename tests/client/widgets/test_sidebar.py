@@ -60,13 +60,11 @@ class TestSidebarWidget:
         )  # pylint: disable=protected-access
 
 
-_COUNTER_PNG = (
-    Path(__file__).parents[3] / "src" / "decker" / "bundled_plugins" / "com.decker.counter" / "icons" / "counter.png"
-)
+_COUNTER_PNG = Path(__file__).parents[2] / "fixtures" / "plugins" / "com.decker.testfixture" / "icons" / "counter.png"
 _COUNTER = {
-    "plugin_uuid": "com.decker.counter",
+    "plugin_uuid": "com.decker.testfixture",
     "plugin_name": "Counter",
-    "action_uuid": "com.decker.counter.counter",
+    "action_uuid": "com.decker.testfixture.counter",
     "action_name": "Counter",
     "icon_b64": base64.b64encode(_COUNTER_PNG.read_bytes()).decode("ascii"),
 }
@@ -107,11 +105,11 @@ class TestActionGrid:  # pylint: disable=protected-access
     def test_icons_are_reused_across_searches(self, qapp):  # pylint: disable=unused-argument
         sidebar = SidebarWidget()
         sidebar.set_actions([_COUNTER])
-        first = sidebar._icons[("com.decker.counter", "com.decker.counter.counter")]
+        first = sidebar._icons[("com.decker.testfixture", "com.decker.testfixture.counter")]
 
         sidebar._search.setText("count")
 
-        assert_that(sidebar._icons[("com.decker.counter", "com.decker.counter.counter")]).is_same_as(first)
+        assert_that(sidebar._icons[("com.decker.testfixture", "com.decker.testfixture.counter")]).is_same_as(first)
 
 
 class TestDrag:  # pylint: disable=protected-access
@@ -139,9 +137,9 @@ class TestDrag:  # pylint: disable=protected-access
         payload = json.loads(bytes(mime.data("application/x-decker-action").data()))
         assert_that(payload).is_equal_to(
             {
-                "plugin_uuid": "com.decker.counter",
+                "plugin_uuid": "com.decker.testfixture",
                 "plugin_name": "Counter",
-                "action_uuid": "com.decker.counter.counter",
+                "action_uuid": "com.decker.testfixture.counter",
                 "action_name": "Counter",
             }
         )

@@ -1,13 +1,12 @@
 """Build the command line and environment used to launch a plugin process."""
 
 import os
-import sys
 from pathlib import Path
 
 from decker.plugin.manifest import RuntimeSpec
 
 
-def launch_command(plugin_dir: Path, runtime: RuntimeSpec, bundled: bool) -> list[str]:
+def launch_command(plugin_dir: Path, runtime: RuntimeSpec) -> list[str]:
     """Return the argv for a plugin; the entry must resolve inside `plugin_dir`."""
     root = plugin_dir.resolve()
     entry = (root / runtime.entry).resolve()
@@ -15,7 +14,7 @@ def launch_command(plugin_dir: Path, runtime: RuntimeSpec, bundled: bool) -> lis
         raise ValueError(f"entry '{runtime.entry}' resolves outside the plugin directory")
     if runtime.type == "executable":
         return [str(plugin_dir / runtime.entry)]
-    python = sys.executable if bundled else str(plugin_dir / ".venv/bin/python")
+    python = str(plugin_dir / ".venv/bin/python")
     return [python, "-m", "decker_plugin_sdk", str(plugin_dir / runtime.entry)]
 
 

@@ -671,7 +671,6 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             "version": manifest.version,
             "author": manifest.author,
             "description": manifest.description,
-            "bundled": plugin.bundled,
             "actions": len(manifest.actions),
             "icon_packs": len(manifest.icon_packs),
             "icon_b64": base64.b64encode(icon).decode("ascii") if icon else "",

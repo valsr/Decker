@@ -212,8 +212,7 @@ def _cmd_plugin_list(conn: CliConnection, _args: list[str]) -> int:
         return 0
     width = max(len(p["id"]) for p in plugins)
     for p in plugins:
-        suffix = " (bundled)" if p.get("bundled") else ""
-        print(f"  {p['id']:<{width}}  {p.get('version', ''):<10}  {p.get('name', '')}{suffix}")
+        print(f"  {p['id']:<{width}}  {p.get('version', ''):<10}  {p.get('name', '')}")
     return 0
 
 

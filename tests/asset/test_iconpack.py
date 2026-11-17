@@ -19,7 +19,7 @@ def _plugin(tmp_path, path="pack", plugin_id="com.t.p", pack_id="com.t.p.icons")
         "contributes": {"icon_packs": [{"id": pack_id, "name": "Pack", "path": path}]},
     }
     manifest = PluginManifest.from_dict(data)
-    return InstalledPlugin(manifest, tmp_path, False)
+    return InstalledPlugin(manifest, tmp_path)
 
 
 def _pack(tmp_path) -> None:

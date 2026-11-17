@@ -8,9 +8,7 @@ from PyQt6.QtCore import Qt
 
 from decker.client.action_icons import action_pixmap, decode_icon, placeholder_pixmap
 
-_COUNTER_PNG = (
-    Path(__file__).parents[2] / "src" / "decker" / "bundled_plugins" / "com.decker.counter" / "icons" / "counter.png"
-)
+_COUNTER_PNG = Path(__file__).parents[1] / "fixtures" / "plugins" / "com.decker.testfixture" / "icons" / "counter.png"
 
 
 def _b64(data: bytes) -> str:

@@ -61,12 +61,6 @@ class TestPluginLoader:
         assert_that(result.plugins).is_empty()
         assert_that(result.failures).is_length(1)
 
-    def test_bundled_flag_set(self, tmp_path):
-        _make_plugin(tmp_path)
-
-        assert_that(PluginLoader(tmp_path, bundled=True).scan().plugins[0].bundled).is_true()
-        assert_that(PluginLoader(tmp_path).scan().plugins[0].bundled).is_false()
-
 
 def test_recover_drops_staging_and_restores_a_moved_aside_version(tmp_path):
     import json

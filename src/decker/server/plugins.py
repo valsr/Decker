@@ -39,9 +39,9 @@ from decker.server.contributions import ContributionRegistry
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
 
-_BUNDLED_PLUGINS_DIR = Path(__file__).parent.parent / "bundled_plugins"
 _DEFAULT_MEMORY_LIMIT = 256 * 1024 * 1024
 _FAILED_LABEL = "Plugin failed"
+_MISSING_LABEL = "Plugin missing"
 _OPEN_URL_SCHEMES = ("http", "https")
 
 
@@ -144,7 +144,6 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     ) -> None:
         self._settings_store = settings_store if settings_store is not None else PluginSettingsStore()
         self._user_loader = PluginLoader(plugins_dir) if plugins_dir is not None else PluginLoader()
-        self._bundled_loader = PluginLoader(_BUNDLED_PLUGINS_DIR, bundled=True)
         self._failures: list[PluginLoadFailedEvent] = []
         self._plugins: dict[str, InstalledPlugin] = {}
         self._live: dict[str, _Live] = {}
@@ -176,11 +175,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         except OSError:
             logging.exception("Could not stage the plugin SDK; installed plugins will not be able to start")
         recover_interrupted_installs(self._user_loader.plugins_dir)
-        bundled = self._bundled_loader.scan()
         user = self._user_loader.scan()
         with self._lock:
-            self._failures = bundled.failures + user.failures
-        for plugin in bundled.plugins + user.plugins:
+            self._failures = user.failures
+        for plugin in user.plugins:
             with self._lock:
                 duplicate = plugin.manifest.id in self._plugins
                 if duplicate:
@@ -219,7 +217,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if manifest.runtime is None:
             return
         try:
-            command = launch_command(plugin.plugin_dir, manifest.runtime, plugin.bundled)
+            command = launch_command(plugin.plugin_dir, manifest.runtime)
         except ValueError as exc:
             self._record_failure(manifest.id, str(exc))
             return
@@ -231,10 +229,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         }
         with self._lock:
             self._hellos[manifest.id] = hello
-        if not plugin.bundled and self._sdk_path is None:
+        if self._sdk_path is None:
             self._record_failure(manifest.id, "plugin SDK is not staged")
             return
-        env = launch_env(None if plugin.bundled else self._sdk_path)
+        env = launch_env(self._sdk_path)
         self._supervisor.register(manifest.id, command, plugin.plugin_dir, env, hello)
 
     def remove_plugin(self, plugin_id: str) -> None:
@@ -361,7 +359,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         spec = self._action_spec(target.plugin_uuid, target.action_uuid)
         with self._lock:
             plugin = self._plugins.get(target.plugin_uuid)
-        if spec is None or plugin is None or plugin.manifest.runtime is None:
+        if plugin is None:
+            self._mark_missing(target)
+            return
+        if spec is None or plugin.manifest.runtime is None:
             logging.warning("Cannot activate unknown action %s/%s", target.plugin_uuid, target.action_uuid)
             return
         with self._lock:
@@ -650,6 +651,13 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                 return
             self._sink.clear_image(target.device_id, target.key_index)
             self._sink.set_title(target.device_id, target.key_index, _FAILED_LABEL)
+        self._notify_state(target.device_id, target.key_index)
+
+    def _mark_missing(self, target: ActionTarget) -> None:
+        logging.warning("Plugin %s is not installed; key %d keeps its assignment", target.plugin_uuid, target.key_index)
+        with self._lock:
+            self._sink.clear_image(target.device_id, target.key_index)
+            self._sink.set_title(target.device_id, target.key_index, _MISSING_LABEL)
         self._notify_state(target.device_id, target.key_index)
 
     def _drop_failure(self, plugin_id: str) -> None:

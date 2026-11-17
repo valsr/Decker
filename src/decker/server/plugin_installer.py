@@ -134,8 +134,6 @@ class PluginInstaller:
             plugins.remove_plugin(plugin_id)
             shutil.rmtree(folder, ignore_errors=True)
             return set()
-        if plugin.bundled:
-            raise PluginInstallError(f"{plugin_id} is bundled with Decker and cannot be uninstalled")
         for target in plugins.live_targets(plugin_id):
             plugins.deactivate_action(target)
         plugins.remove_plugin(plugin_id)
@@ -217,8 +215,6 @@ class PluginInstaller:
         if expect is not None and (manifest.id, manifest.version) != expect:
             raise PluginInstallError(f"package is {manifest.id} {manifest.version}, index says {expect[0]} {expect[1]}")
         existing = self._find(manifest.id)
-        if existing is not None and existing.bundled:
-            raise PluginInstallError(f"{manifest.id} is bundled with Decker and cannot be replaced")
         self._check_decker_version(manifest)
         self._plugins_dir.mkdir(parents=True, exist_ok=True)
         staging = self._plugins_dir / f".staging-{job_id}"
@@ -241,7 +237,7 @@ class PluginInstaller:
         if runtime is None:
             return
         try:
-            launch_command(staging, runtime, bundled=False)
+            launch_command(staging, runtime)
         except ValueError as exc:
             raise PluginInstallError(str(exc)) from exc
         if not (staging / runtime.entry).is_file():
@@ -290,7 +286,7 @@ class PluginInstaller:
             if swap.preexisting:
                 swap.final.rename(swap.old)
             staging.rename(swap.final)
-            plugins.add_plugin(InstalledPlugin(manifest, swap.final, False))
+            plugins.add_plugin(InstalledPlugin(manifest, swap.final))
             self._reactivate(manifest.id)
         except Exception:
             self._roll_back(swap)

@@ -17,7 +17,6 @@ class InstalledPlugin:
 
     manifest: PluginManifest
     plugin_dir: Path
-    bundled: bool
 
 
 @dataclass
@@ -31,9 +30,8 @@ class PluginScanResult:
 class PluginLoader:
     """Discovers the plugin folders in one directory."""
 
-    def __init__(self, plugins_dir: str | Path | None = None, bundled: bool = False) -> None:
+    def __init__(self, plugins_dir: str | Path | None = None) -> None:
         self._plugins_dir = Path(plugins_dir) if plugins_dir is not None else decker_paths.plugins()
-        self._bundled = bundled
 
     @property
     def plugins_dir(self) -> Path:
@@ -54,7 +52,7 @@ class PluginLoader:
                 logging.error("Failed to load plugin %s: %s", entry.name, exc)
                 result.failures.append(PluginLoadFailedEvent(plugin_uuid=entry.name, error=str(exc)))
                 continue
-            result.plugins.append(InstalledPlugin(manifest, entry, self._bundled))
+            result.plugins.append(InstalledPlugin(manifest, entry))
             logging.info("Found plugin %s", manifest.id)
         return result
 

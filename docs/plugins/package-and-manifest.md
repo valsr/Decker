@@ -103,7 +103,7 @@ JSON with snake_case keys. Unknown keys are ignored. `format` must be the intege
 image files (`svg`, `png`, `jpg`, `jpeg`), optionally ordered by an `icons.json` index. Icon packs
 need no `runtime`. Packs are served to clients over RPC; individual icons are limited in size.
 
-## Bundled plugins
+## Where plugins come from
 
-Plugins shipped inside Decker use the same format, run with Decker's own interpreter and cannot be uninstalled or
-replaced by an installed plugin with the same id.
+Decker ships no plugins. Plugins are installed from a `.deckerplugin` package or from a plugin repository
+(see [repositories](repositories.md)); the default repository publishes the Counter plugin.
