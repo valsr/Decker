@@ -423,7 +423,12 @@ class TestSystemIcons:
 
         builds: list[str] = []
         real = module.build_index
-        monkeypatch.setattr(module, "build_index", lambda *a, **k: builds.append("x") or real(*a, **k))
+
+        def counting(*args, **kwargs):
+            builds.append("x")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(module, "build_index", counting)
         icons = self._icons(tree)
 
         icons.list_icons("decker.system.actions")
