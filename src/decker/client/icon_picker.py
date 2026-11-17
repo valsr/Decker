@@ -2,20 +2,30 @@
 
 import json
 import shutil
-from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QObject,
+    QSize,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QLineEdit,
+    QListView,
     QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -25,6 +35,7 @@ from decker.client.action_icons import decode_icon, placeholder_pixmap
 
 _IMAGE_FILE_FILTER = "Images (*.svg *.png *.jpg *.jpeg *.gif *.webp)"
 _THUMB_SIZE = 64
+_FILTER_DELAY_MS = 150
 _DATA_ROLE = Qt.ItemDataRole.UserRole
 
 
@@ -43,36 +54,117 @@ class RpcCaller(Protocol):  # pylint: disable=too-few-public-methods
         """Call a server RPC; None on failure."""
 
 
-class IconPackBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods
-    """Two-pane dialog: icon packs installed on the server on the left, that pack's icons on the right."""
+class _IconModel(QAbstractListModel):
+    """The icons on show: ``(pack id, path)`` entries; the decoration is asked for only when a row is painted."""
+
+    def __init__(self, pixmap_for: Callable[[str, str], QPixmap], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._pixmap_for = pixmap_for
+        self._entries: list[tuple[str, str]] = []
+        self._rows: dict[tuple[str, str], int] = {}
+
+    def set_entries(self, entries: list[tuple[str, str]]) -> None:
+        """Replace the icons on show."""
+        self.beginResetModel()
+        self._entries = entries
+        self._rows = {entry: row for row, entry in enumerate(entries)}
+        self.endResetModel()
+
+    def entry(self, row: int) -> tuple[str, str] | None:
+        """The ``(pack id, path)`` of a row, or None when out of range."""
+        return self._entries[row] if 0 <= row < len(self._entries) else None
+
+    def refresh(self, entry: tuple[str, str]) -> None:
+        """Repaint the row of ``entry`` (its icon arrived)."""
+        row = self._rows.get(entry)
+        if row is not None:
+            index = self.index(row, 0)
+            self.dataChanged.emit(index, index, [Qt.ItemDataRole.DecorationRole])
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802  # pylint: disable=invalid-name
+        """Number of icons on show."""
+        return 0 if parent.isValid() else len(self._entries)
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        """Name, thumbnail (requested lazily) or tooltip of an icon."""
+        entry = self.entry(index.row()) if index.isValid() else None
+        if entry is None:
+            return None
+        pack_id, path = entry
+        if role == Qt.ItemDataRole.DisplayRole:
+            return Path(path).stem
+        if role == Qt.ItemDataRole.DecorationRole:
+            return self._pixmap_for(pack_id, path)
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return path
+        return None
+
+
+def _blank_pixmap() -> QPixmap:
+    pixmap = QPixmap(_THUMB_SIZE, _THUMB_SIZE)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    return pixmap
+
+
+class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-many-instance-attributes
+    """Icon browser: packs grouped by plugin on the left; a searchable thumbnail grid on the right."""
 
     icon_chosen = pyqtSignal(str, str)
 
-    def __init__(self, parent: QWidget | None, connection_manager: "RpcCaller | None") -> None:
+    def __init__(self, parent: QWidget | None, connection_manager: "RpcCaller | None", tint: str | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Choose icon from pack")
+        self.setWindowTitle("Choose icon")
+        self.resize(820, 520)
         self._cm = connection_manager
-        self._pixmaps: dict[tuple[str, str], QPixmap | None] = {}
-        self._pending: deque[tuple[str, str, QListWidgetItem]] = deque()
+        self._tint = tint or self.palette().text().color().name()
+        self._packs: list[dict[str, Any]] = []
+        self._names: dict[str, list[str]] = {}
+        self._pixmaps: dict[tuple[str, str], QPixmap] = {}
+        self._pending: list[tuple[str, str]] = []  # newest request first out: what is on screen now
+        self._queued: set[tuple[str, str]] = set()
+        self._load_scheduled = False
+        self._blank = _blank_pixmap()
 
-        self._pack_list = QListWidget()
-        self._icon_list = QListWidget()
-        self._icon_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self._tree = QTreeWidget()
+        self._tree.setHeaderHidden(True)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search icons by name")
+        self._search.setClearButtonEnabled(True)
+        self._model = _IconModel(self._pixmap_for, self)
+        self._icon_list = QListView()
+        self._icon_list.setModel(self._model)
+        self._icon_list.setViewMode(QListView.ViewMode.IconMode)
         self._icon_list.setIconSize(QSize(_THUMB_SIZE, _THUMB_SIZE))
-        self._icon_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._icon_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self._icon_list.setMovement(QListView.Movement.Static)
+        self._icon_list.setUniformItemSizes(True)
+        self._icon_list.setEditTriggers(QListView.EditTrigger.NoEditTriggers)
         self._status = QLabel()
         self._status.setProperty("role", "muted")
-        self._pack_list.currentItemChanged.connect(self._on_pack_selected)
-        self._icon_list.itemDoubleClicked.connect(self._on_icon_chosen)
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(_FILTER_DELAY_MS)
+        self._filter_timer.timeout.connect(self._refresh)
+        self._search.textChanged.connect(self._on_search_edited)
+        self._tree.currentItemChanged.connect(lambda _current, _previous: self._refresh())
+        self._icon_list.doubleClicked.connect(self._on_activated)
+        self._icon_list.activated.connect(self._on_activated)
 
+        right = QVBoxLayout()
+        right.addWidget(self._search)
+        right.addWidget(self._icon_list)
         panes = QHBoxLayout()
-        panes.addWidget(self._pack_list, 1)
-        panes.addWidget(self._icon_list, 2)
+        panes.addWidget(self._tree, 1)
+        panes.addLayout(right, 3)
         layout = QVBoxLayout(self)
         layout.addLayout(panes)
         layout.addWidget(self._status)
 
         self._populate_packs()
+
+    def _on_search_edited(self, _text: str) -> None:
+        self._cancel_pending()  # what is on screen is about to change; do not fetch icons that will vanish
+        self._filter_timer.start()
 
     def _call_json(self, method: str, *args: str) -> Any:
         if self._cm is None:
@@ -93,61 +185,116 @@ class IconPackBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods
         if not packs:
             self._status.setText("No icon packs are installed on the server.")
             return
-        for pack in packs:
-            item = QListWidgetItem(str(pack.get("name", pack["id"])))
-            item.setData(_DATA_ROLE, pack["id"])
-            self._pack_list.addItem(item)
+        self._packs = [p for p in packs if isinstance(p, dict) and "id" in p]
+        everything = QTreeWidgetItem(["All icons"])
+        everything.setData(0, _DATA_ROLE, ("all", ""))
+        self._tree.addTopLevelItem(everything)
+        plugins: dict[str, QTreeWidgetItem] = {}
+        for pack in self._packs:
+            plugin_id = str(pack.get("plugin_id", ""))
+            node = plugins.get(plugin_id)
+            if node is None:
+                node = QTreeWidgetItem([str(pack.get("plugin_name") or plugin_id)])
+                node.setData(0, _DATA_ROLE, ("plugin", plugin_id))
+                self._tree.addTopLevelItem(node)
+                plugins[plugin_id] = node
+            child = QTreeWidgetItem([str(pack.get("name", pack["id"]))])
+            child.setData(0, _DATA_ROLE, ("pack", str(pack["id"])))
+            node.addChild(child)
+        self._tree.expandAll()
+        self._tree.setCurrentItem(everything)
 
-    def _on_pack_selected(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
-        self._pending.clear()
-        self._icon_list.clear()
-        if current is None:
-            return
-        pack_id = str(current.data(_DATA_ROLE))
-        names = self._call_json("iconpack_icons", pack_id)
-        if not isinstance(names, list):
-            self._status.setText("Couldn't load this pack's icons.")
-            return
-        self._status.setText("" if names else "This pack has no icons.")
-        self._pending.clear()
-        for name in names:
-            item = QListWidgetItem(QIcon(self._cached_or_placeholder(pack_id, str(name))), Path(str(name)).stem)
-            item.setData(_DATA_ROLE, str(name))
-            self._icon_list.addItem(item)
-            if (pack_id, str(name)) not in self._pixmaps:
-                self._pending.append((pack_id, str(name), item))
-        self._schedule_next_load()
+    def _selected_pack_ids(self) -> list[str]:
+        item = self._tree.currentItem()
+        kind, key = item.data(0, _DATA_ROLE) if item is not None else ("none", "")
+        if kind == "all":
+            return [str(p["id"]) for p in self._packs]
+        if kind == "plugin":
+            return [str(p["id"]) for p in self._packs if str(p.get("plugin_id", "")) == key]
+        return [key] if kind == "pack" else []
 
-    def _cached_or_placeholder(self, pack_id: str, name: str) -> QPixmap:
-        return self._pixmaps.get((pack_id, name)) or placeholder_pixmap(name, _THUMB_SIZE)
+    def _pack_names(self, pack_id: str) -> list[str] | None:
+        if pack_id not in self._names:
+            names = self._call_json("iconpack_icons", pack_id)
+            if not isinstance(names, list):
+                return None
+            self._names[pack_id] = [str(n) for n in names]
+        return self._names[pack_id]
+
+    def _refresh(self) -> None:
+        self._cancel_pending()
+        needle = self._search.text().strip().lower()
+        entries: list[tuple[str, str]] = []
+        failed = False
+        for pack_id in self._selected_pack_ids():
+            names = self._pack_names(pack_id)
+            if names is None:
+                failed = True
+                continue
+            entries += [(pack_id, n) for n in names if not needle or needle in Path(n).stem.lower()]
+        self._model.set_entries(entries)
+        self._status.setText(_status_text(bool(entries), failed, bool(needle)))
+
+    def _pixmap_for(self, pack_id: str, name: str) -> QPixmap:
+        key = (pack_id, name)
+        cached = self._pixmaps.get(key)
+        if cached is not None:
+            return cached
+        if key not in self._queued:
+            self._queued.add(key)
+            self._pending.append(key)
+            self._schedule_next_load()
+        return self._blank
+
+    def _cancel_pending(self) -> None:
+        self._pending.clear()
+        self._queued.clear()
 
     def _schedule_next_load(self) -> None:
-        if self._pending:
+        if self._pending and not self._load_scheduled:
+            self._load_scheduled = True
             QTimer.singleShot(0, self._load_next_icon)
 
     def _load_next_icon(self) -> None:
-        # One RPC per event-loop turn keeps the UI responsive over slow links.
+        # One RPC per event-loop turn keeps the UI responsive; the newest request (what is on screen) goes first.
+        self._load_scheduled = False
         if not self._pending or self._cm is None:
             return
-        pack_id, name, item = self._pending.popleft()
-        raw = self._cm.call("iconpack_icon", pack_id, name)
-        pixmap = decode_icon(raw) if isinstance(raw, str) else None
-        self._pixmaps[(pack_id, name)] = pixmap
-        if pixmap is not None:
-            item.setIcon(QIcon(pixmap))
+        key = self._pending.pop()
+        self._queued.discard(key)
+        raw = self._cm.call("iconpack_icon", *key)
+        pixmap = decode_icon(raw, self._tint) if isinstance(raw, str) else None
+        self._pixmaps[key] = (
+            pixmap.scaled(
+                _THUMB_SIZE,
+                _THUMB_SIZE,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            if pixmap is not None
+            else placeholder_pixmap(key[1], _THUMB_SIZE)
+        )
+        self._model.refresh(key)
         self._schedule_next_load()
 
     def done(self, result: int) -> None:
         """Close the dialog, abandoning any icon loads still queued."""
-        self._pending.clear()
+        self._cancel_pending()
         super().done(result)
 
-    def _on_icon_chosen(self, item: QListWidgetItem) -> None:
-        pack_item = self._pack_list.currentItem()
-        if pack_item is None:
-            return
-        self.icon_chosen.emit(str(pack_item.data(_DATA_ROLE)), str(item.data(_DATA_ROLE)))
-        self.accept()
+    def _on_activated(self, index: QModelIndex) -> None:
+        entry = self._model.entry(index.row())
+        if entry is not None:
+            self.icon_chosen.emit(*entry)
+            self.accept()
+
+
+def _status_text(has_entries: bool, failed: bool, searching: bool) -> str:
+    if has_entries:
+        return ""
+    if failed:
+        return "Couldn't load this pack's icons."
+    return "No icons match." if searching else "This pack has no icons."
 
 
 class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
@@ -177,6 +324,6 @@ class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
         self.icon_selected.emit(str(dest))
 
     def _browse_icon_packs(self) -> None:
-        dialog = IconPackBrowserDialog(self, self.connection_manager)
+        dialog = IconBrowserDialog(self, self.connection_manager)
         dialog.icon_chosen.connect(self.pack_icon_selected)
         dialog.exec()
