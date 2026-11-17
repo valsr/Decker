@@ -53,6 +53,7 @@ class IconEdit(QWidget):
         self._preview.setFixedSize(_PREVIEW_SIZE, _PREVIEW_SIZE)
         self._name = QLabel()
         self._compact = False
+        self._show_colour = True
         self._browse_btn = QPushButton("Browse…")
         self._browse_btn.clicked.connect(self.browse)
         self._clear = QToolButton()
@@ -82,6 +83,16 @@ class IconEdit(QWidget):
         self._name.setVisible(not compact)
         self._browse_btn.setVisible(not compact)
         self._refresh()
+
+    def set_show_colour(self, show: bool) -> None:
+        """Show or hide the fill colour swatch (an icon whose colour is not configurable hides it)."""
+        self._show_colour = show
+        self._refresh()
+
+    def thumbnail(self) -> QPixmap:
+        """The 24 px preview of the current icon (blank when there is none)."""
+        pixmap = self._preview.pixmap()
+        return pixmap if pixmap is not None else QPixmap()
 
     def mouseDoubleClickEvent(self, a0: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
         """In compact mode a double click opens the browser."""
@@ -127,7 +138,7 @@ class IconEdit(QWidget):
         parsed = parse_icon_ref(self._ref)
         self._name.setText(Path(parsed[1]).stem if parsed is not None else "No icon")
         self._clear.setEnabled(parsed is not None)
-        self._colour.setVisible(parsed is not None or not self._compact)
+        self._colour.setVisible(self._show_colour and (parsed is not None or not self._compact))
         self._preview.setPixmap(self._preview_pixmap(parsed))
 
     def _preview_pixmap(self, parsed: tuple[str, str] | None) -> QPixmap:

@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from decker.client.widgets.profile_selector import ProfileSelector
 from decker.client.widgets.rename_edit import RenameEdit
 from decker.common.model import PageInfo
 
@@ -77,6 +78,9 @@ class PageTabBar(QWidget):  # pylint: disable=too-many-instance-attributes
         self._menu_button.setMenu(self._menu)
         self._menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
 
+        self._profile_selector = ProfileSelector()
+        self._profile_selector.hide()
+
         self._tabs = QTabBar()
         self._tabs.setObjectName("page-tabs")
         self._tabs.setUsesScrollButtons(False)
@@ -111,12 +115,18 @@ class PageTabBar(QWidget):  # pylint: disable=too-many-instance-attributes
         for widget in (self._scroll_left, self._viewport, self._scroll_right, self._add_button):
             layout.addWidget(widget)
         layout.addStretch()
+        layout.addWidget(self._profile_selector)
         layout.addWidget(self._menu_button)
 
     @property
     def tab_bar(self) -> QTabBar:
         """The underlying QTabBar; tab data holds each tab's page id."""
         return self._tabs
+
+    @property
+    def profile_selector(self) -> ProfileSelector:
+        """The profile dropdown left of the ⚙ button; hidden until the owner has profiles to show."""
+        return self._profile_selector
 
     @property
     def menu(self) -> QMenu:

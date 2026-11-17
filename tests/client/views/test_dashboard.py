@@ -15,10 +15,18 @@ from decker.client.events import (
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     PagesUpdatedEvent,
+    ProfilesUpdatedEvent,
 )
 from decker.client.ui_state_store import UiStateStore
 from decker.client.views.dashboard import DashboardView, _confirm_delete_page
-from decker.common.model import DeviceHardwareInfo, DevicePages, KeyInfo, PageInfo
+from decker.common.model import (
+    DeviceHardwareInfo,
+    DevicePages,
+    DeviceProfiles,
+    KeyInfo,
+    PageInfo,
+    ProfileInfo,
+)
 
 
 def _make_keys(rows: int, cols: int) -> list[KeyInfo]:
@@ -994,3 +1002,149 @@ class TestSaveResult:  # pylint: disable=protected-access
 
         assert_that(view._make_save_callback(2)({"step": 2}, {})).is_false()
         assert_that(view._key_slots[2]["settings"]).is_equal_to({})
+
+
+_PROFILES = DeviceProfiles(
+    device_id="dev1", profiles=[ProfileInfo(0, "Default", ""), ProfileInfo(2, "Work", "")], active_profile_id=0
+)
+
+
+class TestProfiles:  # pylint: disable=protected-access
+    def setup_method(self):
+        AppContext._instance = None
+
+    def _view(self, tmp_path) -> tuple[DashboardView, MagicMock]:
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        cm = MagicMock()
+        cm.call.return_value = True
+        AppContext.get().connection_manager = cm
+        view.handle_event(PagesUpdatedEvent(pages=_PAGES))
+        view.handle_event(ProfilesUpdatedEvent(profiles=_PROFILES))
+        cm.call.reset_mock()
+        return view, cm
+
+    def test_selector_follows_the_servers_profiles(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, _cm = self._view(tmp_path)
+        selector = view._page_tabs.profile_selector
+
+        assert_that(selector.isVisibleTo(view._page_tabs)).is_true()
+        assert_that(selector.text()).is_equal_to("Default")
+        assert_that(selector.popup_list.count()).is_equal_to(2)
+
+    def test_selector_is_hidden_until_profiles_arrive(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+
+        assert_that(view._page_tabs.profile_selector.isVisibleTo(view._page_tabs)).is_false()
+
+    def test_profiles_of_another_device_are_ignored(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, _cm = self._view(tmp_path)
+
+        view.handle_event(
+            ProfilesUpdatedEvent(profiles=DeviceProfiles("other", [ProfileInfo(5, "Zed", "")], active_profile_id=5))
+        )
+
+        assert_that(view._page_tabs.profile_selector.text()).is_equal_to("Default")
+
+    def test_selecting_activates_on_the_server(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+
+        view._page_tabs.profile_selector.profile_selected.emit(2)
+
+        cm.call.assert_called_once_with("profile_activate", "dev1", 2)
+
+    def test_add_creates_then_activates(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+        cm.call.side_effect = lambda method, *args: (
+            json.dumps({"profile_id": 3, "name": "Profile 3", "icon": ""}) if method == "profile_add" else True
+        )
+
+        view._page_tabs.profile_selector.add_requested.emit()
+
+        assert_that([c.args for c in cm.call.call_args_list]).is_equal_to(
+            [("profile_add", "dev1"), ("profile_activate", "dev1", 3)]
+        )
+
+    def test_add_failure_does_not_activate(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+        cm.call.return_value = None
+
+        view._page_tabs.profile_selector.add_requested.emit()
+
+        cm.call.assert_called_once_with("profile_add", "dev1")
+
+    def test_rename_calls_the_server(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+
+        view._page_tabs.profile_selector.rename_requested.emit(2, "Games")
+
+        cm.call.assert_called_once_with("profile_rename", "dev1", 2, "Games")
+
+    def _edit(self, view, monkeypatch, outcome, name="Work", icon=""):
+        class _Dialog:
+            def __init__(self, profile, can_delete, parent=None):  # pylint: disable=unused-argument
+                self.outcome = outcome
+                self.created = (profile, can_delete)
+                _Dialog.last = self
+
+            def exec(self):
+                return 1
+
+            def name(self):
+                return name
+
+            def icon(self):
+                return icon
+
+        monkeypatch.setattr("decker.client.views.dashboard.ProfileEditDialog", _Dialog)
+        view._page_tabs.profile_selector.edit_requested.emit(2)
+        return _Dialog.last
+
+    def test_edit_saves_changed_name_and_icon_only(
+        self, qapp, tmp_path, monkeypatch
+    ):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+
+        dialog = self._edit(view, monkeypatch, "save", name="Games", icon="decker:logo")
+
+        assert_that(dialog.created).is_equal_to((ProfileInfo(2, "Work", ""), True))
+        assert_that([c.args for c in cm.call.call_args_list]).is_equal_to(
+            [("profile_rename", "dev1", 2, "Games"), ("profile_set_icon", "dev1", 2, "decker:logo")]
+        )
+
+    def test_edit_without_changes_calls_nothing(self, qapp, tmp_path, monkeypatch):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+
+        self._edit(view, monkeypatch, "save", name="Work", icon="")
+
+        cm.call.assert_not_called()
+
+    def test_edit_delete_and_clone(self, qapp, tmp_path, monkeypatch):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+
+        self._edit(view, monkeypatch, "delete")
+        self._edit(view, monkeypatch, "clone")
+        self._edit(view, monkeypatch, "")
+
+        assert_that([c.args for c in cm.call.call_args_list]).is_equal_to(
+            [("profile_delete", "dev1", 2), ("profile_clone", "dev1", 2)]
+        )
+
+    def test_edit_of_the_last_profile_cannot_delete(
+        self, qapp, tmp_path, monkeypatch
+    ):  # pylint: disable=unused-argument
+        view, _cm = self._view(tmp_path)
+        view.handle_event(
+            ProfilesUpdatedEvent(profiles=DeviceProfiles("dev1", [ProfileInfo(2, "Work", "")], active_profile_id=2))
+        )
+
+        dialog = self._edit(view, monkeypatch, "")
+
+        assert_that(dialog.created[1]).is_false()
+
+    def test_switching_device_hides_the_selector(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, _cm = self._view(tmp_path)
+
+        view._on_device_selected(_D2)
+
+        assert_that(view._page_tabs.profile_selector.isVisibleTo(view._page_tabs)).is_false()
