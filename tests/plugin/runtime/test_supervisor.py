@@ -417,7 +417,9 @@ def test_sustained_flood_kills_plugin_and_counts_a_crash() -> None:
         if not first.running:
             break
     deadline = time.monotonic() + 3
-    while rig.sup._entries["a.b"].restart_at is None and time.monotonic() < deadline:  # pylint: disable=protected-access
+    while (
+        rig.sup._entries["a.b"].restart_at is None and time.monotonic() < deadline
+    ):  # pylint: disable=protected-access
         time.sleep(0.01)
     assert_that(first.stops).is_greater_than(0)
     rig.advance(1.0)
