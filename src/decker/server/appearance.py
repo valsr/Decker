@@ -146,8 +146,12 @@ def _single_line(text: str) -> str:
     return _LINE_BREAKS.sub(" ", text)
 
 
-def compose_key_image(
-    appearance: Mapping[str, Any], plugin_image: bytes | None, plugin_title: str, size: int = 144
+def compose_key_image(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    appearance: Mapping[str, Any],
+    plugin_image: bytes | None,
+    plugin_title: str,
+    size: int = 144,
+    plugin_image_color: str | None = None,
 ) -> bytes:
     """Compose background, plugin image and title into a size x size PNG."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 255))  # the hardware has no transparency: black underneath
@@ -155,7 +159,7 @@ def compose_key_image(
         img.alpha_composite(Image.new("RGBA", (size, size), appearance["background"]))
     if plugin_image:
         try:
-            layer = _RENDERER.render_bytes(plugin_image, size, size)
+            layer = _RENDERER.render_bytes(plugin_image, size, size, plugin_image_color)
             if layer is not None:
                 img.alpha_composite(layer)
         except Exception as exc:  # pylint: disable=broad-exception-caught
