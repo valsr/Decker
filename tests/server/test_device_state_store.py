@@ -250,3 +250,27 @@ class TestDeviceStateStorePages:
         }
         assert_that(tables).does_not_contain("key_images", "key_labels")
         store.destroy()
+
+
+class TestCopyPageState:
+    @pytest.fixture()
+    def store(self, tmp_path):
+        s = DeviceStateStore(data_dir=tmp_path)
+        s.create(MagicMock())
+        yield s
+        s.destroy()
+
+    def test_copies_images_and_labels_and_leaves_source(self, store):
+        store.save_key_image("dev1", "p1", 0, b"one")
+        store.save_key_label("dev1", "p1", 1, "lbl")
+
+        store.copy_page_state("dev1", "p1", "p2")
+
+        assert_that(store.get_all_key_images("dev1", "p2")).is_equal_to([(0, b"one")])
+        assert_that(store.get_key_label("dev1", "p2", 1)).is_equal_to("lbl")
+        assert_that(store.get_all_key_images("dev1", "p1")).is_equal_to([(0, b"one")])
+
+    def test_copy_of_empty_page_does_nothing(self, store):
+        store.copy_page_state("dev1", "none", "p2")
+
+        assert_that(store.get_all_key_images("dev1", "p2")).is_empty()
