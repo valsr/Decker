@@ -309,6 +309,7 @@ def test_icon_accepts_rgba_colour() -> None:
 @pytest.mark.parametrize("type_", ["text", "text_style"])
 def test_template_flag_accepted_on_text_and_text_style(type_: str) -> None:
     (entry,) = parse_settings_schema([{"key": "a", "type": type_, "template": True}], "here")
+    assert isinstance(entry, SettingField)
     assert_that(entry.extra["template"]).is_true()
 
 
@@ -325,11 +326,14 @@ def test_template_flag_rejected_on_other_types() -> None:
 def test_template_round_trips_through_schema_to_json() -> None:
     schema = parse_settings_schema([{"key": "a", "type": "text", "template": True}], "here")
     assert_that(schema_to_json(schema)[0]["template"]).is_true()
-    assert_that(parse_settings_schema(schema_to_json(schema), "x")[0].extra["template"]).is_true()
+    reparsed = parse_settings_schema(schema_to_json(schema), "x")[0]
+    assert isinstance(reparsed, SettingField)
+    assert_that(reparsed.extra["template"]).is_true()
 
 
 def test_page_type_defaults_to_empty_string() -> None:
     (entry,) = parse_settings_schema([{"key": "p", "type": "page"}], "here")
+    assert isinstance(entry, SettingField)
     assert_that(entry.default).is_equal_to("")
     assert_that(apply_schema((entry,), {})).is_equal_to({"p": ""})
 
