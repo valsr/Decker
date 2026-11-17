@@ -89,6 +89,14 @@ class ActionContext:
         """Switch this key's device to the page with this id (a ``page`` setting value's ``page_id``)."""
         self._emit("switch_page", {"page_id": page_id})
 
+    def switch_profile(self, to: str = "next", wrap: bool = False) -> None:
+        """Switch this key's device to the ``next``/``previous``/``first``/``last`` profile; ``wrap`` loops at the ends."""
+        self._emit("switch_profile", {"to": to, "wrap": wrap})
+
+    def go_to_profile(self, profile_id: int) -> None:
+        """Switch this key's device to the profile with this id (a ``profile`` setting value's ``profile_id``)."""
+        self._emit("switch_profile", {"profile_id": profile_id})
+
     def open_url(self, url: str) -> None:
         """Ask the server to open an http(s) URL."""
         self._emit("open_url", {"url": url})

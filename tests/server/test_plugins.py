@@ -1656,3 +1656,57 @@ class TestProfileSettings:
         env.pages.active_profile["dev-1"] = 3
 
         assert_that(env.manager.delivered_settings(live)["who"]["profile_id"]).is_equal_to(3)
+
+
+class TestSwitchProfile:
+    def _send(self, env, event, payload):
+        env.manager.activate_action(REC_TARGET)
+        env.manager._route_context_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message(event, "ctx-1", payload)
+        )
+
+    @staticmethod
+    def _two_profiles(env):
+        env.pages.profiles["dev-1"] = [
+            ProfileInfo(0, "Default", ""),
+            ProfileInfo(2, "Work", ""),
+            ProfileInfo(1, "Play", ""),
+        ]
+
+    def test_profile_id_activates_that_profile(self, env):
+        self._two_profiles(env)
+
+        self._send(env, "switch_profile", {"profile_id": 2})
+
+        assert_that(env.pages.profile_activations).is_equal_to([("dev-1", 2)])
+
+    def test_relative_moves_follow_dropdown_order(self, env):
+        self._two_profiles(env)
+        self._send(env, "switch_profile", {"to": "next"})
+        self._send(env, "switch_profile", {"to": "last"})
+
+        assert_that(env.pages.profile_activations).is_equal_to([("dev-1", 2), ("dev-1", 1)])
+
+    @pytest.mark.parametrize(
+        "payload",
+        [{"profile_id": "1"}, {"profile_id": None}, {"profile_id": 9}, {"profile_id": True}, {"to": "sideways"}, {}],
+    )
+    def test_garbage_is_ignored(self, env, payload):
+        self._two_profiles(env)
+
+        self._send(env, "switch_profile", payload)
+
+        assert_that(env.pages.profile_activations).is_empty()
+
+    def test_single_profile_is_a_no_op(self, env):
+        self._send(env, "switch_profile", {"to": "next", "wrap": True})
+
+        assert_that(env.pages.profile_activations).is_empty()
+
+    def test_switch_page_can_target_a_page_of_another_profile(self, env):
+        env.pages.profiles["dev-1"] = [ProfileInfo(0, "Default", ""), ProfileInfo(2, "Work", "")]
+        env.pages.other_pages[("dev-1", 2)] = [PageInfo("w1", "Docs")]
+
+        self._send(env, "switch_page", {"page_id": "w1"})
+
+        assert_that(env.pages.activations).is_equal_to([("dev-1", "w1")])

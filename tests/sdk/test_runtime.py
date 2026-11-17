@@ -342,3 +342,24 @@ def test_set_settings_keeps_the_local_keys_it_was_not_given() -> None:
     ctx.set_settings({"count": 2})
 
     assert_that(ctx.settings).is_equal_to({"page": {"page_id": "p1"}, "count": 2})
+
+
+def test_switch_profile_emits_to_and_wrap() -> None:
+    ctx, sent = _context_with_log()
+    ctx.switch_profile("previous", wrap=True)
+
+    assert_that(sent).is_equal_to([("switch_profile", "c1", {"to": "previous", "wrap": True})])
+
+
+def test_switch_profile_defaults() -> None:
+    ctx, sent = _context_with_log()
+    ctx.switch_profile()
+
+    assert_that(sent).is_equal_to([("switch_profile", "c1", {"to": "next", "wrap": False})])
+
+
+def test_go_to_profile_emits_the_id() -> None:
+    ctx, sent = _context_with_log()
+    ctx.go_to_profile(2)
+
+    assert_that(sent).is_equal_to([("switch_profile", "c1", {"profile_id": 2})])
