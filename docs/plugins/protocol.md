@@ -45,7 +45,7 @@ discarded.
 |-------|---------|---------|
 | `ready` | | none |
 | `pong` | | none |
-| `set_image` | yes | `{"image": "<base64>", "format": "png"}` (`png`, `jpeg` or `svg`), or `{"image": null}` to clear |
+| `set_image` | yes | `{"image": "<base64>", "format": "png"}` (`png`, `jpeg` or `svg`), or `{"image": null}` to clear, or `{"icon": "pack:<pack id>/<path>", "color": "#rrggbb"}` to show an icon from an installed icon pack (see [Images](#images)) |
 | `set_title` | yes | `{"title": "text"}`, shown only when the user set no title; titles are one line, so line breaks are drawn as a single space |
 | `set_state` | yes | `{"state": 1}`, an index into the action's `states` |
 | `show_alert`, `show_ok` | yes | none (accepted, no visible effect in v1) |
@@ -58,6 +58,13 @@ discarded.
 Messages for a context that is not active (for example after `will_disappear`) are dropped.
 
 ## Images
+
+An icon from an installed icon pack is shown by reference: `{"icon": "pack:<pack id>/<path>", "color": "#rrggbb"}`
+(`color` is optional and may be `#rrggbbaa`). The server reads the icon itself, so the plugin never touches pack
+files. `image` and `icon` are mutually exclusive (a payload with both is dropped). A reference the server cannot read
+(malformed, unknown pack, path outside the pack, too large, pack uninstalled later) clears the image and is logged.
+`color` recolours SVG icons: it sets the SVG's `color` (so `fill="currentColor"` follows it) and a default `fill`, and
+the alpha becomes the SVG's opacity. Raster icons ignore it, and an invalid colour leaves the icon untinted.
 
 Raster images larger than 4096 x 4096 pixels are rejected. Decker scales the image to the key and draws it over
 the key background, then the title. Invalid base64 is dropped.

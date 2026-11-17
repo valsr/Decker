@@ -20,7 +20,8 @@ from PIL import Image
 from decker.common.model import DeviceHardwareInfo, KeyInfo
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.gestures import Gesture
-from decker.plugin.manifest import StateSpec
+from decker.plugin.loader import InstalledPlugin
+from decker.plugin.manifest import PluginManifest, StateSpec
 from decker.plugin.protocol import Message
 from decker.plugin.runtime.supervisor import SupervisorPolicy
 from decker.plugin.settings_store import PluginSettingsStore
@@ -460,6 +461,140 @@ class TestCounterEndToEnd:
         )
 
         assert_that(env.dm.hardware_images).is_equal_to(sent_before)
+
+
+_DOT_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+    b'<path fill="currentColor" d="M0 0h10v10H0z"/></svg>'
+)
+_PACK_ID = "com.t.ip.icons"
+_DOT_REF = f"pack:{_PACK_ID}/dot.svg"
+
+
+def _install_pack(env, tmp_path) -> InstalledPlugin:
+    root = tmp_path / "ip"
+    (root / "pack").mkdir(parents=True)
+    (root / "pack" / "dot.svg").write_bytes(_DOT_SVG)
+    manifest = PluginManifest.from_dict(
+        {
+            "format": 1,
+            "id": "com.t.ip",
+            "name": "IP",
+            "version": "1.0.0",
+            "author": "a",
+            "description": "d",
+            "contributes": {"icon_packs": [{"id": _PACK_ID, "name": "Pack", "path": "pack"}]},
+        }
+    )
+    plugin = InstalledPlugin(manifest, root)
+    env.manager.icon_packs.register(plugin)
+    return plugin
+
+
+def _icon_env(env, tmp_path):
+    _install_pack(env, tmp_path)
+    env.manager.activate_action(COUNTER_TARGET)
+    assert _wait_for(env.counter_drawn)
+    live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
+    live.plugin_image = None
+    env.manager.set_appearance(COUNTER_TARGET, {})
+    return live
+
+
+def _send_set_image(env, payload: dict) -> None:
+    env.manager._on_plugin_message(_COUNTER, Message("set_image", "ctx-1", payload))  # pylint: disable=protected-access
+
+
+class TestSetImageIcon:
+    def test_icon_reference_composes_the_pack_icon_in_the_colour(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+
+        _send_set_image(env, {"icon": _DOT_REF, "color": "#ff0000"})
+
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
+
+    def test_icon_without_colour_renders_untinted(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+
+        _send_set_image(env, {"icon": _DOT_REF})
+
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((0, 0, 0))
+
+    def test_unknown_reference_clears_the_image(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+        _send_set_image(env, {"icon": _DOT_REF, "color": "#ff0000"})
+
+        _send_set_image(env, {"icon": f"pack:{_PACK_ID}/missing.svg"})
+
+        assert_that(env.image()).is_equal_to(_BARE_COUNTER)
+
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            "pack:",
+            "pack:x",
+            f"pack:{_PACK_ID}/../../etc/passwd",
+            f"pack:{_PACK_ID}//etc/passwd",
+            "pack:unknown.pack/dot.svg",
+            "file:///etc/passwd",
+            "",
+            None,
+            7,
+        ],
+    )
+    def test_bad_or_escaping_references_clear_the_image(self, env, tmp_path, ref):
+        _icon_env(env, tmp_path)
+        _send_set_image(env, {"icon": _DOT_REF, "color": "#ff0000"})
+
+        _send_set_image(env, {"icon": ref})
+
+        assert_that(env.image()).is_equal_to(_BARE_COUNTER)
+
+    def test_invalid_colour_is_untinted_and_logged(self, env, tmp_path, caplog):
+        _icon_env(env, tmp_path)
+
+        _send_set_image(env, {"icon": _DOT_REF, "color": "red"})
+
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((0, 0, 0))
+        assert_that(caplog.text).contains("color")
+
+    def test_payload_with_both_image_and_icon_is_dropped(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+        before = env.image()
+
+        _send_set_image(env, {"image": base64.b64encode(_RED_PNG).decode(), "icon": _DOT_REF})
+
+        assert_that(env.image()).is_equal_to(before)
+
+    def test_null_image_clears_icon_and_colour(self, env, tmp_path):
+        live = _icon_env(env, tmp_path)
+        _send_set_image(env, {"icon": _DOT_REF, "color": "#ff0000"})
+
+        _send_set_image(env, {"image": None})
+
+        assert_that(env.image()).is_equal_to(_BARE_COUNTER)
+        assert_that(live.plugin_icon_ref).is_none()
+        assert_that(live.plugin_image_color).is_none()
+
+    def test_raster_image_after_icon_resets_the_tint(self, env, tmp_path):
+        live = _icon_env(env, tmp_path)
+        _send_set_image(env, {"icon": _DOT_REF, "color": "#00ff00"})
+
+        _send_set_image(env, {"image": base64.b64encode(_RED_PNG).decode(), "format": "png"})
+
+        assert_that(live.plugin_image_color).is_none()
+        assert_that(live.plugin_icon_ref).is_none()
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
+
+    def test_uninstalled_pack_leaves_the_key_without_an_image(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+        _send_set_image(env, {"icon": _DOT_REF, "color": "#ff0000"})
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
+
+        env.manager.icon_packs.unregister("com.t.ip")
+        env.manager.set_appearance(COUNTER_TARGET, {})
+
+        assert_that(env.image()).is_equal_to(_BARE_COUNTER)
 
 
 class TestAppearanceComposition:
