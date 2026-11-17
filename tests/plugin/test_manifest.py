@@ -298,3 +298,10 @@ def test_action_appearance_may_declare_an_icon_default() -> None:
     icon = {"ref": "pack:com.decker.counter.icons/x.svg", "color": "#ff0000"}
     manifest = PluginManifest.from_dict(_with_action(appearance={"icon": icon}))
     assert_that(manifest.actions[0].appearance).is_equal_to({"icon": icon})
+
+
+def test_profile_in_global_settings_is_rejected() -> None:
+    data = copy.deepcopy(_COUNTER)
+    data["global_settings"] = [{"key": "who", "type": "profile", "label": "Who"}]
+    with pytest.raises(ManifestValidationError, match="who.*profile"):
+        PluginManifest.from_dict(data)

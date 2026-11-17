@@ -18,13 +18,14 @@ import pytest
 from assertpy import assert_that
 from PIL import Image
 
-from decker.common.model import DeviceHardwareInfo, KeyInfo, PageInfo
+from decker.common.model import DeviceHardwareInfo, KeyInfo, PageInfo, ProfileInfo
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.gestures import Gesture
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import PluginManifest, StateSpec
 from decker.plugin.protocol import Message
 from decker.plugin.runtime.supervisor import SupervisorPolicy
+from decker.plugin.settings_schema import parse_settings_schema
 from decker.plugin.settings_store import PluginSettingsStore
 from decker.plugin.target import ActionTarget
 from decker.server.appearance import compose_key_image, resolve_appearance
@@ -209,9 +210,26 @@ class FakePages:
         self.pages = {"dev-1": [PageInfo("p1", "Home"), PageInfo("p2", "Settings"), PageInfo("p3", "Media")]}
         self.active = {"dev-1": "p2"}
         self.activations: list[tuple[str, str]] = []
+        self.profiles = {"dev-1": [ProfileInfo(0, "Default", "")]}
+        self.other_pages: dict[tuple[str, int], list[PageInfo]] = {}
+        self.active_profile = {"dev-1": 0}
+        self.profile_activations: list[tuple[str, int]] = []
 
-    def list_pages(self, device_id: str) -> list[PageInfo]:
+    def list_pages(self, device_id: str, profile_id: int | None = None) -> list[PageInfo]:
+        if profile_id is not None and profile_id != self.active_profile.get(device_id, 0):
+            return list(self.other_pages.get((device_id, profile_id), []))
         return list(self.pages.get(device_id, []))
+
+    def list_profiles(self, device_id: str) -> list[ProfileInfo]:
+        return list(self.profiles.get(device_id, []))
+
+    def active_profile_id(self, device_id: str) -> int:
+        return self.active_profile.get(device_id, 0)
+
+    def activate_profile(self, device_id: str, profile_id: int) -> bool:
+        self.profile_activations.append((device_id, profile_id))
+        self.active_profile[device_id] = profile_id
+        return True
 
     def active_page_id(self, device_id: str) -> str:
         return self.active.get(device_id, "")
@@ -1371,13 +1389,13 @@ class TestTemplates:
     def test_page_field_is_resolved_to_id_name_index(self, env):
         settings = self._tpl_settings(env, where="p3")
 
-        assert_that(settings["where"]).is_equal_to({"page_id": "p3", "name": "Media", "index": 3})
+        assert_that(settings["where"]).is_equal_to({"page_id": "p3", "name": "Media", "index": 3, "profile_id": 0})
 
     @pytest.mark.parametrize("stored", ["", "gone", 5, {"page_id": 5}, None])
     def test_deleted_or_unset_or_foreign_page_resolves_to_empty(self, env, stored):
         settings = self._tpl_settings(env, where=stored)
 
-        assert_that(settings["where"]).is_equal_to({"page_id": "", "name": "", "index": 0})
+        assert_that(settings["where"]).is_equal_to({"page_id": "", "name": "", "index": 0, "profile_id": -1})
 
     def test_settings_changed_delivers_the_expanded_copy(self, env):
         self._tpl_settings(env, label="{page_name}")
@@ -1602,3 +1620,39 @@ class TestSwitchPage:
         self._switch(env, {"to": "next"})
 
         assert_that(env.manager._live).does_not_contain_key("ctx-1")  # pylint: disable=protected-access
+
+
+class TestProfileSettings:
+    _SCHEMA = [
+        {"key": "who", "type": "profile", "label": "Who"},
+        {"key": "where", "type": "page", "label": "Where", "profile_field": "who"},
+        {"key": "title", "type": "text", "label": "T", "template": True},
+    ]
+
+    @staticmethod
+    def _live(env, settings):
+        action = SimpleNamespace(settings=parse_settings_schema(TestProfileSettings._SCHEMA, "t"))
+        return SimpleNamespace(
+            action=action, settings=settings, target=SimpleNamespace(device_id="dev-1"), delivered={}
+        )
+
+    def test_profile_field_is_resolved_and_page_carries_its_profile(self, env):
+        env.pages.profiles["dev-1"] = [ProfileInfo(0, "Default", ""), ProfileInfo(3, "Work", "")]
+        env.pages.other_pages[("dev-1", 3)] = [PageInfo("w1", "Docs")]
+        live = self._live(env, {"who": "3", "where": "w1", "title": "{current_profile} {profile_id}"})
+
+        delivered = env.manager.delivered_settings(live)
+
+        assert_that(delivered["who"]["name"]).is_equal_to("Work")
+        assert_that(delivered["who"]["index"]).is_equal_to(2)
+        assert_that(delivered["where"]).is_equal_to({"page_id": "w1", "name": "Docs", "index": 1, "profile_id": 3})
+        assert_that(delivered["title"]).is_equal_to("Default 0")
+
+    def test_blank_profile_follows_the_current_one(self, env):
+        env.pages.profiles["dev-1"] = [ProfileInfo(0, "Default", ""), ProfileInfo(3, "Work", "")]
+        live = self._live(env, {"who": "", "where": "", "title": ""})
+
+        assert_that(env.manager.delivered_settings(live)["who"]["profile_id"]).is_equal_to(0)
+        env.pages.active_profile["dev-1"] = 3
+
+        assert_that(env.manager.delivered_settings(live)["who"]["profile_id"]).is_equal_to(3)

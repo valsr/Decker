@@ -8,6 +8,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -15,7 +16,6 @@ from decker.asset.iconpack import IconPackRegistry
 from decker.asset.renderer import AssetRenderer
 from decker.common import config
 from decker.common.manager import Manager
-from decker.common.model import PageInfo
 from decker.common.template import expand_template
 from decker.common.text_style import is_color
 from decker.common.version import decker_version
@@ -43,12 +43,14 @@ from decker.server.appearance import (
 )
 from decker.server.contributions import ContributionRegistry
 from decker.server.page_vars import (
+    DeviceLayout,
     deliver_settings,
     has_dynamic_fields,
     keep_raw_templates,
     page_variables,
     resolve_switch_target,
     stored_page_ids,
+    stored_profile_ids,
 )
 
 if TYPE_CHECKING:
@@ -546,24 +548,32 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     # Page variables and settings delivery
     # ------------------------------------------------------------------
 
-    def _device_pages(self, device_id: str) -> tuple[list[PageInfo], str]:
+    def _device_layout(self, device_id: str) -> DeviceLayout:
         if self._page_store is None or self._page_controller is None:
-            return [], ""
+            return DeviceLayout()
         try:
-            return list(self._page_store.list_pages(device_id)), str(self._page_controller.active_page_id(device_id))
+            store = self._page_store
+            profiles = tuple(store.list_profiles(device_id))
+            by_profile = {p.profile_id: tuple(store.list_pages(device_id, p.profile_id)) for p in profiles}
+            active_profile = int(store.active_profile_id(device_id))
+            return DeviceLayout(
+                pages=by_profile.get(active_profile, ()),
+                active_page_id=str(self._page_controller.active_page_id(device_id)),
+                profiles=profiles,
+                active_profile_id=active_profile,
+                pages_by_profile=MappingProxyType(by_profile),
+            )
         except Exception:  # pylint: disable=broad-except
             logging.debug("Pages unavailable for %s", device_id, exc_info=True)
-            return [], ""
+            return DeviceLayout()
 
     def page_variables(self, device_id: str) -> dict[str, str]:
-        """Template variables for the page shown on the device (empty when pages are unavailable)."""
-        pages, active = self._device_pages(device_id)
-        return page_variables(pages, active)
+        """Template variables for what the device shows (empty when pages are unavailable)."""
+        return page_variables(self._device_layout(device_id))
 
     def delivered_settings(self, live: _Live) -> dict[str, Any]:
         """The settings a plugin receives: opted-in text expanded and page ids resolved; stored values stay raw."""
-        pages, active = self._device_pages(live.target.device_id)
-        return deliver_settings(live.action.settings, live.settings, page_variables(pages, active), pages)
+        return deliver_settings(live.action.settings, live.settings, self._device_layout(live.target.device_id))
 
     def _delivery(self, live: _Live) -> dict[str, Any]:
         delivered = self.delivered_settings(live)
@@ -768,6 +778,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             logging.warning("[%s] set_settings without a settings object dropped", live.target.plugin_uuid)
             return
         incoming = keep_raw_templates(live.action.settings, raw, live.delivered, live.settings)
+        incoming = stored_profile_ids(live.action.settings, incoming, live.delivered, live.settings)
         merged = {**live.settings, **stored_page_ids(live.action.settings, incoming)}
         settings = apply_schema(live.action.settings, merged)
         live.settings = settings
@@ -781,8 +792,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if self._page_controller is None:
             return
         device_id = live.target.device_id
-        pages, active = self._device_pages(device_id)
-        target = resolve_switch_target(pages, active, payload)
+        target = resolve_switch_target(self._device_layout(device_id), payload)
         if target is None:
             logging.info("[%s] switch_page %r has no target", live.target.plugin_uuid, payload)
             return
