@@ -15,11 +15,14 @@ right corner on hover and selects the key for editing; clicking the key itself o
 - Clicking the **key** (anywhere else): performs the action (press, and long press as today). It does **not** change the
   selection.
 - Drag-and-drop of an action onto a key is unchanged.
+- Keyboard: **F2** (or the Menu key) on a focused key edits it, and the pencil is shown while a key has keyboard focus. (Added after review: without it a keyboard user could no longer open a key's configuration.)
+- The configuration panel's empty-state text explains the new gesture: "Hover a key and click ✎ (or focus it and press F2) to configure it".
+- The pencil has its own theme rule (a small disc, no padding) so its glyph is not clipped by the generic tool-button padding.
 
 ## Non-goals
 
 - A visual "selected" highlight on the key (none exists today; can follow).
-- Touch/keyboard access to the pencil beyond normal Tab focus on the button while it is visible.
+- Touch access to the pencil (there is no hover on touch screens).
 
 ## Design (decker, `client/widgets/button_grid.py`, `client/views/dashboard.py`)
 

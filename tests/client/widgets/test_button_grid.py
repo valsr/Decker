@@ -1,11 +1,13 @@
 import json
 
+import pytest
 from assertpy import assert_that
 from PyQt6.QtCore import QByteArray, QEvent, QMimeData, QPointF, Qt
-from PyQt6.QtGui import QDropEvent, QEnterEvent
+from PyQt6.QtGui import QDropEvent, QEnterEvent, QFocusEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
+from decker.client.themes import BUNDLED, render_stylesheet
 from decker.client.widgets.button_grid import ButtonGridWidget, KeyButtonWidget
 from decker.common.model import KeyInfo
 
@@ -210,3 +212,82 @@ class TestKeyEditPencil:  # pylint: disable=protected-access,unused-argument
 
         assert_that(button._edit_button.acceptDrops()).is_false()  # so Qt hands the drop to the key
         assert_that(dropped).is_equal_to([(4, {"plugin_uuid": "p"})])
+
+
+class TestEditPencilTheming:  # pylint: disable=protected-access,unused-argument
+    @pytest.mark.parametrize("theme", ["dark", "light"])
+    def test_glyph_fits_the_pencil_under_the_bundled_theme(self, qapp, theme):
+        button = _key()
+        button.setStyleSheet(render_stylesheet(BUNDLED[theme]))
+        button.show()
+        qapp.processEvents()
+
+        hint = button._edit_button.sizeHint()
+
+        # The global QToolButton padding used to leave ~6px for a 10px glyph, clipping it to a smudge.
+        assert_that(hint.width()).described_as(f"{theme} width").is_less_than_or_equal_to(20)
+        assert_that(hint.height()).described_as(f"{theme} height").is_less_than_or_equal_to(20)
+
+    @pytest.mark.parametrize("theme", ["dark", "light"])
+    def test_pencil_has_its_own_background_so_it_reads_over_a_key_image(self, qapp, theme):
+        button = _key()
+        button.setStyleSheet(render_stylesheet(BUNDLED[theme]))
+        button.show()
+        _enter(button)
+        qapp.processEvents()
+
+        plain = button.grab().toImage()
+        pencil = button._edit_button.geometry()
+        corner = plain.pixelColor(pencil.left() + 2, pencil.center().y())
+        key_bg = plain.pixelColor(button.width() // 2, 6)
+
+        assert_that(corner.getRgb()).described_as("pencil disc differs from the key face").is_not_equal_to(
+            key_bg.getRgb()
+        )
+
+
+class TestKeyboardAccessToEdit:  # pylint: disable=protected-access,unused-argument
+    @pytest.mark.parametrize("key", [Qt.Key.Key_F2, Qt.Key.Key_Menu])
+    def test_edit_keys_emit_edit_clicked_and_do_not_press(self, qapp, key):
+        button = _key(6)
+        edits: list[int] = []
+        clicks: list[bool] = []
+        button.edit_clicked.connect(edits.append)
+        button.clicked.connect(clicks.append)
+
+        QTest.keyClick(button, key)  # type: ignore[call-overload]
+
+        assert_that(edits).is_equal_to([6])
+        assert_that(clicks).is_empty()
+
+    def test_space_still_presses_the_key(self, qapp):
+        button = _key(6)
+        edits: list[int] = []
+        clicks: list[bool] = []
+        button.edit_clicked.connect(edits.append)
+        button.clicked.connect(clicks.append)
+
+        QTest.keyClick(button, Qt.Key.Key_Space)  # type: ignore[call-overload]
+
+        assert_that(clicks).is_length(1)
+        assert_that(edits).is_empty()
+
+    def test_focus_shows_the_pencil_so_keyboard_users_can_see_the_affordance(self, qapp):
+        button = _key()
+        button.show()
+
+        QApplication.sendEvent(button, QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.TabFocusReason))
+        assert_that(button._edit_button.isVisible()).is_true()
+        QApplication.sendEvent(button, QFocusEvent(QEvent.Type.FocusOut, Qt.FocusReason.TabFocusReason))
+        assert_that(button._edit_button.isVisible()).is_false()
+
+    def test_losing_focus_keeps_the_pencil_while_the_pointer_is_still_on_the_key(self, qapp):
+        button = _key()
+        button.show()
+        _enter(button)
+        QApplication.sendEvent(button, QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.TabFocusReason))
+        button.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, True)
+
+        QApplication.sendEvent(button, QFocusEvent(QEvent.Type.FocusOut, Qt.FocusReason.TabFocusReason))
+
+        assert_that(button._edit_button.isVisible()).is_true()

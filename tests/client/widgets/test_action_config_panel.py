@@ -30,7 +30,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         panel = ActionConfigPanel()
         widget = panel.widget(0)
         assert isinstance(widget, QLabel)
-        assert_that(widget.text()).is_equal_to("Select a key to configure")
+        assert_that(widget.text()).is_equal_to("Hover a key and click ✎ (or focus it and press F2) to configure it")
         assert_that(panel.currentIndex()).is_equal_to(0)
 
     def test_show_placeholder_returns_to_page_zero(self, qapp):  # pylint: disable=unused-argument
