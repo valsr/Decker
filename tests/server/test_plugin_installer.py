@@ -211,6 +211,13 @@ def test_install_refuses_incompatible_decker_version(env, tmp_path):
     assert_that(env.bus.of("plugins_changed")).is_empty()
 
 
+def test_install_refuses_invalid_decker_specifier(env, tmp_path):
+    finished = env.install(_package(tmp_path / "x.log", _manifest(decker="not a spec")))
+
+    assert_that(finished["ok"]).is_false()
+    assert_that(finished["message"]).contains("invalid Decker version requirement")
+
+
 def test_install_refuses_invalid_package(env):
     finished = env.install(b"not a zip")
 

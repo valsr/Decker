@@ -3,6 +3,7 @@
 from importlib import metadata
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion
 
 
 def decker_version() -> str:
@@ -19,5 +20,5 @@ def is_compatible(specifier: str | None, version: str | None = None) -> bool:
         return True
     try:
         return SpecifierSet(specifier).contains(version if version is not None else decker_version(), prereleases=True)
-    except InvalidSpecifier:
+    except (InvalidSpecifier, InvalidVersion):
         return False
