@@ -147,7 +147,8 @@ class KeyButtonWidget(QPushButton):
 class ButtonGridWidget(QWidget):
     """Renders a placeholder key grid sized from the active device's key count."""
 
-    key_selected = pyqtSignal(int)
+    key_pressed = pyqtSignal(int)
+    key_edit_requested = pyqtSignal(int)
     key_long_pressed = pyqtSignal(int)
     action_dropped = pyqtSignal(int, object)
 
@@ -179,7 +180,8 @@ class ButtonGridWidget(QWidget):
             key = self._key_info[index]
             row, col = key.row, key.col
             button = KeyButtonWidget(index, key)
-            button.clicked.connect(lambda _checked=False, i=index: self.key_selected.emit(i))
+            button.clicked.connect(lambda _checked=False, i=index: self.key_pressed.emit(i))
+            button.edit_clicked.connect(self.key_edit_requested.emit)
             button.long_pressed.connect(self.key_long_pressed.emit)
             button.action_dropped.connect(self.action_dropped.emit)
             self._grid_layout.addWidget(button, row, col)

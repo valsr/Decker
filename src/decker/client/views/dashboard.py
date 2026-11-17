@@ -129,7 +129,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._page_tabs.delete_page_requested.connect(self._on_delete_page)
         self._page_tabs.rename_page_requested.connect(self._on_rename_page)
         self._page_tabs.set_default_page_requested.connect(self._on_set_default_page)
-        self._grid.key_selected.connect(self._on_key_selected)
+        self._grid.key_pressed.connect(self._on_key_pressed)
+        self._grid.key_edit_requested.connect(self._on_key_edit_requested)
         self._grid.key_long_pressed.connect(self._on_key_long_pressed)
         self._grid.action_dropped.connect(self._on_action_dropped)
 
@@ -298,12 +299,13 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     # Key grid interactions
     # ------------------------------------------------------------------
 
-    def _on_key_selected(self, index: int) -> None:
+    def _on_key_edit_requested(self, index: int) -> None:
         if index != self._selected_key:
             self._config_panel.forget_loaded()
         self._selected_key = index
         self._refresh_config_panel()
-        # Simulate a short press so the counter increments.
+
+    def _on_key_pressed(self, index: int) -> None:
         device_id = AppContext.get().active_device_id
         if device_id and index in self._key_slots:
             cm = AppContext.get().connection_manager
