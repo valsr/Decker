@@ -21,8 +21,8 @@ from decker.client.action_icons import decode_icon
 from decker.common.model import KeyInfo
 
 _LONG_PRESS_MS = 500
-_EDIT_SIZE = 20  # px, the hover pencil
-_EDIT_ICON_PX = 14  # px, the pencil drawing inside its 20 px button
+_EDIT_SIZE = 30  # px, the hover pencil
+_EDIT_ICON_PX = 21  # px, the pencil drawing inside its 30 px button
 _EDIT_ICON = Path(__file__).resolve().parents[2] / "assets" / "edit.svg"
 _EDIT_MARGIN = 4  # px from the key's top-right corner
 _MIME_TYPE = "application/x-decker-action"
