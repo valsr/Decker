@@ -6,6 +6,7 @@ import pytest
 from assertpy import assert_that
 from PIL import Image
 
+from decker.common.text_style import TEXT_STYLE_DEFAULTS
 from decker.plugin.manifest import ManifestValidationError, PluginManifest
 from decker.server.appearance import compose_key_image, resolve_appearance
 
@@ -26,19 +27,7 @@ def _appearance(**overrides: Any) -> dict[str, Any]:
 
 def test_defaults_from_schema() -> None:
     result = resolve_appearance({}, {})
-    assert_that(result).is_equal_to(
-        {
-            "background": "#000000",
-            "show_title": True,
-            "title": "",
-            "title_position": "bottom",
-            "title_font": "DejaVu Sans",
-            "title_size": 12,
-            "title_color": "#ffffff",
-            "title_outline": None,
-            "title_outline_width": 1,
-        }
-    )
+    assert_that(result).is_equal_to({"background": "#000000", "title": dict(TEXT_STYLE_DEFAULTS)})
 
 
 def test_action_defaults_override_schema_defaults() -> None:
@@ -85,7 +74,7 @@ def test_plugin_title_used_when_no_user_title() -> None:
     )
 
 
-def test_show_title_false_hides_title() -> None:
+def test_legacy_show_title_false_hides_title() -> None:
     img = _open(compose_key_image(_appearance(show_title=False, title="X"), None, "Plugin"))
     assert_that(_has_title_pixels(img)).is_false()
 
@@ -140,3 +129,93 @@ def test_renderer_failure_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     svg = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
     img = _open(compose_key_image(_appearance(background="#112233"), svg, ""))
     assert_that(img.getpixel((72, 72))).is_equal_to((0x11, 0x22, 0x33))
+
+
+def test_legacy_flat_keys_fold_into_title() -> None:
+    title = resolve_appearance({}, {"title": "Hi", "title_position": "top", "show_title": False})["title"]
+    assert_that(title).is_equal_to({**TEXT_STYLE_DEFAULTS, "text": "Hi", "position": "top", "visible": False})
+
+
+def test_nested_title_wins_over_legacy() -> None:
+    stored = {"title": {"size": 20}, "title_size": 9}
+    assert_that(resolve_appearance({}, stored)["title"]["size"]).is_equal_to(20)
+
+
+def test_stored_title_merges_field_wise_over_action_defaults() -> None:
+    title = resolve_appearance({"title_position": "top", "title_size": 20}, {"title": {"size": 30}})["title"]
+    assert_that(title["position"]).is_equal_to("top")
+    assert_that(title["size"]).is_equal_to(30)
+
+
+def test_legacy_keys_removed_from_resolved_appearance() -> None:
+    result = resolve_appearance({}, {"title_size": 9, "show_title": True})
+    assert_that(result).contains_only("background", "title")
+
+
+def test_manifest_default_legacy_keys_still_accepted() -> None:
+    data = _manifest_data({"title_position": "top", "show_title": False})
+    assert_that(PluginManifest.from_dict(data).actions[0].appearance).is_equal_to(
+        {"title_position": "top", "show_title": False}
+    )
+
+
+def test_manifest_default_nested_title_accepted() -> None:
+    data = _manifest_data({"title": {"position": "top"}})
+    assert_that(PluginManifest.from_dict(data).actions[0].appearance).is_equal_to({"title": {"position": "top"}})
+
+
+def test_visible_false_hides_plugin_title() -> None:
+    img = _open(compose_key_image(_appearance(title={"visible": False}), None, "Plugin"))
+    assert_that(_has_title_pixels(img)).is_false()
+
+
+def test_empty_text_without_plugin_title_draws_nothing() -> None:
+    img = _open(compose_key_image(_appearance(), None, ""))
+    assert_that(_has_title_pixels(img)).is_false()
+
+
+def test_long_unicode_text_does_not_crash() -> None:
+    data = compose_key_image(_appearance(title={"text": "W" * 200 + "🙂"}), None, "")
+    assert_that(_open(data).size).is_equal_to((144, 144))
+
+
+def test_unavailable_font_falls_back() -> None:
+    img = _open(compose_key_image(_appearance(title={"text": "X", "font": "No Such Family 123"}), None, ""))
+    assert_that(_has_title_pixels(img)).is_true()
+
+
+def _manifest_data(appearance: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "format": 1,
+        "id": "com.example.p",
+        "name": "P",
+        "version": "1.0.0",
+        "author": "A",
+        "description": "d",
+        "decker": ">=0.2",
+        "runtime": {"type": "python", "entry": "plugin.py", "python": ">=3.12", "requirements": []},
+        "contributes": {"actions": [{"id": "com.example.p.a", "name": "A", "appearance": appearance}]},
+    }
+
+
+def _brightest(img: Image.Image) -> int:
+    return max(max(img.getpixel((x, y))) for x in range(144) for y in range(144))
+
+
+def test_text_color_alpha_blends_with_background() -> None:
+    solid = _open(compose_key_image(_appearance(title={"text": "WWWW", "position": "middle", "size": 40}), None, ""))
+    half = _open(
+        compose_key_image(
+            _appearance(title={"text": "WWWW", "position": "middle", "size": 40, "color": "#ffffff80"}), None, ""
+        )
+    )
+    assert_that(_brightest(solid)).is_equal_to(255)
+    assert_that(_brightest(half)).is_between(100, 160)
+
+
+def test_outline_alpha_blends_with_background() -> None:
+    style = {"text": "WWWW", "position": "middle", "size": 40, "color": "#00000000", "outline_width": 3}
+    solid = _open(compose_key_image(_appearance(title={**style, "outline": "#ff0000"}), None, ""))
+    half = _open(compose_key_image(_appearance(title={**style, "outline": "#ff000080"}), None, ""))
+    assert_that(_brightest(solid)).is_equal_to(255)
+    assert_that(_brightest(half)).is_between(100, 160)
