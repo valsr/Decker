@@ -171,6 +171,12 @@ class KeyAssignmentStore(Manager):
             ).fetchall()
         return [(row[0], row[1], *_to_assignment(row[0], row[2:])) for row in rows]
 
+    def plugin_ids(self) -> set[str]:
+        """Return the ids of every plugin referenced by at least one assignment."""
+        with self._lock:
+            rows = self._db.execute(f"SELECT DISTINCT plugin_uuid FROM {_TABLE}").fetchall()
+        return {row[0] for row in rows}
+
     def delete_page(self, device_id: str, page_id: str) -> None:
         """Remove every assignment on a page."""
         with self._lock:
