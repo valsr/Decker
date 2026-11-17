@@ -6,7 +6,9 @@ from assertpy import assert_that
 
 from decker.plugin.repository_index import (
     MAX_INDEX_BYTES,
+    IndexVersion,
     RepositoryIndexError,
+    latest_compatible,
     parse_index,
 )
 
@@ -119,3 +121,34 @@ def test_strings_are_stripped_and_capped() -> None:
     index = parse_index(_index([_plugin(name="  " + "n" * 200, description="d" * 3000)]), INDEX_URL)
     assert_that(index.plugins[0].name).is_length(100)
     assert_that(index.plugins[0].description).is_length(2000)
+
+
+def test_malformed_urls_skip_the_entry_not_the_index() -> None:
+    doc = {
+        "format": 1,
+        "plugins": [
+            {
+                "id": "com.t.bad",
+                "versions": [{"version": "1.0.0", "url": "http://[bad/x", "size": 1, "sha256": "0" * 64}],
+            },
+            {
+                "id": "com.t.ok",
+                "icon": "http://[bad",
+                "versions": [{"version": "1.0.0", "url": "ok.zip", "size": 1, "sha256": "0" * 64}],
+            },
+        ],
+    }
+    index = parse_index(json.dumps(doc).encode(), "http://example.com/index.json")
+    assert_that([p.id for p in index.plugins]).is_equal_to(["com.t.ok"])
+    assert_that(index.plugins[0].icon_url).is_none()
+
+
+def test_latest_compatible_skips_incompatible_versions() -> None:
+    def version(number: str, decker: str | None) -> IndexVersion:
+        return IndexVersion(number, decker, "http://x/y", 1, "0" * 64, "", {})
+
+    versions = (version("3.0.0", ">=99"), version("2.0.0", None), version("1.0.0", None))
+    best = latest_compatible(versions)
+    assert best is not None
+    assert_that(best.version).is_equal_to("2.0.0")
+    assert_that(latest_compatible((version("3.0.0", ">=99"),))).is_none()

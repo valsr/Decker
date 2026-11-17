@@ -1,6 +1,7 @@
 """Plugin repository store: fetching, caching and merging repository indexes."""
 
 import hashlib
+import http.client
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ MAX_ICON_BYTES = 512 * 1024
 _ALLOWED_SCHEMES = ("http://", "https://", "file://")
 _CONFIG_KEY = "plugin.repositories"
 _CHUNK = 64 * 1024
+FETCH_DEADLINE_S = 60.0
 
 
 class FetchError(Exception):
@@ -58,18 +60,28 @@ class CatalogEntry:
     shadowed_by: str | None
 
 
-def fetch(url: str, max_bytes: int, timeout: float = 20.0) -> bytes:
-    """Fetch an http, https or file URL, refusing bodies larger than max_bytes."""
+def fetch(url: str, max_bytes: int, timeout: float = 20.0, deadline: float = FETCH_DEADLINE_S) -> bytes:
+    """Fetch an http, https or file URL, refusing bodies over max_bytes or taking longer than deadline seconds."""
     if not url.lower().startswith(_ALLOWED_SCHEMES):
         raise FetchError(f"Unsupported URL scheme: {url}")
+    limit = time.monotonic() + deadline
+    chunks: list[bytes] = []
+    received = 0
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:  # nosec B310 - scheme checked above
-            data: bytes = response.read(max_bytes + 1)
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+            while received <= max_bytes:
+                if time.monotonic() > limit:
+                    raise FetchError(f"Fetching {url} took longer than {deadline:g} s")
+                chunk: bytes = response.read(min(_CHUNK, max_bytes + 1 - received))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                received += len(chunk)
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as exc:
         raise FetchError(f"Cannot fetch {url}: {exc}") from exc
-    if len(data) > max_bytes:
+    if received > max_bytes:
         raise FetchError(f"Response from {url} exceeds {max_bytes} bytes")
-    return data
+    return b"".join(chunks)
 
 
 def _write_atomic(path: Path, data: bytes) -> None:
@@ -113,11 +125,16 @@ class RepositoryStore:
         with self._lock:
             if url in self.urls():
                 raise RepositoryError(f"Repository already added: {url}")
-            try:
-                raw = fetch(url, MAX_INDEX_BYTES)
-                parse_index(raw, url)
-            except (FetchError, RepositoryIndexError) as exc:
-                raise RepositoryError(str(exc)) from exc
+        try:
+            raw = fetch(url, MAX_INDEX_BYTES)
+            parse_index(raw, url)
+        except (FetchError, RepositoryIndexError) as exc:
+            raise RepositoryError(str(exc)) from exc
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            raise RepositoryError(f"Cannot use {url}: {exc}") from exc
+        with self._lock:
+            if url in self.urls():
+                raise RepositoryError(f"Repository already added: {url}")
             self._store_index(url, raw)
             try:
                 config.set(_CONFIG_KEY, [*self.urls(), url])
@@ -138,10 +155,9 @@ class RepositoryStore:
 
     def refresh_all(self) -> list[RepositoryInfo]:
         """Refetch every repository; a failure keeps the cached index and records the error."""
-        with self._lock:
-            for url in self.urls():
-                self._refresh(url)
-            return self.list_repositories()
+        for url in self.urls():
+            self._refresh(url)
+        return self.list_repositories()
 
     def catalog(self) -> list[CatalogEntry]:
         """Return all cached plugins; the first repository offering an id wins."""
@@ -169,17 +185,19 @@ class RepositoryStore:
         entry = self.find(plugin_id)
         if entry is None or not entry.plugin.icon_url:
             return None
+        path = self._dir(entry.repository_url) / "icons" / plugin_id
         with self._lock:
-            path = self._dir(entry.repository_url) / "icons" / plugin_id
             if path.is_file():
                 return path.read_bytes()
-            try:
-                data = fetch(entry.plugin.icon_url, MAX_ICON_BYTES)
-            except FetchError as exc:
-                logger.warning("Icon fetch failed for %s: %s", plugin_id, exc)
-                return None
-            _write_atomic(path, data)
-            return data
+        try:
+            data = fetch(entry.plugin.icon_url, MAX_ICON_BYTES)
+        except FetchError as exc:
+            logger.warning("Icon fetch failed for %s: %s", plugin_id, exc)
+            return None
+        with self._lock:
+            if entry.repository_url in self.urls():
+                _write_atomic(path, data)
+        return data
 
     def last_check(self) -> float | None:
         """Return the time of the last update check, if any."""
@@ -207,11 +225,15 @@ class RepositoryStore:
         try:
             raw = fetch(url, MAX_INDEX_BYTES)
             parse_index(raw, url)
-        except (FetchError, RepositoryIndexError) as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning("Refreshing repository %s failed: %s", url, exc)
-            self._write_meta(url, str(exc))
+            with self._lock:
+                if url in self.urls():
+                    self._write_meta(url, str(exc))
             return
-        self._store_index(url, raw)
+        with self._lock:
+            if url in self.urls():
+                self._store_index(url, raw)
 
     def _load_index(self, url: str) -> RepositoryIndex | None:
         try:

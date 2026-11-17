@@ -9,6 +9,7 @@ from urllib.parse import urljoin, urlparse
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
+from decker.common.version import is_compatible
 from decker.plugin.manifest import is_valid_plugin_id, is_valid_version
 
 MAX_INDEX_BYTES = 4 * 1024 * 1024
@@ -111,9 +112,12 @@ def _text(value: Any, limit: int) -> str:
 def _resolve_url(value: Any, index_url: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise _EntryError("missing url")
-    url = urljoin(index_url, value.strip())
-    scheme = urlparse(url).scheme
-    allowed = {"http", "https"} | ({"file"} if urlparse(index_url).scheme == "file" else set())
+    try:
+        url = urljoin(index_url, value.strip())
+        scheme = urlparse(url).scheme
+        allowed = {"http", "https"} | ({"file"} if urlparse(index_url).scheme == "file" else set())
+    except ValueError as exc:
+        raise _EntryError(f"invalid url: {exc}") from exc
     if scheme not in allowed:
         raise _EntryError(f"url scheme {scheme!r} not allowed")
     return url
@@ -204,3 +208,18 @@ def _parse_contributes(value: Any) -> dict[str, list[str]]:
         for kind, names in value.items()
         if isinstance(names, list)
     }
+
+
+def latest_compatible(versions: tuple[IndexVersion, ...]) -> IndexVersion | None:
+    """Return the highest version that is compatible with this Decker, if any."""
+    best: tuple[Version, IndexVersion] | None = None
+    for item in versions:
+        if not is_compatible(item.decker):
+            continue
+        try:
+            parsed = Version(item.version)
+        except InvalidVersion:
+            continue
+        if best is None or parsed > best[0]:
+            best = (parsed, item)
+    return best[1] if best else None

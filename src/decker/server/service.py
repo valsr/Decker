@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from packaging.version import InvalidVersion, Version
 from rpyc.core.service import Service
 from rpyc.utils import exposed
 
@@ -22,7 +21,7 @@ from decker.common.utils import api_response
 from decker.common.version import is_compatible
 from decker.plugin.icons import read_icon
 from decker.plugin.loader import InstalledPlugin
-from decker.plugin.repository_index import IndexVersion
+from decker.plugin.repository_index import IndexVersion, latest_compatible
 from decker.plugin.settings_schema import schema_to_json
 from decker.plugin.target import ActionTarget
 from decker.server.plugin_installer import PluginInstallError
@@ -94,17 +93,7 @@ def _catalog_item(entry: CatalogEntry, installed_version: str | None) -> dict[st
 def _pick_version(versions: tuple[IndexVersion, ...], wanted: str) -> IndexVersion | None:
     if wanted:
         return next((item for item in versions if item.version == wanted), None)
-    best: tuple[Version, IndexVersion] | None = None
-    for item in versions:
-        if not is_compatible(item.decker):
-            continue
-        try:
-            parsed = Version(item.version)
-        except InvalidVersion:
-            continue
-        if best is None or parsed > best[0]:
-            best = (parsed, item)
-    return best[1] if best else None
+    return latest_compatible(versions)
 
 
 @dataclass
