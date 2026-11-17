@@ -16,12 +16,18 @@ The default repository is `https://valsr.github.io/decker-plugins/index.json` (s
   Install, Update, Installed or "Requires Decker …" button. A details pane shows the full description, author, homepage,
   what the plugin contributes (Actions, Icon packs), size, repository and required Decker version.
 - **Update check**: the "Update check" selector picks Daily, Weekly (default), Monthly or Manual. "Check for updates"
-  refreshes every repository now.
+  refreshes every repository now in the background; the button stays disabled until the server reports that the
+  check finished.
 - **Toast**: when updates are found, the client shows "N plugin update(s) available" with "Update all" (installs one
   after another, since the server runs one install job at a time). If nothing needs updating but keys use plugins that
   are not installed and a repository offers them, it shows "N missing plugin(s) available" with "Install".
-- If two repositories offer the same plugin id, the one earlier in the configured list wins; the other is shown as
-  shadowed and never used for installs or updates.
+- If two repositories offer the same plugin id, the one earlier in the configured list wins. The other entry is hidden
+  from the Get More Plugins list; the winning entry's details pane notes "Also offered by <repository> (not used)".
+  The hidden one is never used for installs or updates.
+- Install, Update and the toast's "Update all" / "Install" are disabled or hidden when the client is not allowed to
+  install plugins (see Trust).
+- Keys that use a plugin that is not installed show "Plugin missing", or "Plugin failed" when the plugin is installed
+  but failed to load. The label goes away once the plugin is installed and running.
 
 ### Trust
 
@@ -124,7 +130,9 @@ client.
 | Limit | Value |
 |-------|-------|
 | Index size | 4 MiB |
-| Request timeout | 20 s |
+| Request timeout | 20 s per network operation |
+| Total time per index or icon fetch | 60 s |
+| Total time per package download | 600 s |
 | Package download | 64 MiB, the same as a local package (see [limits](limits.md)) |
 | Icon | 512 KiB |
 
@@ -136,8 +144,13 @@ days; `manual` never refreshes on its own.
 - The time of the last successful check is stored in `~/.decker/repositories/state.json`, so the schedule survives
   restarts. A check counts as successful when at least one repository answered (or none is configured).
 - At server start, updates are first computed from the cached indexes without any network access, and announced if
-  there are any. The server then wakes hourly and refreshes only when the interval has elapsed.
-- "Check for updates" refreshes immediately regardless of the schedule.
+  there are any. A background thread then checks right away when the interval has elapsed (or no check has ever been
+  made, as after a fresh install), and afterwards wakes hourly and refreshes only when the interval has elapsed. Server
+  start never waits for the network.
+- "Check for updates" refreshes immediately regardless of the schedule. It returns at once and runs in the
+  background; the result arrives as the `repositories_check_finished` event.
+- Network access never blocks other requests: a slow or unreachable repository only delays its own refresh. A
+  repository that answers with garbage is recorded as in error and the remaining repositories are still refreshed.
 - The cache lives in `~/.decker/repositories/`, one folder per repository holding its last good `index.json`, the
   status of the last refresh and cached icons.
 - An installed plugin is updatable when the first repository offering its id has a greater version compatible with
@@ -154,7 +167,7 @@ days; `manual` never refreshes on its own.
 |-----|---------|----------------|
 | `repositories_list` | Configured repositories with name, plugin count, last checked and last error | no |
 | `repository_add(url)` / `repository_remove(url)` | Add (fetches and validates) or remove | yes |
-| `repositories_check` | Refresh everything now and return the update report | no |
+| `repositories_check` | Start a background refresh of everything. Returns `{"started": true}` or `{"started": false, "reason": ...}` when a check is already running | no |
 | `repository_catalog` | Every repository plugin with versions and installed state | no |
 | `repository_icon(plugin_id)` | Icon as base64 | no |
 | `plugin_install_from_repository(plugin_id, version)` | Install or update; empty `version` means the latest compatible. Returns a job id or an `error:` message | yes |
@@ -162,7 +175,9 @@ days; `manual` never refreshes on its own.
 | `update_check_schedule` / `update_check_set_schedule(name)` | Read or set the schedule | set only |
 
 Install progress and the result use the existing `plugin_install_progress` and `plugin_install_finished` events.
-When the set of updates changes, and once on server start if there are any, the server pushes `plugin_updates_available`:
+When a check started with `repositories_check` ends, the server pushes `repositories_check_finished` with
+`{"repositories": [...]}`, the same entries `repositories_list` returns. When the set of updates changes, and once on
+server start if there are any, the server pushes `plugin_updates_available`:
 
 ```json
 {
