@@ -10,6 +10,8 @@ from decker.common import paths as decker_paths
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.manifest import ManifestValidationError, PluginManifest
 
+BUILTIN_PLUGINS_DIR = Path(__file__).resolve().parents[1] / "builtin_plugins"
+
 
 @dataclass(frozen=True)
 class InstalledPlugin:
@@ -40,21 +42,29 @@ class PluginLoader:
 
     def scan(self) -> PluginScanResult:
         """Validate the manifest of every folder in the plugins directory."""
-        result = PluginScanResult()
-        if not self._plugins_dir.exists():
-            return result
-        for entry in sorted(self._plugins_dir.iterdir()):
-            if not entry.is_dir() or entry.name.startswith("."):
-                continue
-            try:
-                manifest = PluginManifest.load(entry / "manifest.json")
-            except ManifestValidationError as exc:
-                logging.error("Failed to load plugin %s: %s", entry.name, exc)
-                result.failures.append(PluginLoadFailedEvent(plugin_uuid=entry.name, error=str(exc)))
-                continue
-            result.plugins.append(InstalledPlugin(manifest, entry))
-            logging.info("Found plugin %s", manifest.id)
+        return _scan_folder(self._plugins_dir)
+
+    def scan_builtin(self) -> PluginScanResult:
+        """Validate the plugins shipped inside Decker itself."""
+        return _scan_folder(BUILTIN_PLUGINS_DIR)
+
+
+def _scan_folder(folder: Path) -> PluginScanResult:
+    result = PluginScanResult()
+    if not folder.exists():
         return result
+    for entry in sorted(folder.iterdir()):
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        try:
+            manifest = PluginManifest.load(entry / "manifest.json")
+        except ManifestValidationError as exc:
+            logging.error("Failed to load plugin %s: %s", entry.name, exc)
+            result.failures.append(PluginLoadFailedEvent(plugin_uuid=entry.name, error=str(exc)))
+            continue
+        result.plugins.append(InstalledPlugin(manifest, entry))
+        logging.info("Found plugin %s", manifest.id)
+    return result
 
 
 def recover_interrupted_installs(plugins_dir: Path) -> None:

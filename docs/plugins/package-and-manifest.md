@@ -96,6 +96,7 @@ JSON with snake_case keys. Unknown keys are ignored. `format` must be the intege
 | `states` | Optional list of `{image, title}`; selected by `set_state` (index into the list). |
 | `appearance` | Optional defaults for the Decker-drawn appearance: `background` and `title` (a [`text_style`](settings-schema.md#text-style) object; give only the fields you want to change, e.g. `{"position": "top"}`). The older flat `show_title`, `title_position`, `title_font`, `title_size`, `title_color`, `title_outline` and `title_outline_width` keys, and a plain-string `title`, are still accepted and folded into `title`. |
 | `settings` | [Settings schema](settings-schema.md) for the per-key form. |
+| `static` | `true` makes a preset: no code handles it, no process is started, a press does nothing, and the key shows only its Decker-drawn `appearance` (and `states[0]`). A static action cannot declare `settings` or `gestures`. A plugin whose actions are all static needs no `runtime`. |
 
 ### `icon_packs[]`
 
@@ -105,5 +106,5 @@ need no `runtime`. Packs are served to clients over RPC; individual icons are li
 
 ## Where plugins come from
 
-Decker ships no plugins. Plugins are installed from a `.deckerplugin` package or from a plugin repository
+Decker ships one built-in static plugin, **Blank** (`com.decker.blank`): a key with only a background and a title, a base for presets. It cannot be uninstalled or replaced (a package or repository plugin with a built-in id is refused). Other plugins are installed from a `.deckerplugin` package or from a plugin repository
 (see [repositories](repositories.md)); the default repository publishes the Counter plugin.

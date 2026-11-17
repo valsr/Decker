@@ -1,0 +1,21 @@
+{
+  "format": 1,
+  "id": "com.decker.blank",
+  "name": "Blank",
+  "version": "0.4.0",
+  "author": "Decker",
+  "description": "A key that shows only a background and a title.",
+  "icon": "icons/blank",
+  "category": "Utilities",
+  "contributes": {
+    "actions": [
+      {
+        "id": "com.decker.blank.blank",
+        "name": "Blank",
+        "tooltip": "Draws only the background and title",
+        "icon": "icons/blank",
+        "static": true
+      }
+    ]
+  }
+}

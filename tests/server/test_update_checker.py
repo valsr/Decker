@@ -46,8 +46,12 @@ def _write_index(path: Path, plugins: dict[str, list[dict[str, Any]]]) -> str:
 
 
 class FakePlugins:
-    def __init__(self, installed: dict[str, str]) -> None:
+    def __init__(self, installed: dict[str, str], builtin: frozenset[str] = frozenset()) -> None:
         self.installed = installed
+        self.builtin = builtin
+
+    def is_builtin(self, plugin_id: str) -> bool:
+        return plugin_id in self.builtin
 
     def plugins(self) -> list[Any]:
         return [
@@ -115,6 +119,13 @@ def test_update_detected(env: Env) -> None:
     assert_that(report.to_payload()["updates"]).is_equal_to(
         [{"id": "com.t.a", "name": "Name com.t.a", "installed": "1.0.0", "available": "2.0.0"}]
     )
+
+
+def test_repository_plugin_with_a_builtin_id_is_ignored(env: Env) -> None:
+    env.publish({"com.t.a": [_version("9.0.0")]})
+    env.plugins.installed = {"com.t.a": "1.0.0"}
+    env.plugins.builtin = frozenset({"com.t.a"})
+    assert_that(env.checker.check_now().updates).is_empty()
 
 
 def test_newer_local_version_is_up_to_date(env: Env) -> None:

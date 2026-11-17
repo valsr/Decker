@@ -115,6 +115,19 @@ def test_uninstall_enabled_for_selected_plugin(tab):
     assert_that(tab._uninstall_btn.isEnabled()).is_true()
 
 
+def test_uninstall_button_is_disabled_for_builtin_plugins(manager):
+    manager.answers["plugins_list"] = json.dumps([{**_PLUGINS[0], "builtin": True}, _PLUGINS[1]])
+    tab = PluginsTab()
+    tab.refresh()
+
+    _select(tab, "com.decker.core")
+
+    assert_that(tab._uninstall_btn.isEnabled()).is_false()
+    assert_that(tab._uninstall_btn.toolTip()).contains("built into Decker")
+    _select(tab, "com.acme.extra")
+    assert_that(tab._uninstall_btn.isEnabled()).is_true()
+
+
 def test_install_button_disabled_when_not_allowed(manager):
     manager.answers["plugin_install_allowed"] = False
     tab = PluginsTab()

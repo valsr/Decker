@@ -233,8 +233,11 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
 
     def _show_selection(self) -> None:
         plugin = self._plugins.get(self._selected_id or "")
-        self._uninstall_btn.setEnabled(plugin is not None and install_allowed())
-        self._uninstall_btn.setToolTip("" if install_allowed() else NOT_ALLOWED_TOOLTIP)
+        builtin = bool(plugin and plugin.get("builtin"))
+        self._uninstall_btn.setEnabled(plugin is not None and not builtin and install_allowed())
+        self._uninstall_btn.setToolTip(
+            "This plugin is built into Decker" if builtin else "" if install_allowed() else NOT_ALLOWED_TOOLTIP
+        )
         schema = plugin.get("global_settings_schema") if plugin else None
         if plugin is None or not schema:
             self._set_settings_visible(False)

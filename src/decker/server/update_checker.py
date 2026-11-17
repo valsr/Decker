@@ -186,7 +186,7 @@ class UpdateChecker:
         missing: list[dict[str, Any]] = []
         referenced = self._keys.plugin_ids()
         for entry in self._store.catalog():
-            if entry.shadowed_by is not None:
+            if entry.shadowed_by is not None or self._plugins.is_builtin(entry.plugin.id):
                 continue
             plugin = entry.plugin
             latest = _latest_compatible(plugin.versions)
