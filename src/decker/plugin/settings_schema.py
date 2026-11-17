@@ -12,10 +12,12 @@ from decker.common.text_style import TEXT_STYLE_DEFAULTS, normalize_text_style
 FIELD_TYPES = frozenset({"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style"})
 
 _COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
+_RGBA_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
     "int": ("min", "max", "step", "special_value"),
     "float": ("min", "max", "step", "decimals"),
     "text": ("multiline",),
+    "color": ("alpha",),
     "choice": ("options",),
 }
 _ZERO_VALUES: dict[str, Any] = {
@@ -86,8 +88,9 @@ def _parse_extra(type_: str, data: dict[str, Any], where: str) -> dict[str, Any]
                 raise ValueError(f"{where}: '{name}' must be an integer for an int field")
     if "special_value" in extra and not isinstance(extra["special_value"], str):
         raise ValueError(f"{where}: 'special_value' must be a string")
-    if "multiline" in extra and not isinstance(extra["multiline"], bool):
-        raise ValueError(f"{where}: 'multiline' must be a boolean")
+    for name in ("multiline", "alpha"):
+        if name in extra and not isinstance(extra[name], bool):
+            raise ValueError(f"{where}: '{name}' must be a boolean")
     return extra
 
 
@@ -105,7 +108,8 @@ def _coerce(type_: str, value: Any, extra: Mapping[str, Any]) -> Any:
     elif type_ == "bool":
         result = value if isinstance(value, bool) else _MISSING
     elif type_ == "color":
-        result = value if isinstance(value, str) and _COLOR_PATTERN.match(value) else _MISSING
+        pattern = _RGBA_PATTERN if extra.get("alpha") else _COLOR_PATTERN
+        result = value if isinstance(value, str) and pattern.match(value) else _MISSING
     elif type_ == "choice":
         allowed = [o["value"] for o in extra["options"]]
         result = next((o for o in allowed if type(o) is type(value) and o == value), _MISSING)
