@@ -82,6 +82,8 @@ A pack icon is drawn at 70% of the key and centred, so the key's title stays rea
 `image` still fill the key). `color` recolours SVG icons: it sets the SVG's `color` (so `fill="currentColor"` follows it) and a default `fill`, and
 the alpha becomes the SVG's opacity. Raster icons ignore it, and an invalid colour leaves the icon untinted.
 
+A user can set an icon override on a key; it replaces only the action's static default icon, so any image the plugin sets with `set_image` is shown instead of it.
+
 Raster images larger than 4096 x 4096 pixels are rejected. Decker scales the image to the key and draws it over
 the key background, then the title. Invalid base64 is dropped.
 

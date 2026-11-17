@@ -457,3 +457,9 @@ QLabel[role="error"] {
     color: $error;
     font-size: 12px;
 }
+
+QLabel#keyPreview {
+    background-color: $surface;
+    border: 1px solid $border;
+    border-radius: 4px;
+}
