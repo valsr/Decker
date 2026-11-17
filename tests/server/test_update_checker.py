@@ -198,3 +198,15 @@ def test_set_schedule_rejects_unknown(env: Env) -> None:
         env.checker.set_schedule("hourly")
     env.checker.set_schedule("daily")
     assert_that(env.checker.schedule()).is_equal_to("daily")
+
+
+def test_failed_check_does_not_mark_checked(env: Env) -> None:
+    config.set("plugin.repositories", [(env.tmp_path / "missing.json").as_uri()])
+    env.checker.check_now()
+    assert_that(env.store.last_check()).is_none()
+    assert_that(env.checker.check_if_due()).is_true()
+
+
+def test_future_last_check_is_due(env: Env) -> None:
+    env.store.mark_checked(env.clock.now + 10 * DAY)
+    assert_that(env.checker.check_if_due()).is_true()
