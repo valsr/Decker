@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 from assertpy import assert_that
 
+from decker.common.text_style import TEXT_STYLE_DEFAULTS
 from decker.plugin.settings_schema import (
     FIELD_TYPES,
     SettingField,
@@ -158,3 +159,55 @@ def test_huge_int_for_float_falls_back_to_default() -> None:
 def test_huge_int_float_default_rejected() -> None:
     with pytest.raises(ValueError, match="here"):
         parse_settings_schema([{"key": "f", "type": "float", "default": 10**400}], "here")
+
+
+def _text_style_schema(default: Any = None) -> tuple[Any, ...]:
+    entry: dict[str, Any] = {"key": "label", "type": "text_style", "label": "Label"}
+    if default is not None:
+        entry["default"] = default
+    return parse_settings_schema([entry], "t")
+
+
+def test_text_style_type_accepted() -> None:
+    assert_that(FIELD_TYPES).contains("text_style")
+    assert_that(_text_style_schema()[0].default).is_equal_to(dict(TEXT_STYLE_DEFAULTS))
+
+
+def test_text_style_default_completed_from_partial() -> None:
+    default = _text_style_schema({"position": "top"})[0].default
+    assert_that(default).is_equal_to({**TEXT_STYLE_DEFAULTS, "position": "top"})
+
+
+def test_text_style_non_dict_default_rejected() -> None:
+    with pytest.raises(ValueError, match="default"):
+        _text_style_schema("bold")
+
+
+def test_apply_schema_text_style_invalid_fields_fall_back_per_field() -> None:
+    result = apply_schema(_text_style_schema(), {"label": {"size": "abc", "position": "left", "text": "Hi"}})
+    assert_that(result["label"]).is_equal_to({**TEXT_STYLE_DEFAULTS, "text": "Hi"})
+
+
+def test_apply_schema_text_style_non_dict_uses_default() -> None:
+    assert_that(apply_schema(_text_style_schema(), {"label": 5})["label"]).is_equal_to(dict(TEXT_STYLE_DEFAULTS))
+
+
+def test_apply_schema_text_style_missing_uses_default() -> None:
+    assert_that(apply_schema(_text_style_schema({"bold": True}), {})["label"]["bold"]).is_true()
+
+
+def test_apply_schema_text_style_invalid_field_falls_back_to_field_default() -> None:
+    result = apply_schema(_text_style_schema({"position": "top"}), {"label": {"position": "left"}})
+    assert_that(result["label"]["position"]).is_equal_to("top")
+
+
+def test_apply_schema_text_style_returns_copy() -> None:
+    schema = _text_style_schema()
+    apply_schema(schema, {})["label"]["text"] = "changed"
+    assert_that(apply_schema(schema, {})["label"]["text"]).is_equal_to("")
+    assert_that(schema[0].default["text"]).is_equal_to("")
+
+
+def test_text_style_round_trips_through_schema_to_json() -> None:
+    schema = _text_style_schema({"position": "top"})
+    assert_that(parse_settings_schema(schema_to_json(schema), "t")).is_equal_to(schema)
