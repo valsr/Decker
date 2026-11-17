@@ -491,18 +491,19 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         Returns:
             str: base64 PNG, or "" if the key is unassigned, not live or the draft is invalid.
         """
-        if self._context is None:
+        if self._context is None or not isinstance(appearance_json, str):
             return ""
         try:
             raw = json.loads(appearance_json)
-        except ValueError:
+            assignment = self._context.key_assignment_store.get(device_id, page_id, key_index)
+            if not isinstance(raw, dict) or assignment is None:
+                return ""
+            draft = {k: v for k, v in raw.items() if k in APPEARANCE_KEYS}
+            image = self._context.plugin_manager.preview_image(assignment.target, draft)
+            return base64.b64encode(image).decode("ascii") if image else ""
+        except Exception:  # pylint: disable=broad-except
+            logging.debug("key_preview failed", exc_info=True)
             return ""
-        assignment = self._context.key_assignment_store.get(device_id, page_id, key_index)
-        if not isinstance(raw, dict) or assignment is None:
-            return ""
-        draft = {k: v for k, v in raw.items() if k in APPEARANCE_KEYS}
-        image = self._context.plugin_manager.preview_image(assignment.target, draft)
-        return base64.b64encode(image).decode("ascii") if image else ""
 
     @exposed
     @api_response
