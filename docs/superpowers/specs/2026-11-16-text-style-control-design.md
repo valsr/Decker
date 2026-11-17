@@ -89,3 +89,17 @@ Document `text_style` and its value in `docs/plugins/settings-schema.md`.
 
 Exact icons and sizing, popup placement code, keyboard shortcut wiring, how `parse_settings_schema` validates the new
 type, and test layout (mirror `tests/client/widgets/` and server appearance tests; keep the ≥ 85% coverage gate).
+
+## Addendum: always-on Title and Background row (same branch)
+
+Every key has two settings that Decker itself renders, never the plugin: **Title** and **Background**.
+
+- They are injected at the top of the key configuration in a single line: `Title: [text field ⚙ ........]  Background: [swatch]`.
+  The title field takes the spare width; the background is a swatch button.
+- Background uses an RGBA colour picker (`#rrggbb` or `#rrggbbaa`, alpha last). It is exposed through an opt-in
+  `alpha` option on the `color` settings type (plugin colour fields stay RGB unless they ask for it).
+- Render order: background (skipped when its opacity is 0), then the plugin's image, then the title on top. The
+  hardware has no transparency, so a translucent background is blended over black.
+- The appearance schema no longer has "Background"/"Title" section headings (they are one row now).
+- Calls made without you: opacity 0 renders as black, not as "no key image"; the checker pattern behind the swatch shows
+  translucency; the inline row is a generic `InlineSchemaForm` (labels + widgets, sections ignored).
