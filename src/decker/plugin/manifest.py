@@ -11,6 +11,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from decker.common.appearance_schema import APPEARANCE_KEYS
 from decker.plugin.settings_schema import SettingEntry, parse_settings_schema
 
+_SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?")
 SUPPORTED_FORMAT = 1
 KNOWN_CONTRIBUTION_KINDS = frozenset({"actions", "icon_packs"})
 VALID_GESTURES = frozenset({"press", "double_press", "long_press"})
@@ -90,12 +91,14 @@ class PluginManifest:
         fmt = data.get("format")
         if fmt is None:
             raise ManifestValidationError("manifest missing required field: format")
-        if isinstance(fmt, bool) or fmt != SUPPORTED_FORMAT:
+        if type(fmt) is not int or fmt != SUPPORTED_FORMAT:  # pylint: disable=unidiomatic-typecheck
             raise ManifestValidationError(f"unsupported manifest format {fmt!r} (supported: {SUPPORTED_FORMAT})")
         plugin_id = _parse_id(data.get("id"), "manifest id")
         missing = [key for key in ("name", "version", "author") if not _is_nonempty_str(data.get(key))]
         if missing:
             raise ManifestValidationError(f"manifest missing required field(s): {', '.join(missing)}")
+        if not _SEMVER.fullmatch(str(data["version"])):
+            raise ManifestValidationError(f"manifest version {data['version']!r} is not a semantic version (x.y.z)")
 
         contributes = data.get("contributes")
         if not isinstance(contributes, dict) or not contributes:

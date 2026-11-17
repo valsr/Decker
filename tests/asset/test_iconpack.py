@@ -115,3 +115,10 @@ def test_unregister_removes_pack(tmp_path):
     registry.unregister("com.t.p")
     assert_that(registry.list_packs()).is_empty()
     assert_that(registry.list_icons("com.t.p.icons")).is_empty()
+
+
+def test_read_icon_with_nul_byte_returns_none(tmp_path):
+    _pack(tmp_path)
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    assert_that(registry.read_icon("com.t.p.icons", "a\0.png")).is_none()

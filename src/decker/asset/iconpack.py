@@ -78,7 +78,11 @@ class IconPackRegistry:
         pack = self._pack(pack_id)
         if pack is None:
             return None
-        path = (pack.root / name).resolve()
+        try:
+            path = (pack.root / name).resolve()
+        except (OSError, ValueError):
+            logging.warning("Refusing icon %r of pack %s: invalid name", name, pack_id)
+            return None
         if not path.is_relative_to(pack.root) or path.suffix.lower() not in _IMAGE_SUFFIXES:
             logging.warning("Refusing icon %r of pack %s: not an image inside the pack", name, pack_id)
             return None

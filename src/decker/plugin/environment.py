@@ -1,7 +1,7 @@
 """Per-plugin Python environments (built with uv) and SDK staging."""
 
-import logging
 import hashlib
+import logging
 import os
 import re
 import shutil

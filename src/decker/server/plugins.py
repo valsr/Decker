@@ -20,7 +20,11 @@ from decker.plugin.environment import stage_sdk
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.gestures import Gesture, GestureRecognizer
 from decker.plugin.icons import read_icon
-from decker.plugin.loader import InstalledPlugin, PluginLoader, recover_interrupted_installs
+from decker.plugin.loader import (
+    InstalledPlugin,
+    PluginLoader,
+    recover_interrupted_installs,
+)
 from decker.plugin.manifest import ActionSpec
 from decker.plugin.protocol import Message
 from decker.plugin.runtime.launcher import launch_command, launch_env

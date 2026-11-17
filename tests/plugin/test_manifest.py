@@ -206,3 +206,19 @@ def test_trailing_newline_ids_rejected() -> None:
         PluginManifest.from_dict(data)
     with pytest.raises(ManifestValidationError):
         PluginManifest.from_dict(_with_action(id="com.decker.counter.x\n"))
+
+
+def test_float_format_rejected() -> None:
+    with pytest.raises(ManifestValidationError, match="format"):
+        PluginManifest.from_dict(_counter(format=1.0))
+
+
+@pytest.mark.parametrize("version", ["1.0", "latest", "01.2.3", "1.2.3.4"])
+def test_non_semver_version_rejected(version: str) -> None:
+    with pytest.raises(ManifestValidationError, match="semantic version"):
+        PluginManifest.from_dict(_counter(version=version))
+
+
+@pytest.mark.parametrize("version", ["0.1.0", "1.2.3-beta.1", "1.0.0+build.5"])
+def test_semver_versions_accepted(version: str) -> None:
+    assert_that(PluginManifest.from_dict(_counter(version=version)).version).is_equal_to(version)

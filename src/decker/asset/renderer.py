@@ -7,7 +7,6 @@ from xml.etree.ElementTree import ParseError
 import cairosvg  # type: ignore[import-untyped]
 from PIL import Image, UnidentifiedImageError
 
-
 MAX_RASTER_PIXELS = 4096 * 4096
 _SVG_SNIFF_BYTES = 64 * 1024
 
