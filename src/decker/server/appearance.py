@@ -19,6 +19,8 @@ from decker.plugin.settings_schema import apply_schema, parse_settings_schema
 _BASE_SIZE = 72  # title sizes in settings are relative to a 72 px key
 _FALLBACK_FONT = "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
 _TITLE_MARGIN = 4
+PACK_ICON_SCALE = 0.7  # pack icons are drawn at this fraction of the key, centred, so a title stays readable
+_MIN_IMAGE_SCALE = 0.1
 _LINE_BREAKS = re.compile(r"\s*[\r\n\v\f\x85\u2028\u2029]+\s*")
 _BOLD_WEIGHT = 180  # fontconfig weight at or above which a face counts as really bold (FC_WEIGHT_BOLD is 200)
 _PARSED_SCHEMA = parse_settings_schema(APPEARANCE_SCHEMA, "appearance")
@@ -152,6 +154,7 @@ def compose_key_image(  # pylint: disable=too-many-arguments,too-many-positional
     plugin_title: str,
     size: int = 144,
     plugin_image_color: str | None = None,
+    plugin_image_scale: float = 1.0,
 ) -> bytes:
     """Compose background, plugin image and title into a size x size PNG."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 255))  # the hardware has no transparency: black underneath
@@ -159,9 +162,11 @@ def compose_key_image(  # pylint: disable=too-many-arguments,too-many-positional
         img.alpha_composite(Image.new("RGBA", (size, size), appearance["background"]))
     if plugin_image:
         try:
-            layer = _RENDERER.render_bytes(plugin_image, size, size, plugin_image_color)
+            inner = max(1, round(size * min(1.0, max(_MIN_IMAGE_SCALE, plugin_image_scale))))
+            layer = _RENDERER.render_bytes(plugin_image, inner, inner, plugin_image_color)
             if layer is not None:
-                img.alpha_composite(layer)
+                offset = (size - inner) // 2
+                img.alpha_composite(layer, dest=(offset, offset))
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logging.debug("skipping unreadable plugin image: %s", exc)
     style = appearance["title"]
