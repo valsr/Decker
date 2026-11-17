@@ -1,3 +1,4 @@
+import base64
 import json
 import tempfile
 from pathlib import Path
@@ -905,3 +906,31 @@ class TestKeyMoveAndCopyAreAllOrNothing:
         assert_that(service.key_move("dev1", P1, 0, 4)).is_true()
 
         manager.deactivate_action.assert_any_call(replaced)
+
+
+class TestSystemIconRpcs:
+    def test_system_icons_are_listed_and_served_over_the_icon_pack_rpcs(self, store, manager, tmp_path):
+        from decker.asset.iconpack import IconPackRegistry
+        from decker.asset.systemicons import SystemIcons
+        from tests.asset.test_systemicons import make_theme
+
+        root = tmp_path / "icons"
+        make_theme(
+            root,
+            "T",
+            {"actions/scalable": {"Context": "Actions", "Size": "48", "Type": "Scalable"}},
+            files=("actions/scalable/edit-copy.svg",),
+        )
+        make_theme(root, "hicolor", {})
+        manager.icon_packs = IconPackRegistry(
+            system_icons=SystemIcons(search_dirs=[root], home=tmp_path / "h", configured_theme=lambda: "T", recheck_s=0)
+        )
+        DeckerService.configure_context(_make_context(manager, store))
+        svc = DeckerService()
+
+        packs = json.loads(svc.iconpacks_list())
+        assert_that([p["id"] for p in packs]).is_equal_to(["decker.system.actions"])
+        assert_that(packs[0]["plugin_name"]).is_equal_to("System Icons")
+        assert_that(json.loads(svc.iconpack_icons("decker.system.actions"))).is_equal_to(["edit-copy"])
+        assert_that(base64.b64decode(svc.iconpack_icon("decker.system.actions", "edit-copy"))).is_equal_to(b"<svg/>")
+        assert_that(svc.iconpack_icon("decker.system.actions", "../x")).is_equal_to("")

@@ -27,3 +27,8 @@ plugin:
     - https://valsr.github.io/decker-plugins/index.json
   # How often to check installed plugins for updates: daily, weekly, monthly or manual.
   update_check: weekly
+
+icons:
+  # Icon theme for the System Icons library (an installed freedesktop theme name).
+  # Empty: use the desktop's current theme (GTK or KDE settings), else Adwaita.
+  system_theme: ""

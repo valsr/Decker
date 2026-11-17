@@ -212,3 +212,78 @@ def test_read_ref_serves_the_builtin_decker_icon():
     data = registry.read_ref(DECKER_ICON_REF)
 
     assert_that(data).is_not_none().contains(b"<svg")
+
+
+class TestSystemIconPacks:
+    @staticmethod
+    def _system(tmp_path):
+        from decker.asset.systemicons import SystemIcons
+        from tests.asset.test_systemicons import make_theme
+
+        root = tmp_path / "icons"
+        make_theme(
+            root,
+            "T",
+            {
+                "actions/scalable": {"Context": "Actions", "Size": "48", "Type": "Scalable"},
+                "places/48": {"Context": "Places", "Size": "48", "Type": "Fixed"},
+            },
+            files=("actions/scalable/edit-copy.svg", "places/48/folder.png"),
+        )
+        make_theme(root, "hicolor", {})
+        return SystemIcons(search_dirs=[root], home=tmp_path / "home", configured_theme=lambda: "T", recheck_s=0)
+
+    def test_system_packs_follow_the_plugin_packs(self, tmp_path):
+        _pack(tmp_path)
+        registry = IconPackRegistry(system_icons=self._system(tmp_path))
+        registry.register(_plugin(tmp_path))
+
+        packs = registry.list_packs()
+
+        assert_that([p["id"] for p in packs]).is_equal_to(
+            ["com.t.p.icons", "decker.system.actions", "decker.system.places"]
+        )
+        assert_that(packs[1]["plugin_name"]).is_equal_to("System Icons")
+
+    def test_icons_and_bytes_are_served_for_system_packs(self, tmp_path):
+        registry = IconPackRegistry(system_icons=self._system(tmp_path))
+
+        assert_that(registry.list_icons("decker.system.actions")).is_equal_to(["edit-copy"])
+        assert_that(registry.read_icon("decker.system.actions", "edit-copy")).is_equal_to(b"<svg/>")
+        assert_that(registry.read_icon("decker.system.actions", "missing")).is_none()
+
+    def test_read_ref_resolves_system_refs(self, tmp_path):
+        registry = IconPackRegistry(system_icons=self._system(tmp_path))
+
+        assert_that(registry.read_ref("pack:decker.system.actions/edit-copy")).is_equal_to(b"<svg/>")
+        assert_that(registry.read_ref("pack:decker.system.places/folder")).is_equal_to(b"png")
+        assert_that(registry.read_ref("pack:decker.system.actions/folder")).is_none()
+        assert_that(registry.read_ref("pack:decker.system.actions/../places/folder")).is_none()
+
+    def test_a_plugin_pack_cannot_take_a_system_id(self, tmp_path):
+        _pack(tmp_path)
+        failures: list[tuple[str, str]] = []
+        registry = IconPackRegistry(
+            on_failure=lambda pid, err: failures.append((pid, err)), system_icons=self._system(tmp_path)
+        )
+
+        registry.register(_plugin(tmp_path, plugin_id="decker.system", pack_id="decker.system.actions"))
+
+        assert_that(failures).is_length(1)
+        assert_that(failures[0][1]).contains("reserved")
+        assert_that(registry.read_icon("decker.system.actions", "a.png")).is_none()
+        assert_that(registry.read_icon("decker.system.actions", "edit-copy")).is_equal_to(b"<svg/>")
+
+    def test_unregistering_a_plugin_keeps_the_system_packs(self, tmp_path):
+        _pack(tmp_path)
+        registry = IconPackRegistry(system_icons=self._system(tmp_path))
+        registry.register(_plugin(tmp_path))
+
+        registry.unregister("com.t.p")
+
+        assert_that([p["id"] for p in registry.list_packs()]).is_equal_to(
+            ["decker.system.actions", "decker.system.places"]
+        )
+
+    def test_the_default_registry_is_hermetic_in_tests(self):
+        assert_that(IconPackRegistry().list_packs()).is_empty()
