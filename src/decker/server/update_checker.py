@@ -78,12 +78,15 @@ class UpdateChecker:
         self._push: Callable[[str, dict[str, Any]], None] = push
         self._clock: Callable[[], float] = clock
         self._lock: threading.Lock = threading.Lock()
+        self._check_lock: threading.Lock = threading.Lock()
         self._report: UpdateReport = UpdateReport()
         self._stop: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         """Report from the cached indexes (no network), then check hourly whether a refresh is due."""
+        if self._thread is not None:
+            return
         self._recompute(push_if_changed=False)
         if not self._report.is_empty():
             self._push(EVENT_NAME, self._report.to_payload())
@@ -119,16 +122,18 @@ class UpdateChecker:
         if days is None:
             return False
         last = self._store.last_check()
-        if last is not None and self._clock() - last < days * _DAY_SECONDS:
+        if last is not None and 0 <= self._clock() - last < days * _DAY_SECONDS:
             return False
         self.check_now()
         return True
 
     def check_now(self) -> UpdateReport:
         """Refresh every repository, record the check time and report any change."""
-        self._store.refresh_all()
-        self._store.mark_checked(self._clock())
-        return self._recompute(push_if_changed=True)
+        with self._check_lock:
+            infos = self._store.refresh_all()
+            if not infos or any(info.error is None for info in infos):
+                self._store.mark_checked(self._clock())
+            return self._recompute(push_if_changed=True)
 
     def _run(self) -> None:
         while not self._stop.wait(_WAKE_SECONDS):
