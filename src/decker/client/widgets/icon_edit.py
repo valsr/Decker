@@ -3,7 +3,6 @@
 import json
 import logging
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -22,7 +21,12 @@ from decker.client.context import AppContext
 from decker.client.icon_cache import IconThumbnailCache, icon_cache
 from decker.client.icon_picker import IconBrowserDialog, RpcCaller
 from decker.client.widgets.color_button import ColorButton
-from decker.common.icon_ref import make_icon_ref, normalize_icon_value, parse_icon_ref
+from decker.common.icon_ref import (
+    icon_display_name,
+    make_icon_ref,
+    normalize_icon_value,
+    parse_icon_ref,
+)
 
 _PREVIEW_SIZE = 24
 
@@ -136,7 +140,7 @@ class IconEdit(QWidget):
 
     def _refresh(self) -> None:
         parsed = parse_icon_ref(self._ref)
-        self._name.setText(Path(parsed[1]).stem if parsed is not None else "No icon")
+        self._name.setText(icon_display_name(parsed[1]) if parsed is not None else "No icon")
         self._clear.setEnabled(parsed is not None)
         self._colour.setVisible(self._show_colour and (parsed is not None or not self._compact))
         self._preview.setPixmap(self._preview_pixmap(parsed))

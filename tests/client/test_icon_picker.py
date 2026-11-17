@@ -593,3 +593,75 @@ class TestIconBrowserCache:
         _drain(qapp)
 
         assert_that(cm.icon_calls()).is_length(1)
+
+
+_SYSTEM_PACKS = [
+    {
+        "id": f"decker.system.{key}",
+        "plugin_version": "T-0a1b2c3d",
+        "name": label,
+        "description": f"System icons: {label}",
+        "plugin_id": "decker.system",
+        "plugin_name": "System Icons",
+        "icon_count": 1,
+    }
+    for key, label in (("actions", "Actions"), ("mimetypes", "Mimetypes"), ("other", "Other"))
+]
+_SYSTEM_ICONS = {
+    "decker.system.actions": ["edit-copy", "zoom-in"],
+    "decker.system.mimetypes": ["org.gnome.Foo", "text-plain"],
+    "decker.system.other": ["weird"],
+}
+
+
+class TestSystemIconsInTheLibrary:
+    @staticmethod
+    def _dialog():
+        return IconBrowserDialog(None, FakeConnectionManager(_PACKS + _SYSTEM_PACKS, {**_ICONS, **_SYSTEM_ICONS}))
+
+    def test_the_tree_has_a_system_icons_section_with_its_categories(self, qapp):  # pylint: disable=unused-argument
+        dialog = self._dialog()
+
+        top = _top(dialog)
+
+        assert_that([i.text(0) for i in top]).is_equal_to(["All icons", "X Plugin", "Y Plugin", "System Icons"])
+        system = top[3]
+        assert_that([system.child(i).text(0) for i in range(system.childCount())]).is_equal_to(
+            ["Actions", "Mimetypes", "Other"]
+        )
+
+    def test_selecting_a_category_lists_only_its_icons(self, qapp):  # pylint: disable=unused-argument
+        dialog = self._dialog()
+
+        _select(dialog, 3, 1)
+
+        assert_that(_names(dialog)).is_equal_to(["org.gnome.Foo", "text-plain"])
+
+    def test_selecting_the_section_lists_every_system_icon(self, qapp):  # pylint: disable=unused-argument
+        dialog = self._dialog()
+
+        _select(dialog, 3)
+
+        assert_that(_names(dialog)).is_equal_to(["edit-copy", "zoom-in", "org.gnome.Foo", "text-plain", "weird"])
+
+    def test_all_icons_includes_the_system_icons(self, qapp):  # pylint: disable=unused-argument
+        dialog = self._dialog()
+
+        _select(dialog, 0)
+
+        assert_that(_names(dialog)).contains("edit-copy", "org.gnome.Foo", "weird")
+
+    def test_search_matches_a_dotted_name_by_its_full_text(self, qapp):  # pylint: disable=unused-argument
+        dialog = self._dialog()
+        _select(dialog, 3)
+
+        dialog._search.setText("gnome.foo")  # pylint: disable=protected-access
+        dialog._refresh()  # pylint: disable=protected-access
+
+        assert_that(_names(dialog)).is_equal_to(["org.gnome.Foo"])
+
+    def test_a_dotted_name_is_shown_whole(self, qapp):  # pylint: disable=unused-argument
+        dialog = self._dialog()
+        _select(dialog, 3, 1)
+
+        assert_that(_names(dialog)[0]).is_equal_to("org.gnome.Foo")

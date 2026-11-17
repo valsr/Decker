@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 from decker.asset.paths import ensure_asset_dirs, user_icons_dir
 from decker.client.action_icons import decode_icon, placeholder_pixmap
 from decker.client.icon_cache import IconThumbnailCache, icon_cache
+from decker.common.icon_ref import icon_display_name
 
 _IMAGE_FILE_FILTER = "Images (*.svg *.png *.jpg *.jpeg *.gif *.webp)"
 _THUMB_SIZE = 64
@@ -100,7 +101,7 @@ class _IconModel(QAbstractListModel):
             return None
         pack_id, path = entry
         if role == Qt.ItemDataRole.DisplayRole:
-            return Path(path).stem
+            return icon_display_name(path)
         if role == Qt.ItemDataRole.DecorationRole:
             return self._pixmap_for(pack_id, path)
         if role == Qt.ItemDataRole.ToolTipRole:
@@ -254,7 +255,7 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
             if names is None:
                 failed = True
                 continue
-            entries += [(pack_id, n) for n in names if not needle or needle in Path(n).stem.lower()]
+            entries += [(pack_id, n) for n in names if not needle or needle in icon_display_name(n).lower()]
         self._model.set_entries(entries)
         self._status.setText(_status_text(bool(entries), failed, bool(needle)))
 
