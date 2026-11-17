@@ -111,3 +111,79 @@ def test_renamed_page_shows_its_new_name_after_reload(qapp):
     edit.reload()
 
     assert_that(edit.currentText()).is_equal_to("Renamed")
+
+
+class ProfileAwareRpc(FakeRpc):
+    def call(self, method: str, *args: Any) -> Any:
+        self.calls.append((method, *args))
+        pages = {(): self.pages, (2,): [("w1", "Docs"), ("w2", "Mail")]}[tuple(args[1:])]
+        return json.dumps({"pages": [{"page_id": i, "name": n} for i, n in pages]})
+
+
+def test_without_a_profile_the_default_call_is_unchanged(qapp):
+    rpc = ProfileAwareRpc()
+    _edit(rpc)
+
+    assert_that(rpc.calls).is_equal_to([("pages_list", "dev-1")])
+
+
+def test_blank_profile_lists_the_current_profiles_pages(qapp):
+    rpc = ProfileAwareRpc()
+    edit = _edit(rpc)
+
+    edit.set_profile("")
+
+    assert_that(rpc.calls[-1]).is_equal_to(("pages_list", "dev-1"))
+
+
+def test_a_chosen_profile_lists_that_profiles_pages(qapp):
+    rpc = ProfileAwareRpc()
+    edit = _edit(rpc)
+
+    edit.set_profile("2")
+
+    assert_that(rpc.calls[-1]).is_equal_to(("pages_list", "dev-1", 2))
+    assert_that(_texts(edit)).is_equal_to(["(no page)", "Docs", "Mail"])
+
+
+def test_changing_profile_clears_a_page_that_is_not_in_the_new_list_and_notifies(qapp):
+    edit = _edit(ProfileAwareRpc())
+    edit.set_value("p2")
+    seen: list[int] = []
+    edit.value_changed.connect(lambda: seen.append(1))
+
+    edit.set_profile("2", clear_missing=True)
+
+    assert_that(edit.value()).is_equal_to("")
+    assert_that(seen).is_length(1)
+
+
+def test_changing_profile_keeps_a_page_that_is_still_listed_without_notifying(qapp):
+    edit = _edit(ProfileAwareRpc())
+    edit.set_value("p2")
+    seen: list[int] = []
+    edit.value_changed.connect(lambda: seen.append(1))
+
+    edit.set_profile("", clear_missing=True)
+
+    assert_that(edit.value()).is_equal_to("p2")
+    assert_that(seen).is_empty()
+
+
+def test_initial_profile_keeps_a_missing_page_so_it_shows_as_deleted(qapp):
+    edit = _edit(ProfileAwareRpc())
+    edit.set_value("p2")
+
+    edit.set_profile("2")
+
+    assert_that(edit.value()).is_equal_to("p2")
+    assert_that(edit.currentText()).is_equal_to("(deleted page)")
+
+
+def test_garbage_profile_values_mean_current(qapp):
+    rpc = ProfileAwareRpc()
+    edit = _edit(rpc)
+
+    for bad in (None, 5, "x", "-1"):
+        edit.set_profile(bad)
+        assert_that(rpc.calls[-1]).is_equal_to(("pages_list", "dev-1"))
