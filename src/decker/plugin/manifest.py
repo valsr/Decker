@@ -19,6 +19,16 @@ _RUNTIME_TYPES = ("python", "executable")
 _UUID_PATTERN = re.compile(r"[a-z0-9]+(\.[a-z0-9-]+)+")
 
 
+def is_valid_plugin_id(value: object) -> bool:
+    """Whether value is a valid v1 plugin id (reverse-DNS style)."""
+    return isinstance(value, str) and _UUID_PATTERN.fullmatch(value) is not None
+
+
+def is_valid_version(value: object) -> bool:
+    """Whether value is a valid semver plugin version."""
+    return isinstance(value, str) and _SEMVER.fullmatch(value) is not None
+
+
 class ManifestValidationError(ValueError):
     """A manifest.json failed schema or naming-convention validation."""
 
@@ -97,7 +107,7 @@ class PluginManifest:
         missing = [key for key in ("name", "version", "author") if not _is_nonempty_str(data.get(key))]
         if missing:
             raise ManifestValidationError(f"manifest missing required field(s): {', '.join(missing)}")
-        if not _SEMVER.fullmatch(str(data["version"])):
+        if not is_valid_version(str(data["version"])):
             raise ManifestValidationError(f"manifest version {data['version']!r} is not a semantic version (x.y.z)")
 
         contributes = data.get("contributes")
@@ -153,7 +163,7 @@ class PluginManifest:
 
 
 def _parse_id(value: Any, what: str) -> str:
-    if not isinstance(value, str) or not _UUID_PATTERN.fullmatch(value):
+    if not is_valid_plugin_id(value):
         raise ManifestValidationError(f"{what} {value!r} is not a valid reverse-domain identifier")
     return value
 
