@@ -123,9 +123,16 @@ notifies every client).
   manifest inside must match the index's id and version, else the install fails.
 - Compatibility: a version whose `decker` specifier excludes the running Decker is
   listed but not installable; "latest compatible" drives updates.
-- Update checks: on server start, every 6 hours, and on demand. When the set of plugins
-  with a newer compatible version changes, push a `plugin_updates_available` event to
-  all clients. Updating is always the user's action.
+- Update checks (user decision): the repository lists are refreshed on a schedule set
+  by `plugins.update_check` — `weekly` (default), `daily`, `monthly` or `manual` — plus
+  on demand. The time of the last successful check is persisted under
+  `~/.decker/repositories/`, so the schedule survives restarts: on start and then
+  periodically the server checks only when the interval has elapsed since the last
+  check (`manual` never checks on its own). At start, updates are first computed from
+  the cached indexes without any network access. When the set of plugins with a newer
+  compatible version changes, push a `plugin_updates_available` event to all clients.
+  Updating is always the user's action. Changing the schedule is loopback-gated like
+  the other repository mutations.
 - Missing plugins: when key assignments reference a plugin that is not installed but a
   repository offers it, the update check reports it as "missing" so the client can
   offer to install it (this is how upgraded users get Counter back).
@@ -136,7 +143,9 @@ notifies every client).
 ## Decker client
 
 - Plugins tab gains a Repositories section: list (URL, name, status/last error, plugin
-  count), Add (with the trust warning), Remove, Refresh.
+  count, last checked), Add (with the trust warning), Remove; an "Update frequency"
+  selector (Daily / Weekly / Monthly / Manual) and a "Check for updates" button that
+  refreshes every repository now and recomputes available updates (user decision).
 - "Get More Plugins…" button opens a dialog: search box, category filter, refresh;
   rows with icon, name, short description, installed → available version, and an
   Install / Update / Installed button; a details pane with full description, author,
