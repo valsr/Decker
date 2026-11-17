@@ -3,9 +3,10 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
+import yaml
 from assertpy import assert_that
 
-from decker.common import config
+from decker.common import config, paths
 from decker.server.repositories import (
     FetchError,
     RepositoryError,
@@ -41,8 +42,9 @@ def _index(name: str, plugin_ids: list[str], icon: str | None = None) -> bytes:
 @pytest.fixture(autouse=True)
 def _tmp_config(tmp_path: Path) -> Iterator[None]:
     config.configure_prefix(tmp_path / "config" / "config.yaml")
+    config.set("plugin.repositories", [])  # never reach the real default repository
     yield
-    config.configure_prefix(tmp_path / "config" / "config.yaml")
+    config.configure_prefix(paths.config_yaml())
 
 
 @pytest.fixture
@@ -195,3 +197,10 @@ def test_state_persists_last_check(tmp_path: Path, store: RepositoryStore) -> No
     assert_that(store.last_check()).is_none()
     store.mark_checked(1234.5)
     assert_that(RepositoryStore(tmp_path / "cache").last_check()).is_equal_to(1234.5)
+
+
+def test_defaults_are_spec_values_and_tests_start_empty(store: RepositoryStore) -> None:
+    assert_that(store.urls()).is_empty()
+    defaults = yaml.safe_load((Path(config.__file__).parent / "defaults.yml").read_text())["plugin"]
+    assert_that(defaults["repositories"]).is_equal_to(["https://valsr.github.io/decker-plugins/index.json"])
+    assert_that(defaults["update_check"]).is_equal_to("weekly")
