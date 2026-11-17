@@ -45,6 +45,7 @@ from decker.server.contributions import ContributionRegistry
 from decker.server.page_vars import (
     deliver_settings,
     has_dynamic_fields,
+    keep_raw_templates,
     page_variables,
     resolve_switch_target,
     stored_page_ids,
@@ -734,7 +735,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if not isinstance(raw, dict):
             logging.warning("[%s] set_settings without a settings object dropped", live.target.plugin_uuid)
             return
-        merged = {**live.settings, **stored_page_ids(live.action.settings, raw)}
+        incoming = keep_raw_templates(live.action.settings, raw, live.delivered, live.settings)
+        merged = {**live.settings, **stored_page_ids(live.action.settings, incoming)}
         settings = apply_schema(live.action.settings, merged)
         live.settings = settings
         live.delivered = self.delivered_settings(live)

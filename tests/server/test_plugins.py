@@ -1289,6 +1289,32 @@ class TestTemplates:
         assert_that(stored["label"]).is_equal_to("{page_name}")
         assert_that(stored["plain"]).is_equal_to("changed")
 
+    def test_echoing_delivered_settings_keeps_the_raw_templates(self, env):
+        delivered = self._tpl_settings(env, label="On {page_name}", style={"text": "{page_index}", "size": 33})
+
+        env.manager._route_context_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("set_settings", "ctx-tpl", {"settings": {**delivered, "plain": "x"}})
+        )
+
+        stored = env.manager._settings_store.get_settings(  # pylint: disable=protected-access
+            "com.decker.rec", "com.decker.rec.tpl", "ctx-tpl"
+        )
+        assert_that(stored["label"]).is_equal_to("On {page_name}")
+        assert_that(stored["style"]["text"]).is_equal_to("{page_index}")
+        assert_that(stored["plain"]).is_equal_to("x")
+
+    def test_a_template_the_plugin_really_changed_is_stored(self, env):
+        self._tpl_settings(env, label="On {page_name}")
+
+        env.manager._route_context_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("set_settings", "ctx-tpl", {"settings": {"label": "New {page_count}"}})
+        )
+
+        stored = env.manager._settings_store.get_settings(  # pylint: disable=protected-access
+            "com.decker.rec", "com.decker.rec.tpl", "ctx-tpl"
+        )
+        assert_that(stored["label"]).is_equal_to("New {page_count}")
+
     def test_echoed_page_value_keeps_the_page_choice(self, env):
         self._tpl_settings(env, where="p3")
 

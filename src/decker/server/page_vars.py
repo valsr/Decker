@@ -86,3 +86,20 @@ def resolve_switch_target(pages: Sequence[PageInfo], active_page_id: str, payloa
         if not 0 <= target < len(ids):
             target = target % len(ids) if wrap else here
     return ids[target] if target != here else None
+
+
+def keep_raw_templates(
+    schema: Sequence[SettingEntry], incoming: Mapping[str, Any], delivered: Mapping[str, Any], raw: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Undo the expansion of template fields a plugin echoed back unchanged, so the user's template survives."""
+    result = dict(incoming)
+    for entry in schema:
+        if not isinstance(entry, SettingField) or not entry.extra.get("template") or entry.key not in result:
+            continue
+        value, sent, stored = result[entry.key], delivered.get(entry.key), raw.get(entry.key)
+        if entry.type == "text" and value == sent and isinstance(stored, str):
+            result[entry.key] = stored
+        elif entry.type == "text_style" and isinstance(value, dict) and isinstance(sent, dict):
+            if isinstance(stored, dict) and value.get("text") == sent.get("text") and "text" in stored:
+                result[entry.key] = {**value, "text": stored["text"]}
+    return result
