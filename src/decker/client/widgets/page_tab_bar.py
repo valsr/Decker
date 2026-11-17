@@ -17,23 +17,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from decker.client.widgets.rename_edit import RenameEdit
 from decker.common.model import PageInfo
 
 _SCROLL_STEP_PX = 120
 _VISIBLE_MARGIN_PX = 8
-
-
-class _RenameEdit(QLineEdit):
-    """In-place tab title editor; Esc cancels, Enter or losing focus commits."""
-
-    cancelled = pyqtSignal()
-
-    def keyPressEvent(self, a0: QKeyEvent | None) -> None:  # pylint: disable=invalid-name
-        """Cancel on Esc; otherwise edit normally."""
-        if a0 is not None and a0.key() == Qt.Key.Key_Escape:
-            self.cancelled.emit()
-            return
-        super().keyPressEvent(a0)
 
 
 class _TabViewport(QScrollArea):
@@ -80,7 +68,7 @@ class PageTabBar(QWidget):  # pylint: disable=too-many-instance-attributes
         self._names: dict[str, str] = {}
         self._default_page_id: str | None = None
         self._rename_page_id: str | None = None
-        self._rename_edit: _RenameEdit | None = None
+        self._rename_edit: RenameEdit | None = None
         self._updating: bool = False
 
         self._menu = QMenu(self)
@@ -168,7 +156,7 @@ class PageTabBar(QWidget):  # pylint: disable=too-many-instance-attributes
         if index < 0:
             return
         self._finish_rename(commit=False)
-        edit = _RenameEdit(self._names[page_id], self._tabs)
+        edit = RenameEdit(self._names[page_id], self._tabs)
         edit.setGeometry(self._tabs.tabRect(index).adjusted(4, 4, -4, -4))
         edit.selectAll()
         edit.editingFinished.connect(lambda: self._finish_rename(commit=True))
