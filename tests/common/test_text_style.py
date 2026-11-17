@@ -87,3 +87,15 @@ def test_fold_without_title_data_adds_no_title() -> None:
 def test_fold_keeps_unrelated_keys() -> None:
     result = fold_legacy_title({"background": "#ff0000", "title_size": 9})
     assert_that(result).is_equal_to({"background": "#ff0000", "title": {"size": 9}})
+
+
+def test_normalize_accepts_rgba_colors() -> None:
+    result = normalize_text_style({"color": "#11223380", "outline": "#aabbccdd"})
+    assert_that(result).contains_entry({"color": "#11223380"}, {"outline": "#aabbccdd"})
+
+
+def test_normalize_rejects_malformed_colors() -> None:
+    for bad in ("#1122", "#1122334", "#11223zz0", "112233", "#1122334455"):
+        assert_that(normalize_text_style({"color": bad, "outline": bad})).contains_entry(
+            {"color": "#ffffff"}, {"outline": None}
+        )
