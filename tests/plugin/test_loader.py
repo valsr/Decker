@@ -66,3 +66,24 @@ class TestPluginLoader:
 
         assert_that(PluginLoader(tmp_path, bundled=True).scan().plugins[0].bundled).is_true()
         assert_that(PluginLoader(tmp_path).scan().plugins[0].bundled).is_false()
+
+
+def test_recover_drops_staging_and_restores_a_moved_aside_version(tmp_path):
+    import json
+
+    from decker.plugin.loader import recover_interrupted_installs
+
+    (tmp_path / ".staging-abc").mkdir()
+    (tmp_path / ".staging-abc" / "junk").write_text("x")
+    old = tmp_path / ".old-job1"
+    old.mkdir()
+    (old / "manifest.json").write_text(json.dumps({"id": "com.example.tool"}))
+    stale = tmp_path / ".old-job2"
+    stale.mkdir()
+    (stale / "manifest.json").write_text(json.dumps({"id": "com.example.kept"}))
+    (tmp_path / "com.example.kept").mkdir()
+
+    recover_interrupted_installs(tmp_path)
+
+    assert (tmp_path / "com.example.tool" / "manifest.json").exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["com.example.kept", "com.example.tool"]

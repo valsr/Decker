@@ -181,12 +181,28 @@ class TestPluginSubcommand:
 
         assert_that(_run(["plugin", "list"], conn)).is_equal_to(0)
         assert_that(capsys.readouterr().out).contains("com.x.y")
-        conn2 = _FakeConn({"plugin_install": "job1"})
+        conn2 = _FakeConn(
+            {
+                "plugin_install": "job1",
+                "plugin_install_status": {"state": "succeeded", "message": "Installed com.x.y 0.1.0"},
+            }
+        )
         assert_that(_run(["plugin", "install", str(package)], conn2)).is_equal_to(0)
-        assert_that(capsys.readouterr().out).contains("Install started (job job1)")
+        assert_that(capsys.readouterr().out).contains("Installed com.x.y 0.1.0")
+        assert_that(conn2.calls[1]).is_equal_to(("plugin_install_status", ("job1",)))
         assert_that(conn2.calls[0][0]).is_equal_to("plugin_install")
         assert_that(_run(["plugin", "remove", "com.x.y"], conn2)).is_equal_to(0)
         assert_that(conn2.calls[-1]).is_equal_to(("plugin_uninstall", ("com.x.y",)))
+
+    def test_plugin_install_failure_exits_non_zero(self, capsys, tmp_path):
+        package = tmp_path / "a.deckerplugin"
+        package.write_bytes(b"x")
+        conn = _FakeConn(
+            {"plugin_install": "j", "plugin_install_status": {"state": "failed", "message": "bad manifest"}}
+        )
+
+        assert_that(_run(["plugin", "install", str(package)], conn)).is_equal_to(1)
+        assert_that(capsys.readouterr().out).contains("install failed: bad manifest")
 
     def test_plugin_list_empty(self, capsys):
         assert_that(_run(["plugin", "list"], _FakeConn({"plugins_list": []}))).is_equal_to(0)

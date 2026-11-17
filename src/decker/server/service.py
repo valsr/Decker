@@ -196,6 +196,11 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         return installer.install(filename, bytes(data))
 
     @exposed
+    def plugin_install_status(self, job_id: str) -> str:
+        """Return an install job's state (running/succeeded/failed), message and plugin id/version as JSON."""
+        return json.dumps(self._installer().status(job_id))
+
+    @exposed
     def plugin_uninstall(self, plugin_id: str) -> bool:
         """Uninstall a plugin, removing its keys from every device and page."""
         installer = self._installer()

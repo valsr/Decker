@@ -11,7 +11,7 @@ from typing import Any
 import rpyc.utils.factory
 from rpyc.core.protocol import Connection
 from rpyc.core.service import Service
-from rpyc.utils.helpers import BgServingThread
+from rpyc.utils.helpers import BgServingThread, async_
 
 from decker.client import config as client_config
 from decker.client.events import (
@@ -33,6 +33,7 @@ from decker.common.model import DeviceHardwareInfo, DevicePages, KeyInfo, PageIn
 
 _RETRY_INTERVAL_S = 3.0
 _HEARTBEAT_INTERVAL_S = 5.0
+_LONG_CALL_TIMEOUTS: dict[str, float] = {"plugin_install": 120.0}
 
 
 class ServerState(StrEnum):
@@ -267,7 +268,13 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         if self._conn is None:
             return None
         try:
-            return getattr(self._conn.root, method)(*args)
+            function = getattr(self._conn.root, method)
+            timeout = _LONG_CALL_TIMEOUTS.get(method)
+            if timeout is None:
+                return function(*args)
+            result = async_(function)(*args)
+            result.set_expiry(timeout)
+            return result.value
         except Exception as exc:  # pylint: disable=broad-except
             logging.warning("RPC %s failed: %s", method, exc)
             return None
