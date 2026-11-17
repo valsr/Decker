@@ -272,3 +272,48 @@ def test_start_skips_check_that_is_not_due(env: Env) -> None:
         assert_that(env.store.last_check()).is_equal_to(env.clock.now - 1)
     finally:
         env.checker.stop()
+
+
+def test_stop_waits_for_a_running_manual_check(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    release, done = threading.Event(), threading.Event()
+
+    def slow_refresh() -> list:
+        release.wait(5)
+        done.set()
+        return []
+
+    monkeypatch.setattr(env.store, "refresh_all", slow_refresh)
+    assert_that(env.checker.check_async()).is_true()
+    threading.Timer(0.2, release.set).start()
+
+    env.checker.stop()
+
+    assert_that(done.is_set()).described_as("stop() returned while a manual check was still running").is_true()
+
+
+def test_stop_without_a_running_check_returns_promptly(env: Env) -> None:
+    started = time.monotonic()
+
+    env.checker.stop()
+
+    assert_that(time.monotonic() - started).is_less_than(0.5)
+
+
+def test_stop_gives_up_on_a_stuck_manual_check(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    release = threading.Event()
+    monkeypatch.setattr("decker.server.update_checker._STOP_JOIN_SECONDS", 0.1)
+    monkeypatch.setattr(env.store, "refresh_all", lambda: (release.wait(5), [])[1])
+    assert_that(env.checker.check_async()).is_true()
+    started = time.monotonic()
+
+    env.checker.stop()
+
+    assert_that(time.monotonic() - started).is_less_than(1.0)
+    release.set()
+
+
+def test_a_manual_check_can_start_again_after_stop(env: Env) -> None:
+    env.checker.stop()
+
+    assert_that(_wait_for(lambda: env.checker.check_async())).is_true()
+    env.checker.stop()

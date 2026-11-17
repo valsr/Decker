@@ -21,6 +21,7 @@ SCHEDULES: dict[str, int | None] = {"daily": 1, "weekly": 7, "monthly": 30, "man
 EVENT_NAME = "plugin_updates_available"
 CHECK_FINISHED_EVENT = "repositories_check_finished"
 _CONFIG_KEY = "plugin.update_check"
+_STOP_JOIN_SECONDS = 5.0  # how long stop() waits for each background thread
 _WAKE_SECONDS = 3600.0
 _DAY_SECONDS = 86400.0
 
@@ -76,6 +77,7 @@ class UpdateChecker:
         self._report: UpdateReport = UpdateReport()
         self._stop: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._async_thread: threading.Thread | None = None
 
     def start(self) -> None:
         """Report from the cached indexes (no network), then check hourly whether a refresh is due."""
@@ -89,11 +91,14 @@ class UpdateChecker:
         self._thread.start()
 
     def stop(self) -> None:
-        """Stop the background thread."""
+        """Stop the scheduler and wait for a running manual check, so the stores can be destroyed safely after."""
         self._stop.set()
         thread, self._thread = self._thread, None
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=5.0)
+        with self._lock:
+            manual, self._async_thread = self._async_thread, None
+        for running in (thread, manual):
+            if running is not None and running is not threading.current_thread():
+                running.join(timeout=_STOP_JOIN_SECONDS)
 
     def report(self) -> UpdateReport:
         """Return the most recently computed report."""
@@ -135,7 +140,8 @@ class UpdateChecker:
             if self._async_running or self._check_lock.locked():
                 return False
             self._async_running = True
-        threading.Thread(target=self._run_async_check, name="plugin-manual-check", daemon=True).start()
+            self._async_thread = threading.Thread(target=self._run_async_check, name="plugin-manual-check", daemon=True)
+            self._async_thread.start()
         return True
 
     def refresh_local(self) -> UpdateReport:
