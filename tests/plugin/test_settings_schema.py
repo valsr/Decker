@@ -352,3 +352,41 @@ def test_page_value_keeps_strings() -> None:
 def test_page_default_must_be_a_string() -> None:
     with pytest.raises(ValueError, match="default"):
         parse_settings_schema([{"key": "p", "type": "page", "default": 5}], "here")
+
+
+def test_profile_type_defaults_to_empty_string() -> None:
+    (entry,) = parse_settings_schema([{"key": "p", "type": "profile"}], "here")
+
+    assert_that(entry.default).is_equal_to("")
+
+
+@pytest.mark.parametrize("value", [3, None, True, "x", "-1", " 1"])
+def test_profile_value_coerces_non_ids_to_default(value: Any) -> None:
+    schema = parse_settings_schema([{"key": "p", "type": "profile"}], "here")
+
+    assert_that(apply_schema(schema, {"p": value})).is_equal_to({"p": ""})
+
+
+def test_profile_value_keeps_blank_and_decimal_ids() -> None:
+    schema = parse_settings_schema([{"key": "p", "type": "profile"}], "here")
+
+    assert_that(apply_schema(schema, {"p": "12"})).is_equal_to({"p": "12"})
+    assert_that(apply_schema(schema, {"p": ""})).is_equal_to({"p": ""})
+
+
+def test_page_profile_field_must_name_a_profile_field() -> None:
+    ok = [{"key": "who", "type": "profile"}, {"key": "p", "type": "page", "profile_field": "who"}]
+    assert_that(parse_settings_schema(ok, "here")).is_length(2)
+
+    for bad in ("missing", "p"):
+        data = [{"key": "who", "type": "text"}, {"key": "p", "type": "page", "profile_field": bad}]
+        with pytest.raises(ValueError, match="profile_field"):
+            parse_settings_schema(data, "here")
+
+    with pytest.raises(ValueError, match="profile_field"):
+        parse_settings_schema([{"key": "p", "type": "page", "profile_field": 3}], "here")
+
+
+def test_profile_field_only_valid_on_page() -> None:
+    with pytest.raises(ValueError, match="profile_field"):
+        parse_settings_schema([{"key": "t", "type": "text", "profile_field": "x"}], "here")

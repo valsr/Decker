@@ -10,8 +10,11 @@ from typing import Any
 from decker.common.icon_ref import normalize_icon_value
 from decker.common.text_style import TEXT_STYLE_DEFAULTS, normalize_text_style
 
-FIELD_TYPES = frozenset({"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style", "page"})
+FIELD_TYPES = frozenset(
+    {"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style", "page", "profile"}
+)
 
+_PROFILE_ID_PATTERN = re.compile(r"^[0-9]*$")
 _COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 _RGBA_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
@@ -20,6 +23,7 @@ _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
     "text": ("multiline", "template"),
     "text_style": ("template",),
     "color": ("alpha",),
+    "page": ("profile_field",),
     "choice": ("options",),
 }
 _ZERO_VALUES: dict[str, Any] = {
@@ -30,6 +34,7 @@ _ZERO_VALUES: dict[str, Any] = {
     "color": "#000000",
     "font": "",
     "page": "",
+    "profile": "",
     "icon": {"ref": "", "color": "#ffffff"},
     "text_style": dict(TEXT_STYLE_DEFAULTS),
 }
@@ -98,6 +103,10 @@ def _parse_extra(type_: str, data: dict[str, Any], where: str) -> dict[str, Any]
                 raise ValueError(f"{where}: '{name}' must be an integer for an int field")
     if "special_value" in extra and not isinstance(extra["special_value"], str):
         raise ValueError(f"{where}: 'special_value' must be a string")
+    if "profile_field" in data and type_ != "page":
+        raise ValueError(f"{where}: 'profile_field' is only valid on page fields")
+    if "profile_field" in extra and not isinstance(extra["profile_field"], str):
+        raise ValueError(f"{where}: 'profile_field' must be a string")
     for name in ("multiline", "alpha", "template"):
         if name in extra and not isinstance(extra[name], bool):
             raise ValueError(f"{where}: '{name}' must be a boolean")
@@ -125,6 +134,8 @@ def _coerce(type_: str, value: Any, extra: Mapping[str, Any]) -> Any:
         result = next((o for o in allowed if type(o) is type(value) and o == value), _MISSING)
     elif type_ in _OBJECT_NORMALIZERS:
         result = _OBJECT_NORMALIZERS[type_](value)
+    elif type_ == "profile":
+        result = value if isinstance(value, str) and _PROFILE_ID_PATTERN.match(value) else _MISSING
     elif isinstance(value, str):
         result = value
     if type_ in ("int", "float") and result is not _MISSING and not _in_range(result, extra):
@@ -221,7 +232,15 @@ def parse_settings_schema(data: Any, where: str) -> tuple[SettingEntry, ...]:
             raise ValueError(f"{here}: duplicate key {parsed.key!r}")
         keys.add(parsed.key)
         entries.append(parsed)
+    _check_profile_fields(entries, where)
     return tuple(entries)
+
+
+def _check_profile_fields(entries: Sequence[SettingEntry], where: str) -> None:
+    profile_keys = {e.key for e in entries if isinstance(e, SettingField) and e.type == "profile"}
+    for entry in entries:
+        if isinstance(entry, SettingField) and entry.extra.get("profile_field", "") not in profile_keys | {""}:
+            raise ValueError(f"{where}: profile_field {entry.extra['profile_field']!r} is not a profile field")
 
 
 def apply_schema(schema: Sequence[SettingEntry], values: Mapping[str, Any]) -> dict[str, Any]:

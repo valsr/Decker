@@ -6,6 +6,7 @@ from typing import Any
 from decker.common.text_style import is_color
 
 ICON_REF_PREFIX = "pack:"
+DECKER_ICON_REF = "decker:logo"
 DEFAULT_ICON_COLOR = "#ffffff"
 _DEFAULTS: Mapping[str, Any] = {"ref": "", "color": DEFAULT_ICON_COLOR}
 

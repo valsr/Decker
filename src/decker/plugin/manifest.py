@@ -199,8 +199,10 @@ def _parse_settings(value: Any, where: str) -> tuple[SettingEntry, ...]:
 def _parse_global_settings(value: Any) -> tuple[SettingEntry, ...]:
     entries = _parse_settings(value, "global_settings")
     for entry in entries:
-        if isinstance(entry, SettingField) and entry.type == "page":
-            raise ManifestValidationError(f"global_settings: field {entry.key!r} of type 'page' is not allowed here")
+        if isinstance(entry, SettingField) and entry.type in ("page", "profile"):
+            raise ManifestValidationError(
+                f"global_settings: field {entry.key!r} of type {entry.type!r} is not allowed here"
+            )
     return entries
 
 
