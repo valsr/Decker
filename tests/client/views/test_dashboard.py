@@ -1081,11 +1081,13 @@ class TestProfiles:  # pylint: disable=protected-access
         cm.call.assert_called_once_with("profile_rename", "dev1", 2, "Games")
 
     def _edit(self, view, monkeypatch, outcome, name="Work", icon=""):
+        made: list = []
+
         class _Dialog:
             def __init__(self, profile, can_delete, parent=None):  # pylint: disable=unused-argument
                 self.outcome = outcome
                 self.created = (profile, can_delete)
-                _Dialog.last = self
+                made.append(self)
 
             def exec(self):
                 return 1
@@ -1098,7 +1100,7 @@ class TestProfiles:  # pylint: disable=protected-access
 
         monkeypatch.setattr("decker.client.views.dashboard.ProfileEditDialog", _Dialog)
         view._page_tabs.profile_selector.edit_requested.emit(2)
-        return _Dialog.last
+        return made[-1]
 
     def test_edit_saves_changed_name_and_icon_only(
         self, qapp, tmp_path, monkeypatch
