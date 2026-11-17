@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QIntValidator
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QSpinBox,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -177,8 +178,29 @@ def _build_field(entry: dict[str, Any], values: dict[str, Any]) -> _Field | None
     return field
 
 
+def _watch(widget: QWidget, slot: Callable[[], None]) -> None:
+    """Call ``slot`` whenever the user edits ``widget`` or any control inside it."""
+    for part in (widget, *widget.findChildren(QWidget)):
+        if isinstance(part, (IconEdit, PageEdit, TextStyleEdit)):
+            part.value_changed.connect(slot)
+        elif isinstance(part, ColorButton):
+            part.color_changed.connect(lambda _color: slot())
+        elif isinstance(part, QCheckBox):
+            part.toggled.connect(lambda _checked: slot())
+        elif isinstance(part, QComboBox):
+            part.currentIndexChanged.connect(lambda _index: slot())
+        elif isinstance(part, (QSpinBox, QDoubleSpinBox)):
+            part.valueChanged.connect(lambda _value: slot())
+        elif isinstance(part, QLineEdit):
+            part.textChanged.connect(lambda _text: slot())
+        elif isinstance(part, QPlainTextEdit):
+            part.textChanged.connect(slot)
+
+
 class SchemaForm(QWidget):
     """Renders a settings schema as a form and reads the entered values back."""
+
+    changed = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -199,6 +221,7 @@ class SchemaForm(QWidget):
             if field is None:
                 continue
             self._fields[entry["key"]] = field
+            _watch(field.widget, self.changed.emit)
             label = entry.get("label", entry["key"])
             self._layout.addRow(f"{label}:", field.widget)
 
@@ -207,24 +230,35 @@ class SchemaForm(QWidget):
         return {key: field.get() for key, field in self._fields.items()}
 
 
-class InlineSchemaForm(QWidget):
-    """Renders schema fields side by side in one row as ``Label: [widget]``; sections are ignored."""
+def _clear_layout(layout: QHBoxLayout | QVBoxLayout) -> None:
+    """Remove and delete every widget in ``layout``, descending into nested layouts."""
+    while layout.count():
+        item = layout.takeAt(0)
+        if item is None:
+            continue
+        if (widget := item.widget()) is not None:
+            widget.setParent(None)
+            widget.deleteLater()
+        elif isinstance(nested := item.layout(), (QHBoxLayout, QVBoxLayout)):
+            _clear_layout(nested)
+
+
+class AppearanceForm(QWidget):
+    """Text style fields on a row of their own; the other fields share the row below as ``Label: [widget]``."""
+
+    changed = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
-        self._row = QHBoxLayout(self)
-        self._row.setContentsMargins(0, 0, 0, 0)
+        self._rows = QVBoxLayout(self)
+        self._rows.setContentsMargins(0, 0, 0, 0)
         self._fields: dict[str, _Field] = {}
 
     def set_schema(self, schema: list[dict[str, Any]], values: dict[str, Any]) -> None:
-        """Rebuild the row for ``schema``; the text style field takes the spare width."""
-        while self._row.count():
-            item = self._row.takeAt(0)
-            widget = item.widget() if item is not None else None
-            if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
+        """Rebuild the rows for ``schema``; sections are ignored and the text style field takes the spare width."""
+        _clear_layout(self._rows)
         self._fields = {}
+        text_row, other_row = QHBoxLayout(), QHBoxLayout()
         for entry in schema:
             field = None if "section" in entry else _build_field(entry, values)
             if field is None:
@@ -232,9 +266,14 @@ class InlineSchemaForm(QWidget):
             if isinstance(field.widget, ColorButton):
                 field.widget.set_show_name(False)
             self._fields[entry["key"]] = field
-            label = entry.get("label", entry["key"])
-            self._row.addWidget(QLabel(f"{label}:"))
-            self._row.addWidget(field.widget, 1 if entry.get("type") == "text_style" else 0)
+            _watch(field.widget, self.changed.emit)
+            wide = entry.get("type") == "text_style"
+            row = text_row if wide else other_row
+            row.addWidget(QLabel(f"{entry.get('label', entry['key'])}:"))
+            row.addWidget(field.widget, 1 if wide else 0)
+        other_row.addStretch()
+        for row in (text_row, other_row):
+            self._rows.addLayout(row)
 
     def values(self) -> dict[str, Any]:
         """The values currently entered, keyed by schema key."""

@@ -46,11 +46,11 @@ class IconEdit(QWidget):
         self._preview.setFixedSize(_PREVIEW_SIZE, _PREVIEW_SIZE)
         self._name = QLabel()
         browse = QPushButton("Browse…")
-        browse.clicked.connect(self._browse)
+        browse.clicked.connect(self.browse)
         self._clear = QToolButton()
         self._clear.setText("✕")
         self._clear.setToolTip("Remove the icon")
-        self._clear.clicked.connect(self._on_clear)
+        self._clear.clicked.connect(self.clear_icon)
         self._colour = ColorButton(self._color, alpha=True)
         self._colour.set_show_name(False)
         self._colour.setToolTip("Icon fill colour")
@@ -76,7 +76,8 @@ class IconEdit(QWidget):
         self._colour.set_color(self._color)
         self._refresh()
 
-    def _browse(self) -> None:
+    def browse(self) -> None:
+        """Open the icon browser; a chosen icon becomes the value."""
         dialog = IconBrowserDialog(self, self._rpc())
         dialog.icon_chosen.connect(self._on_icon_chosen)
         dialog.exec()
@@ -86,7 +87,8 @@ class IconEdit(QWidget):
         self._refresh()
         self.value_changed.emit()
 
-    def _on_clear(self) -> None:
+    def clear_icon(self) -> None:
+        """Remove the icon (the colour is kept)."""
         self._ref = ""
         self._refresh()
         self.value_changed.emit()

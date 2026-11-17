@@ -1,8 +1,10 @@
-"""Bottom panel for configuring the selected key's action, generated from schemas."""
+"""Bottom panel for configuring the selected key: live preview, appearance rows and action settings."""
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -14,30 +16,63 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from decker.client.widgets.schema_form import InlineSchemaForm, SchemaForm
+from decker.client.widgets.key_preview import KeyPreview
+from decker.client.widgets.schema_form import AppearanceForm, SchemaForm
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
 from decker.common.text_style import fold_legacy_title
 
 _PAGE_PLACEHOLDER = 0
 _PAGE_FORM = 1
+_PREVIEW_DEBOUNCE_MS = 150
+
+_TOP = Qt.AlignmentFlag.AlignTop
+
+PreviewProvider = Callable[[dict[str, Any]], str | None]
 
 
-class ActionConfigPanel(QStackedWidget):
-    """Stacked config panel: page 0 = placeholder, page 1 = Appearance + action settings forms."""
+class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-attributes
+    """Stacked config panel: page 0 = placeholder, page 1 = preview, appearance rows, Save and action settings."""
 
     def __init__(self) -> None:
         super().__init__()
         self._save_cb: Callable[[dict[str, Any], dict[str, Any]], None] | None = None
         self._loaded: tuple[Any, ...] | None = None
         self._appearance_defaults: dict[str, Any] = {}
+        self._preview_provider: PreviewProvider | None = None
+        self._dirty = False
+        self._baseline: tuple[dict[str, Any], dict[str, Any]] | None = None
 
         placeholder = QLabel("Hover a key and click ✎ (or focus it and press F2) to configure it")
         placeholder.setProperty("role", "muted")
         self.addWidget(placeholder)  # page 0
 
-        self._appearance_form = InlineSchemaForm()
+        self._header = QLabel()
+        self._header.setProperty("role", "title")
+        self._preview = KeyPreview()
+        self._appearance_form = AppearanceForm()
         self._settings_form = SchemaForm()
+        self._save_btn = QPushButton("Save")
+        self._save_btn.setProperty("dirty", False)
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(_PREVIEW_DEBOUNCE_MS)
+        self._preview_timer.timeout.connect(self._request_preview)
         self.addWidget(self._build_form_page())  # page 1
+        self._appearance_form.changed.connect(self._on_edited)
+        self._settings_form.changed.connect(self._on_edited)
+
+    @property
+    def is_dirty(self) -> bool:
+        """Whether the forms differ from the last loaded or saved values."""
+        return self._dirty
+
+    def set_preview_provider(self, provider: PreviewProvider | None) -> None:
+        """Set how the draft appearance is turned into a base64 key image (None or "" keeps the last picture)."""
+        self._preview_provider = provider
+
+    def set_preview_image(self, image_b64: str | None) -> None:
+        """Show an image in the preview."""
+        self._preview.set_image(image_b64)
 
     def show_placeholder(self) -> None:
         """Switch to the placeholder page."""
@@ -55,9 +90,11 @@ class ActionConfigPanel(QStackedWidget):
         appearance: dict[str, Any],
         appearance_defaults: dict[str, Any],
         save_cb: Callable[[dict[str, Any], dict[str, Any]], None],
+        title: str = "",
     ) -> None:
         """Populate and show the forms; identical values re-sent while shown leave edits in progress alone."""
         self._save_cb = save_cb
+        self._header.setText(title)
         appearance_defaults = fold_legacy_title(appearance_defaults)
         self._appearance_defaults = appearance_defaults
         appearance = _merged(appearance, appearance_defaults)
@@ -73,21 +110,32 @@ class ActionConfigPanel(QStackedWidget):
         self._appearance_form.set_schema(APPEARANCE_SCHEMA, appearance)
         self._settings_form.set_schema(settings_schema, settings)
         self.setCurrentIndex(_PAGE_FORM)
+        self._baseline = self._current_values()
+        self._refresh_state()
+        self._request_preview()
 
     def _build_form_page(self) -> QWidget:
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.addWidget(self._appearance_form)
-        layout.addWidget(self._settings_form)
+        layout.addWidget(self._header)
 
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(self._on_save)
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_row.addWidget(save_btn)
-        layout.addLayout(btn_row)
+        rows = QVBoxLayout()
+        rows.addWidget(self._appearance_form)
+        save_row = QHBoxLayout()
+        self._save_btn.clicked.connect(self._on_save)
+        save_row.addWidget(self._save_btn)
+        save_row.addStretch()
+        rows.addLayout(save_row)
+        top = QHBoxLayout()
+        top.addWidget(self._preview, 0, _TOP)
+        top.addLayout(rows, 1)
+        layout.addLayout(top)
+        layout.addWidget(self._settings_form)
         layout.addStretch()
+
+        self._preview.set_icon_requested.connect(self._browse_icon)
+        self._preview.clear_icon_requested.connect(self._clear_icon)
 
         scroll = QScrollArea()
         scroll.setWidget(content)
@@ -95,14 +143,59 @@ class ActionConfigPanel(QStackedWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         return scroll
 
+    def _icon_edit(self) -> Any:
+        field = self._appearance_form._fields.get("icon")  # pylint: disable=protected-access
+        return field.widget if field is not None else None
+
+    def _browse_icon(self) -> None:
+        if (edit := self._icon_edit()) is not None:
+            edit.browse()
+
+    def _clear_icon(self) -> None:
+        if (edit := self._icon_edit()) is not None:
+            edit.clear_icon()
+
+    def _on_edited(self) -> None:
+        self._refresh_state()
+        self._preview_timer.start()
+
+    def _refresh_state(self) -> None:
+        values = self._current_values()
+        self._dirty = self._baseline is not None and values != self._baseline
+        self._save_btn.setProperty("dirty", self._dirty)
+        if (style := self._save_btn.style()) is not None:
+            style.unpolish(self._save_btn)
+            style.polish(self._save_btn)
+        icon = self._appearance_form.values().get("icon")
+        self._preview.set_has_icon(isinstance(icon, dict) and bool(icon.get("ref")))
+
+    def _current_values(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self._settings_form.values(), _resolved(self._appearance_form.values(), self._appearance_defaults)
+
+    def _draft_appearance(self) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in self._appearance_form.values().items()
+            if value != self._appearance_defaults.get(key)
+        }
+
+    def _request_preview(self) -> None:
+        if self._preview_provider is None:
+            return
+        try:
+            image = self._preview_provider(self._draft_appearance())
+        except Exception:  # pylint: disable=broad-except
+            logging.debug("Key preview failed", exc_info=True)
+            return
+        if image:
+            self._preview.set_image(image)
+
     def _on_save(self) -> None:
         if self._save_cb is None:
             return
         settings = self._settings_form.values()
         form_appearance = self._appearance_form.values()
-        appearance = {
-            key: value for key, value in form_appearance.items() if value != self._appearance_defaults.get(key)
-        }
+        appearance = self._draft_appearance()
         # Record the saved state so the server's echo is recognised as identical and keeps later edits.
         if self._loaded is not None:
             self._loaded = (
@@ -111,6 +204,8 @@ class ActionConfigPanel(QStackedWidget):
                 _resolved(form_appearance, self._appearance_defaults),
                 self._loaded[3],
             )
+        self._baseline = self._current_values()
+        self._refresh_state()
         self._save_cb(settings, appearance)
 
 

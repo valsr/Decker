@@ -113,3 +113,13 @@ class TestPalette:
 
 def _fields() -> list[str]:
     return [field.name for field in dataclasses.fields(ThemeColors)]
+
+
+def test_unsaved_changes_highlight_the_save_button() -> None:
+    from decker.client.themes import (  # pylint: disable=import-outside-toplevel
+        BUNDLED,
+        render_stylesheet,
+    )
+
+    for colors in BUNDLED.values():
+        assert 'QPushButton[dirty="true"]' in render_stylesheet(colors)

@@ -69,8 +69,9 @@ class KeyButtonWidget(QPushButton):
     def set_selected(self, selected: bool) -> None:
         """Mark this key as the one being edited (outlined by the theme)."""
         self.setProperty("selected", selected)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        if (style := self.style()) is not None:
+            style.unpolish(self)
+            style.polish(self)
 
     def _build_edit_button(self) -> QToolButton:
         button = QToolButton(self)
@@ -240,7 +241,7 @@ class ButtonGridWidget(QWidget):
         while (item := self._grid_layout.takeAt(0)) is not None:
             if widget := item.widget():
                 widget.deleteLater()
-        self._buttons: dict[int, KeyButtonWidget] = {}
+        self._buttons = {}
 
         for index in range(self.key_count):
             key = self._key_info[index]

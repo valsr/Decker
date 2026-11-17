@@ -4,7 +4,7 @@ import base64
 import binascii
 
 from PyQt6.QtCore import QByteArray, Qt, pyqtSignal
-from PyQt6.QtGui import QContextMenuEvent, QMouseEvent, QPixmap
+from PyQt6.QtGui import QAction, QContextMenuEvent, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import QLabel, QMenu
 
 
@@ -42,10 +42,13 @@ class KeyPreview(QLabel):
 
     def _build_menu(self) -> QMenu:
         menu = QMenu(self)
-        menu.addAction("Set icon…").triggered.connect(self.set_icon_requested.emit)
-        clear = menu.addAction("Clear icon")
+        set_icon = QAction("Set icon…", menu)
+        set_icon.triggered.connect(self.set_icon_requested.emit)
+        clear = QAction("Clear icon", menu)
         clear.setEnabled(self._has_icon)
         clear.triggered.connect(self.clear_icon_requested.emit)
+        menu.addAction(set_icon)
+        menu.addAction(clear)
         return menu
 
     def contextMenuEvent(self, ev: QContextMenuEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name

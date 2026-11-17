@@ -466,8 +466,9 @@ class TestKeyInteractions:
 
         button._edit_button.click()  # pylint: disable=protected-access
         assert_that(view._selected_key).is_equal_to(3)  # pylint: disable=protected-access
-        mock_cm.call.assert_not_called()
+        assert_that([c.args[0] for c in mock_cm.call.call_args_list]).does_not_contain("key_simulate_press")
 
+        mock_cm.call.reset_mock()
         button.click()
         mock_cm.call.assert_called_once_with("key_simulate_press", "dev1", 3)
 
@@ -790,3 +791,76 @@ class TestSlotSync:  # pylint: disable=protected-access
         )
 
         assert_that(view._key_slots[0]["settings"]).is_equal_to({"step": 1})
+
+
+class TestKeyEditorWiring:  # pylint: disable=protected-access
+    def setup_method(self):
+        AppContext._instance = None  # pylint: disable=protected-access
+
+    def _edit(self, tmp_path):
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        cm = MagicMock()
+        cm.call.return_value = "preview-b64"
+        AppContext.get().connection_manager = cm
+        view.handle_event(
+            ActionListUpdatedEvent(
+                actions=[
+                    {
+                        "plugin_uuid": "com.p",
+                        "action_uuid": "com.p.a",
+                        "action_name": "Counter",
+                        "settings_schema": [],
+                    }
+                ]
+            )
+        )
+        view._key_slots[3] = {  # pylint: disable=protected-access
+            "plugin_uuid": "com.p",
+            "action_uuid": "com.p.a",
+            "context_id": "c",
+            "settings": {},
+        }
+        view._on_key_edit_requested(3)  # pylint: disable=protected-access
+        return view, cm
+
+    def test_header_shows_the_action_name(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, _cm = self._edit(tmp_path)
+
+        assert_that(view._config_panel._header.text()).is_equal_to("Counter")
+
+    def test_preview_provider_calls_key_preview_for_the_selected_key(  # pylint: disable=unused-argument
+        self, qapp, tmp_path
+    ):
+        view, cm = self._edit(tmp_path)
+
+        result = view._config_panel._preview_provider({"background": "#ff0000"})
+
+        assert_that(result).is_equal_to("preview-b64")
+        cm.call.assert_called_with("key_preview", "dev1", "p1", 3, json.dumps({"background": "#ff0000"}))
+
+    def test_display_state_image_updates_the_preview_of_a_clean_selected_key(  # pylint: disable=unused-argument
+        self, qapp, tmp_path
+    ):
+        view, _cm = self._edit(tmp_path)
+        shown: list[str | None] = []
+        view._config_panel.set_preview_image = shown.append
+
+        view._on_display_states_updated("dev1", [{"key_index": 3, "image_b64": "TElWRQ=="}])
+        view._on_display_states_updated("dev1", [{"key_index": 4, "image_b64": "T1RIRVI="}])
+
+        assert_that(shown).is_equal_to(["TElWRQ=="])
+
+    def test_display_state_image_does_not_replace_a_draft_preview(  # pylint: disable=unused-argument
+        self, qapp, tmp_path
+    ):
+        view, _cm = self._edit(tmp_path)
+        panel = view._config_panel
+        panel._appearance_form._fields["title"].set({"text": "draft"})
+        panel._on_edited()
+        shown: list[str | None] = []
+        panel.set_preview_image = shown.append
+
+        view._on_display_states_updated("dev1", [{"key_index": 3, "image_b64": "TElWRQ=="}])
+
+        assert_that(shown).is_empty()
