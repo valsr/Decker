@@ -49,13 +49,28 @@ discarded.
 | `set_title` | yes | `{"title": "text"}`, shown only when the user set no title; titles are one line, so line breaks are drawn as a single space |
 | `set_state` | yes | `{"state": 1}`, an index into the action's `states` |
 | `show_alert`, `show_ok` | yes | none (accepted, no visible effect in v1) |
-| `set_settings` | yes | `{"settings": {...}}`, validated against the action's schema and saved |
+| `set_settings` | yes | `{"settings": {...}}`, validated against the action's schema and saved; keys you leave out keep their stored value, so send only what you changed (see [Pages](#pages)) |
+| `switch_page` | yes | `{"to": "next"\|"previous"\|"first"\|"last", "wrap": false}` or `{"page_id": "<id>"}`: switch the key's device to that page (see [Pages](#pages)) |
 | `set_global_settings` | | `{"settings": {...}}`, validated against `global_settings` and saved |
 | `set_gestures` | yes | `{"gestures": ["press", "long_press"]}`; replaces the key's gesture set |
 | `log` | | `{"level": "info", "message": "text"}`; levels `debug`, `info`, `warning`, `error` |
 | `open_url` | | `{"url": "https://..."}`; only `http`/`https` with a host are accepted. Every connected client asks the user before opening it |
 
 Messages for a context that is not active (for example after `will_disappear`) are dropped.
+
+## Pages
+
+`switch_page` acts on the device of the key (`context`) that sent it. `to` is relative to the page the device shows;
+`wrap` (default `false`, only `true` counts) loops from the last page to the first and back. `page_id` goes to one of
+that device's own pages. Unknown pages, a device with one page, an edge without wrap and malformed payloads are ignored
+(logged by the server).
+
+A `page` setting (see [settings schema](settings-schema.md)) arrives as `{"page_id": "...", "name": "...", "index": 1}`
+(`index` is 1-based); a deleted or unset page arrives as `{"page_id": "", "name": "", "index": 0}`. Settings fields that
+declare `"template": true` arrive with `{page_name}`, `{page_index}` and `{page_count}` already replaced for the key's
+device; the stored value stays as the user typed it, so a plugin must not write expanded text back: with
+`set_settings`, send only the keys you changed. The server re-sends `settings_changed` when a page is renamed, added or
+deleted or the device switches pages and a delivered value changes. Templates in `global_settings` are not expanded.
 
 ## Images
 

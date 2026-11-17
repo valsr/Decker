@@ -11,6 +11,7 @@ import pytest
 from assertpy import assert_that
 
 from decker_plugin_sdk import run
+from decker_plugin_sdk._context import ActionContext
 
 FIXTURE = Path(__file__).parent / "fixtures" / "echo_plugin.py"
 
@@ -302,3 +303,33 @@ def test_set_icon_without_color_omits_it() -> None:
     _context(sent).set_icon("pack:p/a.svg")
 
     assert_that(sent).is_equal_to([("set_image", "c1", {"icon": "pack:p/a.svg"})])
+
+
+def _context_with_log() -> tuple[ActionContext, list[tuple[str, str | None, dict[str, Any]]]]:
+    sent: list[tuple[str, str | None, dict[str, Any]]] = []
+    ctx = ActionContext("c1", "a", "d", 0, 0, 0, _send=lambda e, c, p: sent.append((e, c, p)))
+    return ctx, sent
+
+
+def test_switch_page_emits_to_and_wrap() -> None:
+    ctx, sent = _context_with_log()
+
+    ctx.switch_page("previous", wrap=True)
+
+    assert_that(sent).is_equal_to([("switch_page", "c1", {"to": "previous", "wrap": True})])
+
+
+def test_switch_page_defaults() -> None:
+    ctx, sent = _context_with_log()
+
+    ctx.switch_page()
+
+    assert_that(sent).is_equal_to([("switch_page", "c1", {"to": "next", "wrap": False})])
+
+
+def test_go_to_page_emits_page_id() -> None:
+    ctx, sent = _context_with_log()
+
+    ctx.go_to_page("p2")
+
+    assert_that(sent).is_equal_to([("switch_page", "c1", {"page_id": "p2"})])

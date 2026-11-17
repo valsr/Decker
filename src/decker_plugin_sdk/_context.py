@@ -72,7 +72,7 @@ class ActionContext:
         self._emit("show_ok")
 
     def set_settings(self, settings: dict[str, Any]) -> None:
-        """Replace this key's settings."""
+        """Store settings for this key; send only the keys you changed (others are kept)."""
         self.settings = dict(settings)
         self._emit("set_settings", {"settings": settings})
 
@@ -80,6 +80,14 @@ class ActionContext:
         """Replace the plugin's global settings."""
         self.global_settings = dict(settings)
         self._emit("set_global_settings", {"settings": settings})
+
+    def switch_page(self, to: str = "next", wrap: bool = False) -> None:
+        """Switch this key's device to the ``next``/``previous``/``first``/``last`` page; ``wrap`` loops at the ends."""
+        self._emit("switch_page", {"to": to, "wrap": wrap})
+
+    def go_to_page(self, page_id: str) -> None:
+        """Switch this key's device to the page with this id (a ``page`` setting value's ``page_id``)."""
+        self._emit("switch_page", {"page_id": page_id})
 
     def open_url(self, url: str) -> None:
         """Ask the server to open an http(s) URL."""

@@ -208,12 +208,18 @@ class FakePages:
     def __init__(self) -> None:
         self.pages = {"dev-1": [PageInfo("p1", "Home"), PageInfo("p2", "Settings"), PageInfo("p3", "Media")]}
         self.active = {"dev-1": "p2"}
+        self.activations: list[tuple[str, str]] = []
 
     def list_pages(self, device_id: str) -> list[PageInfo]:
         return list(self.pages.get(device_id, []))
 
     def active_page_id(self, device_id: str) -> str:
         return self.active.get(device_id, "")
+
+    def activate(self, device_id: str, page_id: str) -> bool:
+        self.activations.append((device_id, page_id))
+        self.active[device_id] = page_id
+        return True
 
     def rename(self, page_id: str, name: str, device_id: str = "dev-1") -> None:
         self.pages[device_id] = [
@@ -1349,3 +1355,110 @@ class TestPageRefresh:
         env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
 
         assert_that(env.image(1)).is_not_equal_to(before)
+
+
+class TestSwitchPage:
+    def _switch(self, env, payload, active="p2"):
+        env.pages.active["dev-1"] = active
+        env.manager.activate_action(REC_TARGET)
+        env.manager._route_context_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("switch_page", "ctx-1", payload)
+        )
+        return [page for _device, page in env.pages.activations]
+
+    def test_next_goes_to_the_following_page(self, env):
+        assert_that(self._switch(env, {"to": "next"})).is_equal_to(["p3"])
+
+    def test_previous_goes_to_the_preceding_page(self, env):
+        assert_that(self._switch(env, {"to": "previous"})).is_equal_to(["p1"])
+
+    def test_next_on_the_last_page_stays_unless_wrapping(self, env):
+        assert_that(self._switch(env, {"to": "next"}, active="p3")).is_empty()
+        assert_that(self._switch(env, {"to": "next", "wrap": False}, active="p3")).is_empty()
+
+    def test_previous_on_the_first_page_stays_unless_wrapping(self, env):
+        assert_that(self._switch(env, {"to": "previous"}, active="p1")).is_empty()
+
+    def test_wrap_goes_from_last_to_first_and_first_to_last(self, env):
+        assert_that(self._switch(env, {"to": "next", "wrap": True}, active="p3")).is_equal_to(["p1"])
+        env.pages.activations.clear()
+        assert_that(self._switch(env, {"to": "previous", "wrap": True}, active="p1")).is_equal_to(["p3"])
+
+    def test_first_and_last(self, env):
+        assert_that(self._switch(env, {"to": "first"}, active="p3")).is_equal_to(["p1"])
+        env.pages.activations.clear()
+        assert_that(self._switch(env, {"to": "last"}, active="p1")).is_equal_to(["p3"])
+
+    def test_page_id_goes_to_that_page(self, env):
+        assert_that(self._switch(env, {"page_id": "p3"})).is_equal_to(["p3"])
+
+    def test_unknown_page_id_is_ignored_and_logged(self, env, caplog):
+        caplog.set_level("INFO")
+        assert_that(self._switch(env, {"page_id": "nope"})).is_empty()
+        assert_that(caplog.text).contains("switch_page")
+
+    def test_single_page_is_a_no_op(self, env):
+        env.pages.pages["dev-1"] = [PageInfo("p2", "Only")]
+
+        assert_that(self._switch(env, {"to": "next", "wrap": True})).is_empty()
+
+    @pytest.mark.parametrize("payload", [{}, {"to": "sideways"}, {"to": 5}, {"page_id": 7}])
+    def test_bad_payloads_are_ignored(self, env, payload):
+        assert_that(self._switch(env, payload)).is_empty()
+
+    def test_non_boolean_wrap_is_treated_as_no_wrap(self, env):
+        assert_that(self._switch(env, {"to": "next", "wrap": "yes"}, active="p3")).is_empty()
+
+    def test_page_of_another_device_is_not_reachable(self, env):
+        env.pages.pages["dev-2"] = [PageInfo("x1", "Elsewhere")]
+
+        assert_that(self._switch(env, {"page_id": "x1"})).is_empty()
+
+    def test_message_from_an_inactive_context_is_dropped(self, env):
+        env.manager._route_context_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("switch_page", "ctx-1", {"to": "next"})
+        )
+
+        assert_that(env.pages.activations).is_empty()
+
+    def test_message_from_another_plugin_is_dropped(self, env):
+        env.manager.activate_action(REC_TARGET)
+
+        env.manager._route_context_message(  # pylint: disable=protected-access
+            "com.t.mixed", Message("switch_page", "ctx-1", {"to": "next"})
+        )
+
+        assert_that(env.pages.activations).is_empty()
+
+    def test_switch_does_not_hold_the_manager_lock(self, env):
+        outcome: list[bool] = []
+
+        def _activate(device_id: str, page_id: str) -> bool:
+            def _try() -> None:
+                got = env.manager._lock.acquire(timeout=1)  # pylint: disable=protected-access
+                outcome.append(got)
+                if got:
+                    env.manager._lock.release()  # pylint: disable=protected-access
+
+            thread = threading.Thread(target=_try)
+            thread.start()
+            thread.join(3)
+            return True
+
+        env.pages.activate = _activate
+
+        self._switch(env, {"to": "next"})
+
+        assert_that(outcome).is_equal_to([True])
+
+    def test_a_key_can_switch_away_from_its_own_page(self, env):
+        def _activate(device_id: str, page_id: str) -> bool:
+            env.manager.deactivate_action(REC_TARGET)  # the page switch hides the sender's page
+            env.pages.active[device_id] = page_id
+            return True
+
+        env.pages.activate = _activate
+
+        self._switch(env, {"to": "next"})
+
+        assert_that(env.manager._live).does_not_contain_key("ctx-1")  # pylint: disable=protected-access
