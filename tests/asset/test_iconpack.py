@@ -45,6 +45,7 @@ def test_list_icons_finds_images(tmp_path):
                 "description": "",
                 "plugin_id": "com.t.p",
                 "plugin_name": "T",
+                "plugin_version": "1.0.0",
                 "icon_count": 2,
             }
         ]
@@ -179,3 +180,26 @@ def test_read_ref_after_unregister_is_none(tmp_path):
     registry = _registry(tmp_path)
     registry.unregister("com.t.p")
     assert_that(registry.read_ref("pack:com.t.p.icons/a.png")).is_none()
+
+
+def test_plugin_version_follows_the_manifest(tmp_path):
+    _pack(tmp_path)
+    plugin = _plugin(tmp_path)
+    manifest = PluginManifest.from_dict({**_manifest_data(), "version": "2.3.4"})
+    registry = IconPackRegistry()
+    registry.register(InstalledPlugin(manifest, tmp_path))
+
+    assert_that(registry.list_packs()[0]["plugin_version"]).is_equal_to("2.3.4")
+    assert_that(plugin.manifest.version).is_equal_to("1.0.0")
+
+
+def _manifest_data():
+    return {
+        "format": 1,
+        "id": "com.t.p",
+        "name": "T",
+        "version": "1.0.0",
+        "author": "a",
+        "description": "d",
+        "contributes": {"icon_packs": [{"id": "com.t.p.icons", "name": "Pack", "path": "pack"}]},
+    }
