@@ -127,6 +127,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         self._install_btn: QPushButton = QPushButton("Install…")
         self._get_more_btn: QPushButton = QPushButton("Get More Plugins…")
         self._repositories: Any = None
+        self._get_more_dialog: Any = None
         self._uninstall_btn: QPushButton = QPushButton("Uninstall")
         self._status_label: QLabel = QLabel()
         self._settings_form: SchemaForm = SchemaForm()
@@ -173,6 +174,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         self._plugin_list.setIconSize(self._plugin_list.iconSize() * 2)
         self._plugin_list.currentItemChanged.connect(self._on_selection_changed)
         self._install_btn.clicked.connect(self._on_install_clicked)
+        self._get_more_btn.clicked.connect(self._on_get_more_clicked)
         self._uninstall_btn.clicked.connect(self._on_uninstall_clicked)
         self._uninstall_btn.setEnabled(False)
         self._apply_settings_btn.clicked.connect(self._on_apply_settings)
@@ -245,6 +247,18 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         path, _ = QFileDialog.getOpenFileName(self, "Install plugin", "", f"Decker plugins (*{PACKAGE_SUFFIX})")
         if path:
             install_package_file(Path(path), self)
+
+    def _on_get_more_clicked(self) -> None:
+        from decker.client.widgets.get_more_plugins import (  # pylint: disable=import-outside-toplevel,cyclic-import
+            GetMorePluginsDialog,
+        )
+
+        if self._get_more_dialog is None:
+            self._get_more_dialog = GetMorePluginsDialog(self)
+            self._get_more_dialog.finished.connect(lambda *_: setattr(self, "_get_more_dialog", None))
+        self._get_more_dialog.show()
+        self._get_more_dialog.raise_()
+        self._get_more_dialog.activateWindow()
 
     def _on_uninstall_clicked(self) -> None:
         plugin = self._plugins.get(self._selected_id or "")
