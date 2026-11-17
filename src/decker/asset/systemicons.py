@@ -85,7 +85,8 @@ def theme_version(theme: str, search_dirs: Sequence[Path]) -> str:
 
 
 def _version(theme: str, roots: Sequence[tuple[int, Path]]) -> str:
-    return f"{theme}-{_fingerprint([root / 'index.theme' for _position, root in roots])}"
+    index_files = [root / "index.theme" for _position, root in roots]
+    return f"{theme}-{_fingerprint(index_files)}"
 
 
 def _theme_roots(theme: str, search_dirs: Sequence[Path]) -> list[tuple[int, Path]]:
