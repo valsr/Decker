@@ -86,7 +86,7 @@ class TestIconEdit:
         emitted: list[None] = []
         edit.value_changed.connect(lambda: emitted.append(None))
 
-        edit._browse()
+        edit.browse()
 
         assert_that(edit.value()["ref"]).is_equal_to(_REF)
         assert_that(emitted).is_length(1)
@@ -110,7 +110,7 @@ class TestIconEdit:
         edit = _edit()
         edit.set_value({"color": "#000000"})  # a black fill must not make the thumbnails vanish on a dark theme
 
-        edit._browse()
+        edit.browse()
 
         assert_that(seen["tint"]).is_none()
 
@@ -196,7 +196,7 @@ class TestIconEdit:
         edit = IconEdit(lambda: None)
 
         edit.set_value({"ref": _REF})
-        edit._browse()
+        edit.browse()
 
         assert_that(edit._name.text()).is_equal_to("house")
 
@@ -315,3 +315,35 @@ class TestIconEditCache:
         edit.set_value({"ref": _REF, "color": "#ff0000"})
 
         assert_that(edit._name.text()).is_equal_to("house")
+
+
+def test_clear_icon_is_public_and_emits_value_changed(qapp, tmp_path) -> None:
+    edit = _edit(None, IconThumbnailCache(tmp_path))
+    edit.set_value({"ref": _REF, "color": "#ffffff"})
+    seen: list[bool] = []
+    edit.value_changed.connect(lambda: seen.append(True))
+
+    edit.clear_icon()
+
+    assert_that(edit.value()["ref"]).is_equal_to("")
+    assert_that(seen).is_equal_to([True])
+
+
+def test_browse_is_public(qapp, monkeypatch, tmp_path) -> None:
+    opened: list[bool] = []
+
+    class FakeDialog:
+        icon_chosen = type("S", (), {"connect": lambda *_a: None})()
+
+        def __init__(self, *_a: Any) -> None:
+            pass
+
+        def exec(self) -> None:
+            opened.append(True)
+
+    monkeypatch.setattr("decker.client.widgets.icon_edit.IconBrowserDialog", FakeDialog)
+    edit = _edit(None, IconThumbnailCache(tmp_path))
+
+    edit.browse()
+
+    assert_that(opened).is_equal_to([True])

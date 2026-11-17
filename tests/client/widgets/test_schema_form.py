@@ -8,10 +8,11 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QSpinBox,
+    QVBoxLayout,
 )
 
 from decker.client.widgets.color_button import ColorButton
-from decker.client.widgets.schema_form import InlineSchemaForm, SchemaForm
+from decker.client.widgets.schema_form import AppearanceForm, SchemaForm
 from decker.client.widgets.text_style_edit import TextStyleEdit
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
 
@@ -156,28 +157,32 @@ class TestAlphaColorField:  # pylint: disable=protected-access
         assert_that(form.values()["bg"]).is_equal_to("#000000")
 
 
-class TestInlineSchemaForm:  # pylint: disable=protected-access
+class TestAppearanceForm:  # pylint: disable=protected-access
     _SCHEMA: list[dict[str, Any]] = [
         {"section": "Ignored"},
         {"key": "title", "type": "text_style", "label": "Title"},
+        {"key": "icon", "type": "icon", "label": "Icon"},
         {"key": "background", "type": "color", "label": "Background", "default": "#000000", "alpha": True},
     ]
 
-    def test_lays_fields_out_in_one_row_in_schema_order(self, qapp):  # pylint: disable=unused-argument
-        form = InlineSchemaForm()
+    def test_text_style_has_its_own_row_and_the_rest_share_one(self, qapp):  # pylint: disable=unused-argument
+        form = AppearanceForm()
         form.set_schema(self._SCHEMA, {})
 
         layout = form.layout()
-        assert isinstance(layout, QHBoxLayout)
-        texts = [lb.text() for lb in form.findChildren(QLabel)]
-        assert_that(texts).is_equal_to(["Title:", "Background:"])
-        order = [layout.itemAt(i).widget() for i in range(layout.count()) if layout.itemAt(i) is not None]  # type: ignore[union-attr]
-        assert_that(order.index(form._fields["title"].widget)).is_less_than(
-            order.index(form._fields["background"].widget)
+        assert isinstance(layout, QVBoxLayout)
+        assert_that(layout.count()).is_equal_to(2)
+        texts = [lb.text() for lb in form.findChildren(QLabel) if lb.text().endswith(":")]
+        assert_that(texts).is_equal_to(["Title:", "Icon:", "Background:"])
+        first, second = (layout.itemAt(i).layout() for i in range(2))  # type: ignore[union-attr]
+        assert first is not None and second is not None
+        assert_that(first.indexOf(form._fields["title"].widget)).is_greater_than_or_equal_to(0)
+        assert_that(second.indexOf(form._fields["icon"].widget)).is_less_than(
+            second.indexOf(form._fields["background"].widget)
         )
 
     def test_colour_fields_are_swatch_only(self, qapp):  # pylint: disable=unused-argument
-        form = InlineSchemaForm()
+        form = AppearanceForm()
         form.set_schema(self._SCHEMA, {"background": "#11223380"})
 
         button = form._fields["background"].widget
@@ -192,7 +197,7 @@ class TestInlineSchemaForm:  # pylint: disable=protected-access
         assert_that(button.text()).is_equal_to("#112233")
 
     def test_values_round_trip(self, qapp):  # pylint: disable=unused-argument
-        form = InlineSchemaForm()
+        form = AppearanceForm()
         form.set_schema(self._SCHEMA, {"title": {"text": "Hi"}, "background": "#11223380"})
 
         values = form.values()
@@ -200,24 +205,26 @@ class TestInlineSchemaForm:  # pylint: disable=protected-access
         assert_that(values["title"]["text"]).is_equal_to("Hi")
         assert_that(values["background"]).is_equal_to("#11223380")
 
-    def test_text_field_takes_the_spare_width(self, qapp):  # pylint: disable=unused-argument
-        form = InlineSchemaForm()
-        form.set_schema(self._SCHEMA, {})
-        layout = form.layout()
-        assert isinstance(layout, QHBoxLayout)
-
-        title_index = layout.indexOf(form._fields["title"].widget)
-        bg_index = layout.indexOf(form._fields["background"].widget)
-
-        assert_that(layout.stretch(title_index)).is_greater_than(layout.stretch(bg_index))
-
     def test_set_schema_twice_replaces_fields(self, qapp):  # pylint: disable=unused-argument
-        form = InlineSchemaForm()
+        form = AppearanceForm()
         form.set_schema(self._SCHEMA, {})
         form.set_schema(self._SCHEMA[1:2], {})
 
         assert_that(list(form.values())).is_equal_to(["title"])
         assert_that([lb.text() for lb in form.findChildren(QLabel)]).is_equal_to(["Title:"])
+
+    def test_edits_emit_changed_but_loading_does_not(self, qapp):  # pylint: disable=unused-argument
+        form = AppearanceForm()
+        seen: list[bool] = []
+        form.changed.connect(lambda: seen.append(True))
+        form.set_schema(self._SCHEMA, {"title": {"text": "Hi"}})
+        assert_that(seen).is_empty()
+
+        form._fields["background"].set("#445566")
+        form._fields["background"].widget.color_changed.emit("#445566")  # type: ignore[attr-defined]
+        form._fields["icon"].widget.value_changed.emit()  # type: ignore[attr-defined]
+
+        assert_that(seen).is_length(2)
 
 
 class TestIconField:  # pylint: disable=protected-access
@@ -248,3 +255,34 @@ class TestPageField:
 
         assert_that(form.findChild(PageEdit)).is_not_none()
         assert_that(form.values()["p"]).is_equal_to("abc")
+
+
+class TestSchemaFormChanged:  # pylint: disable=protected-access
+    def test_every_control_kind_emits_changed(self, qapp):  # pylint: disable=unused-argument
+        schema: list[dict[str, Any]] = [
+            {"key": "n", "type": "int", "default": 1},
+            {"key": "t", "type": "text"},
+            {"key": "b", "type": "bool"},
+            {"key": "c", "type": "choice", "options": [{"label": "A", "value": "a"}, {"label": "B", "value": "b"}]},
+            {"key": "col", "type": "color"},
+        ]
+        form = _form(schema)
+        seen: list[bool] = []
+        form.changed.connect(lambda: seen.append(True))
+
+        form._fields["n"].widget.setValue(5)  # type: ignore[attr-defined]
+        form._fields["t"].widget.setText("x")  # type: ignore[attr-defined]
+        form._fields["b"].widget.setChecked(True)  # type: ignore[attr-defined]
+        form._fields["c"].widget.setCurrentIndex(1)  # type: ignore[attr-defined]
+        form._fields["col"].widget.color_changed.emit("#ffffff")  # type: ignore[attr-defined]
+
+        assert_that(len(seen)).is_greater_than_or_equal_to(5)
+
+    def test_loading_values_does_not_emit_changed(self, qapp):  # pylint: disable=unused-argument
+        form = SchemaForm()
+        seen: list[bool] = []
+        form.changed.connect(lambda: seen.append(True))
+
+        form.set_schema([{"key": "n", "type": "int"}, {"key": "t", "type": "text"}], {"n": 3, "t": "x"})
+
+        assert_that(seen).is_empty()

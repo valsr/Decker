@@ -365,6 +365,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
                 continue
             image_b64: str | None = state.get("image_b64")
             self._grid.set_key_image(key_index, image_b64)
+            if key_index == self._selected_key and image_b64 and not self._config_panel.is_dirty:
+                self._config_panel.set_preview_image(image_b64)
             if not image_b64:
                 self._grid.set_key_label(key_index, str(state.get("label", "")))
             self._sync_slot(key_index, state)
@@ -386,12 +388,14 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             ),
             None,
         )
+        self._config_panel.set_preview_provider(lambda appearance: self._preview_key(index, appearance))
         self._config_panel.show_action_config(
             list((action or {}).get("settings_schema") or []),
             slot.get("settings", {}),
             slot.get("appearance", {}),
             slot.get("appearance_defaults", {}),
             self._make_save_callback(index),
+            title=str((action or {}).get("action_name") or ""),
         )
 
     def _sync_slot(self, key_index: int, state: dict[str, Any]) -> None:
@@ -425,6 +429,15 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if self._key_call("key_update_appearance", key_index, appearance) and key_index in self._key_slots:
             slot = self._key_slots[key_index]
             slot["appearance"] = {**slot.get("appearance_defaults", {}), **appearance}
+
+    def _preview_key(self, key_index: int, appearance: dict[str, Any]) -> str | None:
+        device_id = AppContext.get().active_device_id
+        page_id = self._active_page_id
+        cm = AppContext.get().connection_manager
+        if not device_id or not page_id or cm is None:
+            return None
+        result = cm.call("key_preview", device_id, page_id, key_index, json.dumps(appearance))
+        return result if isinstance(result, str) else None
 
     def _key_call(self, method: str, key_index: int, payload: dict[str, Any]) -> bool:
         device_id = AppContext.get().active_device_id

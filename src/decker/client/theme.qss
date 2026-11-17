@@ -87,6 +87,12 @@ KeyButtonWidget[selected="true"] {
     border: 2px solid $accent_line;
 }
 
+QPushButton[dirty="true"] {
+    background-color: $accent;
+    border-color: $accent_line;
+    color: $accent_text;
+}
+
 QPushButton:disabled {
     background-color: $surface;
     color: $text_disabled;
