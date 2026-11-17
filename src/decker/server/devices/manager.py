@@ -80,6 +80,14 @@ class DeviceManager(Manager):
         elif self._state_store is not None:
             self._state_store.delete_key_state(device_id, self._page_resolver(device_id), key_index)
 
+    def blank_key(self, device_id: str, key_index: int) -> None:
+        """Forget a slot's cached state and blank its hardware key (no-op if the device cannot be opened)."""
+        device = self.open_device(device_id)
+        if device is None:
+            return
+        self.clear_key_state(device_id, key_index)
+        device.clear_key_image(key_index)
+
     def show_page(self, device_id: str, page_id: str) -> bool:
         """Load page_id's cached key state and redraw every key; keys with no cached image are blanked.
 

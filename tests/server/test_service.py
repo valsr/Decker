@@ -726,3 +726,139 @@ class TestProfileRpcs:
     def test_non_string_names_fail_without_raising(self, service, name):
         assert_that(json.loads(service.profile_add("dev1", name))).is_none()
         assert_that(service.profile_rename("dev1", 0, name)).is_false()
+
+
+class TestKeyMoveAndCopy:
+    @pytest.fixture(autouse=True)
+    def _device(self, service):
+        service._context.device_manager.open_device.return_value.get_hw_info.return_value.num_keys = (
+            15  # pylint: disable=protected-access
+        )
+
+    @staticmethod
+    def _seed(service, store, with_target=True):
+        service.key_assign("dev1", P1, 0, "com.p", "com.p.a", "c0", json.dumps({"n": 1}))
+        store.update_appearance("dev1", P1, 0, {"background": {"color": "#ff0000"}})
+        if with_target:
+            service.key_assign("dev1", P1, 4, "com.p", "com.p.a", "c4", "{}")
+
+    @staticmethod
+    def _reset(manager, service):
+        manager.reset_mock()
+        service._context.device_manager.reset_mock()  # pylint: disable=protected-access
+        service._context.device_manager.open_device.return_value.get_hw_info.return_value.num_keys = (
+            15  # pylint: disable=protected-access
+        )
+
+    def test_move_on_the_active_page_swaps_the_live_instances(self, service, manager, store):
+        self._seed(service, store)
+        source = store.get("dev1", P1, 0).target
+        old_target = store.get("dev1", P1, 4).target
+        self._reset(manager, service)
+        dm = service._context.device_manager  # pylint: disable=protected-access
+        order = MagicMock()
+        order.attach_mock(manager, "pm")
+        order.attach_mock(dm, "dm")
+
+        assert_that(service.key_move("dev1", P1, 0, 4)).is_true()
+
+        manager.deactivate_action.assert_any_call(source)
+        manager.deactivate_action.assert_any_call(old_target)
+        dm.blank_key.assert_called_once_with("dev1", 0)
+        dm.clear_key_state.assert_called_once_with("dev1", 4)
+        moved = store.get("dev1", P1, 4)
+        assert moved is not None
+        assert_that(moved.target.context_id).is_equal_to("c0")
+        assert_that(store.get("dev1", P1, 0)).is_none()
+        manager.store_settings.assert_called_once_with(moved.target, {"n": 1})
+        manager.activate_action.assert_called_once_with(moved.target, {"background": {"color": "#ff0000"}})
+        names = [c[0] for c in order.mock_calls]
+        assert_that(names.index("dm.clear_key_state")).is_less_than(names.index("pm.activate_action"))
+
+    def test_move_on_an_inactive_page_only_changes_rows_and_cached_state(self, service, manager, store):
+        other = service._context.page_store.add_page("dev1", "Other")  # pylint: disable=protected-access
+        service.key_assign("dev1", other.page_id, 0, "com.p", "com.p.a", "c0", "{}")
+        self._reset(manager, service)
+        dss = service._context.device_state_store  # pylint: disable=protected-access
+
+        assert_that(service.key_move("dev1", other.page_id, 0, 4)).is_true()
+
+        manager.deactivate_action.assert_not_called()
+        manager.activate_action.assert_not_called()
+        assert_that(store.get("dev1", other.page_id, 4).target.context_id).is_equal_to("c0")
+        dss.delete_key_state.assert_any_call("dev1", other.page_id, 0)
+        dss.delete_key_state.assert_any_call("dev1", other.page_id, 4)
+
+    def test_copy_on_the_active_page_creates_a_new_instance(self, service, manager, store):
+        self._seed(service, store)
+        source = store.get("dev1", P1, 0).target
+        old_target = store.get("dev1", P1, 4).target
+        self._reset(manager, service)
+
+        assert_that(service.key_copy("dev1", P1, 0, 4)).is_true()
+
+        copy = store.get("dev1", P1, 4)
+        assert copy is not None
+        assert_that(copy.target.context_id).is_not_equal_to("c0").is_not_equal_to("c4")
+        assert_that(copy.settings).is_equal_to({"n": 1})
+        assert_that(store.get("dev1", P1, 0).target.context_id).is_equal_to("c0")
+        manager.deactivate_action.assert_called_once_with(old_target)
+        assert source not in [c.args[0] for c in manager.deactivate_action.call_args_list]
+        manager.store_settings.assert_called_once_with(copy.target, {"n": 1})
+        manager.activate_action.assert_called_once_with(copy.target, {"background": {"color": "#ff0000"}})
+        service._context.device_manager.clear_key_state.assert_called_once_with(
+            "dev1", 4
+        )  # pylint: disable=protected-access
+
+    def test_copy_on_an_inactive_page(self, service, manager, store):
+        other = service._context.page_store.add_page("dev1", "Other")  # pylint: disable=protected-access
+        service.key_assign("dev1", other.page_id, 0, "com.p", "com.p.a", "c0", "{}")
+        self._reset(manager, service)
+
+        assert_that(service.key_copy("dev1", other.page_id, 0, 4)).is_true()
+
+        manager.activate_action.assert_not_called()
+        assert_that(store.get("dev1", other.page_id, 4)).is_not_none()
+        assert_that(store.get("dev1", other.page_id, 0)).is_not_none()
+
+    @pytest.mark.parametrize("method", ["key_move", "key_copy"])
+    @pytest.mark.parametrize(
+        ("page", "src", "dst"),
+        [
+            ("nope", 0, 4),
+            (P1, 9, 4),
+            (P1, 0, 0),
+            (P1, 0, -1),
+            (P1, 0, 15),
+            (P1, -1, 4),
+            (P1, "1", 4),
+            (P1, 0, True),
+            (P1, None, 4),
+            (P1, 0, 1.5),
+        ],
+    )
+    def test_invalid_requests_return_false_and_change_nothing(self, service, manager, store, method, page, src, dst):
+        self._seed(service, store, with_target=False)
+        self._reset(manager, service)
+
+        assert_that(getattr(service, method)("dev1", page, src, dst)).is_false()
+
+        assert_that(store.all_for_page("dev1", P1)).is_length(1)
+        manager.activate_action.assert_not_called()
+        manager.deactivate_action.assert_not_called()
+
+    @pytest.mark.parametrize("method", ["key_move", "key_copy"])
+    def test_a_device_that_cannot_open_returns_false(self, service, manager, store, method):
+        self._seed(service, store, with_target=False)
+        service._context.device_manager.open_device.return_value = None  # pylint: disable=protected-access
+
+        assert_that(getattr(service, method)("dev1", P1, 0, 4)).is_false()
+
+        assert_that(store.get("dev1", P1, 0)).is_not_none()
+
+    @pytest.mark.parametrize("method", ["key_move", "key_copy"])
+    def test_without_context_returns_false(self, method):
+        assert_that(getattr(DeckerService(), method)("dev1", P1, 0, 4)).is_false()
+
+    def test_commands_are_listed(self, service):
+        assert_that(json.loads(service.commands())).contains_key("key.move", "key.copy")

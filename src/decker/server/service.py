@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -32,6 +33,7 @@ from decker.plugin.loader import InstalledPlugin
 from decker.plugin.repository_index import IndexVersion, latest_compatible
 from decker.plugin.settings_schema import schema_to_json
 from decker.plugin.target import ActionTarget
+from decker.server.key_assignments import KeyAssignment
 from decker.server.plugin_installer import PluginInstallError
 from decker.server.repositories import CatalogEntry, RepositoryError, RepositoryStore
 from decker.server.update_checker import UpdateChecker
@@ -447,6 +449,88 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         else:
             self._context.device_state_store.delete_key_state(device_id, page_id, key_index)
         return True
+
+    @exposed
+    def key_move(self, device_id: str, page_id: str, from_index: int, to_index: int) -> bool:
+        """
+        Move a key's action to another slot of the page, replacing whatever was there.
+
+        The action instance keeps its identity, settings and appearance.
+
+        Returns:
+            bool: False (nothing changed) for an unknown page, an empty source, the same slot or a bad index.
+        """
+        source = self._movable_source(device_id, page_id, from_index, to_index)
+        if source is None or self._context is None:
+            return False
+        ctx = self._context
+        active = self._is_active_page(device_id, page_id)
+        if active:
+            ctx.plugin_manager.deactivate_action(source.target)
+            self._deactivate_slot(device_id, page_id, to_index)
+        if not ctx.key_assignment_store.move(device_id, page_id, from_index, to_index):
+            return False
+        if active:
+            ctx.device_manager.blank_key(device_id, from_index)
+            ctx.device_manager.clear_key_state(device_id, to_index)
+            self._activate_slot(device_id, page_id, to_index)
+        else:
+            ctx.device_state_store.delete_key_state(device_id, page_id, from_index)
+            ctx.device_state_store.delete_key_state(device_id, page_id, to_index)
+        return True
+
+    @exposed
+    def key_copy(self, device_id: str, page_id: str, from_index: int, to_index: int) -> bool:
+        """
+        Copy a key's action (settings and appearance) to another slot of the page as a new instance.
+
+        Returns:
+            bool: False (nothing changed) for an unknown page, an empty source, the same slot or a bad index.
+        """
+        source = self._movable_source(device_id, page_id, from_index, to_index)
+        if source is None or self._context is None:
+            return False
+        ctx = self._context
+        active = self._is_active_page(device_id, page_id)
+        if active:
+            self._deactivate_slot(device_id, page_id, to_index)
+        if ctx.key_assignment_store.copy_key(device_id, page_id, from_index, to_index, uuid.uuid4().hex) is None:
+            return False
+        if active:
+            ctx.device_manager.clear_key_state(device_id, to_index)
+            self._activate_slot(device_id, page_id, to_index)
+        else:
+            ctx.device_state_store.delete_key_state(device_id, page_id, to_index)
+        return True
+
+    def _movable_source(self, device_id: str, page_id: str, from_index: int, to_index: int) -> KeyAssignment | None:
+        """The assignment to move or copy, or None when the request is not valid (see key_move)."""
+        if self._context is None or self._context.page_store.get(device_id, page_id) is None:
+            return None
+        indexes = (from_index, to_index)
+        if any(isinstance(i, bool) or not isinstance(i, int) for i in indexes) or from_index == to_index:
+            return None
+        device = self._context.device_manager.open_device(device_id)
+        if device is None or not all(0 <= i < device.get_hw_info().num_keys for i in indexes):
+            return None
+        return self._context.key_assignment_store.get(device_id, page_id, from_index)
+
+    def _deactivate_slot(self, device_id: str, page_id: str, key_index: int) -> None:
+        """Deactivate the instance stored at a slot, if there is one."""
+        assert self._context is not None
+        existing = self._context.key_assignment_store.get(device_id, page_id, key_index)
+        if existing is not None:
+            self._context.plugin_manager.deactivate_action(existing.target)
+
+    def _activate_slot(self, device_id: str, page_id: str, key_index: int) -> None:
+        """Bring the (stored) assignment of a slot live on the device."""
+        assert self._context is not None
+        assignment = self._context.key_assignment_store.get(device_id, page_id, key_index)
+        if assignment is None:
+            return
+        pm = self._context.plugin_manager
+        pm.store_settings(assignment.target, assignment.settings)
+        pm.activate_action(assignment.target, assignment.appearance)
 
     @exposed
     def key_update_settings(self, device_id: str, page_id: str, key_index: int, settings_json: str) -> bool:
