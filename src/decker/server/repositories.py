@@ -119,7 +119,11 @@ class RepositoryStore:
             except (FetchError, RepositoryIndexError) as exc:
                 raise RepositoryError(str(exc)) from exc
             self._store_index(url, raw)
-            config.set(_CONFIG_KEY, [*self.urls(), url])
+            try:
+                config.set(_CONFIG_KEY, [*self.urls(), url])
+            except Exception:
+                shutil.rmtree(self._dir(url), ignore_errors=True)
+                raise
             return self._info(url)
 
     def remove(self, url: str) -> bool:

@@ -20,6 +20,7 @@ plugin:
   # Plugin processes using more resident memory than this (bytes) are killed.
   memory_limit: 268435456
   # Plugin repository index URLs, highest priority first.
-  repositories: []
-  # Periodically check installed plugins for updates.
-  update_check: true
+  repositories:
+    - https://valsr.github.io/decker-plugins/index.json
+  # How often to check installed plugins for updates: daily, weekly, monthly or manual.
+  update_check: weekly
