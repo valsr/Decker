@@ -244,6 +244,41 @@ class TestKeyUpdateAppearance:
         assert_that(DeckerService().key_update_appearance("dev1", P1, 0, "{}")).is_false()
 
 
+class TestKeyPreview:
+    def test_returns_the_composed_image_as_base64_without_saving(self, service, manager, store):
+        import base64  # pylint: disable=import-outside-toplevel
+
+        target = _make_target()
+        store.assign("dev1", P1, 0, target, {})
+        manager.preview_image.return_value = b"\x89PNGdata"
+
+        result = service.key_preview("dev1", P1, 0, json.dumps({"background": "#ff0000", "bogus": 1}))
+
+        assert_that(base64.b64decode(result)).is_equal_to(b"\x89PNGdata")
+        manager.preview_image.assert_called_once_with(target, {"background": "#ff0000"})
+        assert_that(store.get("dev1", P1, 0).appearance).is_equal_to({})
+        manager.set_appearance.assert_not_called()
+
+    def test_unassigned_key_returns_empty(self, service, manager):
+        assert_that(service.key_preview("dev1", P1, 5, "{}")).is_equal_to("")
+        manager.preview_image.assert_not_called()
+
+    @pytest.mark.parametrize("payload", ["[1]", "{not json", "null"])
+    def test_invalid_json_returns_empty(self, service, store, payload):
+        store.assign("dev1", P1, 0, _make_target(), {})
+
+        assert_that(service.key_preview("dev1", P1, 0, payload)).is_equal_to("")
+
+    def test_key_not_live_returns_empty(self, service, manager, store):
+        store.assign("dev1", P1, 0, _make_target(), {})
+        manager.preview_image.return_value = None
+
+        assert_that(service.key_preview("dev1", P1, 0, "{}")).is_equal_to("")
+
+    def test_without_context_returns_empty(self):
+        assert_that(DeckerService().key_preview("dev1", P1, 0, "{}")).is_equal_to("")
+
+
 class TestKeyGetStates:
     def _make_mock_device(self, num_keys: int = 2):
         from decker.common.model import (  # pylint: disable=import-outside-toplevel

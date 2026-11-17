@@ -6,7 +6,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -385,6 +385,19 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                 return
             live.appearance = dict(stored)
         self._recompose(live)
+
+    def preview_image(self, target: ActionTarget, stored: dict[str, Any]) -> bytes | None:
+        """Compose a live key with a draft appearance, changing nothing; None if the instance is not live."""
+        with self._lock:
+            live = self._live.get(target.context_id)
+            if live is None:
+                return None
+            draft = replace(live, appearance=dict(stored))
+        try:
+            return self._compose(draft)
+        except Exception:  # pylint: disable=broad-except
+            logging.warning("Could not compose preview for context %s", target.context_id, exc_info=True)
+            return None
 
     def activate_action(self, target: ActionTarget, appearance: dict[str, Any] | None = None) -> None:
         """Tell the action's plugin that an instance appeared, starting the plugin if needed."""
