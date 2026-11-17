@@ -10,8 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from packaging.specifiers import InvalidSpecifier, SpecifierSet
-
+from decker.common.version import is_compatible
 from decker.plugin.environment import EnvironmentBuildError, build_environment
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import PluginManifest
@@ -196,11 +195,7 @@ class PluginInstaller:
     def _check_decker_version(self, manifest: PluginManifest) -> None:
         if manifest.decker is None:
             return
-        try:
-            compatible = SpecifierSet(manifest.decker).contains(self._decker_version, prereleases=True)
-        except InvalidSpecifier as exc:
-            raise PluginInstallError(f"invalid Decker version requirement {manifest.decker!r}") from exc
-        if not compatible:
+        if not is_compatible(manifest.decker, self._decker_version):
             raise PluginInstallError(
                 f"requires Decker {manifest.decker} (this server runs Decker {self._decker_version})"
             )
