@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from rpyc.utils.server import ThreadPoolServer
+from rpyc.utils.server import Server
 
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices.manager import DeviceManager
@@ -27,7 +27,7 @@ class ServerContext:
     page_store: PageStore
     page_controller: PageController
     event_bus: EventBus
-    server: ThreadPoolServer | None = None
+    server: Server | None = None
     plugin_installer: PluginInstaller | None = None
     repository_store: RepositoryStore | None = None
     update_checker: UpdateChecker | None = None

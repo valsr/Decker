@@ -4,10 +4,11 @@ import json
 import logging
 import multiprocessing
 import signal
+import socket
 import sys
 from typing import Any
 
-from rpyc.utils.server import ThreadPoolServer
+from rpyc.utils.server import ThreadedServer
 
 import decker.common.logging
 from decker.common import paths as decker_paths
@@ -26,6 +27,18 @@ from decker.server.repositories import RepositoryStore
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
 from decker.server.update_checker import UpdateChecker
+
+
+class NoDelayThreadedServer(ThreadedServer):
+    """One thread per client with Nagle disabled.
+
+    rpyc's ThreadPoolServer notices an idle client's next request only on its 0.1 s poll, so every request, and every
+    reply to a call the server makes to a client, took about 200 ms. A thread per client blocks on its socket instead.
+    """
+
+    def _authenticate_and_serve_client(self, sock: socket.socket) -> None:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        super()._authenticate_and_serve_client(sock)
 
 
 class ServerProcess:
@@ -250,7 +263,7 @@ class ServerProcess:
         )
         self._restore_devices(device_id_filter=matched_device_id)
 
-        server = ThreadPoolServer(
+        server = NoDelayThreadedServer(
             DeckerService,
             hostname=self.host,
             port=self.port,

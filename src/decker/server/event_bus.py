@@ -2,6 +2,7 @@
 
 import logging
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from rpyc.utils.helpers import async_
@@ -16,6 +17,7 @@ class EventBus:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._clients: list[Any] = []
+        self._senders: dict[Any, Callable[[str, str], Any]] = {}  # each client's resolved, non-blocking sender
 
     def register(self, conn: Any) -> None:
         """Add a client connection to the push list."""
@@ -26,10 +28,7 @@ class EventBus:
     def unregister(self, conn: Any) -> None:
         """Remove a client connection from the push list."""
         with self._lock:
-            try:
-                self._clients.remove(conn)
-            except ValueError:
-                pass
+            self._forget(conn)
         logging.debug("EventBus: client unregistered (%d remaining)", len(self._clients))
 
     def push(self, event_type: str, payload: str) -> None:
@@ -43,13 +42,25 @@ class EventBus:
         dead: list[Any] = []
         for conn in clients:
             try:
-                async_(conn.root.on_server_event)(event_type, payload)
+                self._sender(conn)(event_type, payload)
             except Exception:  # pylint: disable=broad-except
                 dead.append(conn)
         if dead:
             with self._lock:
                 for conn in dead:
-                    try:
-                        self._clients.remove(conn)
-                    except ValueError:
-                        pass
+                    self._forget(conn)
+
+    def _sender(self, conn: Any) -> Callable[[str, str], Any]:
+        """The client's fire-and-forget ``on_server_event``; looking it up asks the client, so it is done once."""
+        sender = self._senders.get(conn)
+        if sender is None:
+            sender = async_(conn.root.on_server_event)
+            self._senders[conn] = sender
+        return sender
+
+    def _forget(self, conn: Any) -> None:
+        try:
+            self._clients.remove(conn)
+        except ValueError:
+            pass
+        self._senders.pop(conn, None)

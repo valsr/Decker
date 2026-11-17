@@ -49,6 +49,7 @@ class Server:
         listener_timeout=...,
         socket_path=...,
     ) -> None: ...
+    def _authenticate_and_serve_client(self, sock) -> None: ...
     def close(self):  # -> None:
         """Closes (terminates) the server and all of its clients. If applicable,
         also unregisters from the registry server"""
