@@ -347,3 +347,25 @@ def test_background_keeps_alpha_when_resolved() -> None:
 
 def test_invalid_background_falls_back_to_default() -> None:
     assert_that(resolve_appearance({}, {"background": "#1122"})["background"]).is_equal_to("#000000")
+
+
+@pytest.mark.parametrize("position", ["top", "middle", "bottom"])
+def test_newline_in_plugin_title_does_not_crash_and_renders_as_a_space(position: str) -> None:
+    appearance = _appearance(title={"position": position})
+    assert_that(compose_key_image(appearance, None, "a\nb")).is_equal_to(compose_key_image(appearance, None, "a b"))
+
+
+@pytest.mark.parametrize("raw", ["a\r\nb", "a\rb", "a \n\n b", "a b"])
+def test_any_line_break_in_title_renders_as_a_single_space(raw: str) -> None:
+    appearance = _appearance(title={"position": "top"})
+    assert_that(compose_key_image(appearance, None, raw)).is_equal_to(compose_key_image(appearance, None, "a b"))
+
+
+def test_newline_in_user_title_does_not_crash() -> None:
+    img = _open(compose_key_image(_appearance(title={"text": "a\nb", "position": "bottom"}), None, ""))
+    assert_that(_has_title_pixels(img)).is_true()
+
+
+def test_title_of_only_line_breaks_draws_nothing() -> None:
+    img = _open(compose_key_image(_appearance(title={"text": "\n\n"}), None, ""))
+    assert_that(_has_title_pixels(img)).is_false()
