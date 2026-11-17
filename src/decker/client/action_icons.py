@@ -7,6 +7,8 @@ import zlib
 from PyQt6.QtCore import QByteArray, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 
+from decker.client.widgets.color_tool_button import hex_to_qcolor
+
 # Muted tile colours that keep white text readable (WCAG AA); chosen per action so tiles stay stable.
 _PLACEHOLDER_COLORS = ("#3b6ea8", "#7a4fa0", "#2f7d68", "#a8532f", "#8a6d1f", "#4f5b70")
 
@@ -19,8 +21,11 @@ def action_pixmap(action: dict[str, str], size: int) -> QPixmap:
     return pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
 
-def decode_icon(icon_b64: str) -> QPixmap | None:
-    """Decode a base64 image (PNG, JPEG, SVG, …); None if it is empty or not a readable image."""
+def decode_icon(icon_b64: str, tint: str | None = None) -> QPixmap | None:
+    """Decode a base64 image (PNG, JPEG, SVG, …); None if it is empty or not a readable image.
+
+    ``tint`` (``#rrggbb[aa]``) recolours SVGs that use ``currentColor``; any other image is returned as is.
+    """
     if not icon_b64:
         return None
     try:
@@ -30,7 +35,20 @@ def decode_icon(icon_b64: str) -> QPixmap | None:
     pixmap = QPixmap()
     if not pixmap.loadFromData(QByteArray(data)) or pixmap.isNull():
         return None
-    return pixmap
+    color = hex_to_qcolor(tint) if tint and b"currentColor" in data else None
+    return _tinted(pixmap, color) if color is not None else pixmap
+
+
+def _tinted(pixmap: QPixmap, color: QColor) -> QPixmap:
+    """The pixmap's shape filled with ``color`` (the alpha of the source is kept)."""
+    result = QPixmap(pixmap.size())
+    result.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(result)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(result.rect(), color)
+    painter.end()
+    return result
 
 
 def placeholder_pixmap(name: str, size: int) -> QPixmap:

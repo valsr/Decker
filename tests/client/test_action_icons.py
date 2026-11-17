@@ -59,3 +59,50 @@ class TestPlaceholder:
         assert_that(pixmap.isNull()).is_false()
         assert_that(pixmap.hasAlphaChannel()).is_true()
         assert_that(Qt.GlobalColor.transparent).is_not_none()
+
+
+_CURRENT_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path fill="currentColor" d="M0 0h10v10H0z"/></svg>'
+)
+_PLAIN_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path fill="#0000ff" d="M0 0h10v10H0z"/></svg>'
+)
+
+
+def _centre(pixmap) -> tuple[int, int, int, int]:
+    image = pixmap.toImage()
+    pixel = image.pixelColor(image.width() // 2, image.height() // 2)
+    return pixel.red(), pixel.green(), pixel.blue(), pixel.alpha()
+
+
+class TestDecodeIconTint:
+    def test_tint_recolours_currentcolor_svg(self, qapp):  # pylint: disable=unused-argument
+        pixmap = decode_icon(_b64(_CURRENT_SVG), "#ff0000")
+        assert pixmap is not None
+        assert_that(_centre(pixmap)).is_equal_to((255, 0, 0, 255))
+
+    def test_rgba_tint_keeps_alpha_order_right(self, qapp):  # pylint: disable=unused-argument
+        pixmap = decode_icon(_b64(_CURRENT_SVG), "#ff000080")
+        assert pixmap is not None
+        red, green, blue, alpha = _centre(pixmap)
+        assert_that((red, green, blue)).is_equal_to((255, 0, 0))
+        assert_that(alpha).is_between(120, 135)
+
+    def test_tint_leaves_plain_svg_and_raster_alone(self, qapp):  # pylint: disable=unused-argument
+        plain = decode_icon(_b64(_PLAIN_SVG), "#ff0000")
+        raster = decode_icon(_b64(_COUNTER_PNG.read_bytes()), "#ff0000")
+        assert plain is not None and raster is not None
+        assert_that(_centre(plain)).is_equal_to((0, 0, 255, 255))
+        untinted = decode_icon(_b64(_COUNTER_PNG.read_bytes()))
+        assert untinted is not None
+        assert_that(raster.toImage()).is_equal_to(untinted.toImage())
+
+    def test_decode_without_tint_is_unchanged(self, qapp):  # pylint: disable=unused-argument
+        pixmap = decode_icon(_b64(_CURRENT_SVG))
+        assert pixmap is not None
+        assert_that(_centre(pixmap)).is_equal_to((0, 0, 0, 255))
+
+    def test_invalid_tint_is_ignored(self, qapp):  # pylint: disable=unused-argument
+        pixmap = decode_icon(_b64(_CURRENT_SVG), "not a colour")
+        assert pixmap is not None
+        assert_that(_centre(pixmap)).is_equal_to((0, 0, 0, 255))
