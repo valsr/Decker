@@ -216,6 +216,8 @@ class InlineSchemaForm(QWidget):
             field = None if "section" in entry else _build_field(entry, values)
             if field is None:
                 continue
+            if isinstance(field.widget, ColorButton):
+                field.widget.set_show_name(False)
             self._fields[entry["key"]] = field
             label = entry.get("label", entry["key"])
             self._row.addWidget(QLabel(f"{label}:"))

@@ -5,6 +5,7 @@ from assertpy import assert_that
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QColor, QGuiApplication
 from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QWidget
 
 from decker.client.widgets.text_style_edit import TextStyleEdit
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
@@ -165,3 +166,43 @@ class TestPopupSurvivesColourDialog:
         edit._toolbar._color.click()
 
         assert_that(edit._toolbar.isVisible()).is_false()
+
+
+class TestColourDialogIsolatedFromPopup:
+    def _open_with_host(self, qapp):  # pylint: disable=unused-argument
+        host = QWidget()
+        edit = TextStyleEdit(host)
+        host.show()
+        edit._cog.trigger()
+        return host, edit
+
+    def test_dialog_is_parented_to_the_editors_window_not_the_popup(
+        self, qapp, monkeypatch
+    ):  # pylint: disable=unused-argument
+        host, edit = self._open_with_host(qapp)
+        seen: dict = {}
+
+        def fake(_initial, parent, *_a, **_k) -> QColor:
+            seen["parent"] = parent
+            return QColor()
+
+        monkeypatch.setattr("decker.client.widgets.color_tool_button.QColorDialog.getColor", fake)
+        edit._toolbar._color.click()
+
+        assert_that(seen["parent"].window()).is_same_as(host)
+        edit._toolbar.close()
+
+    def test_popup_is_closed_before_the_dialog_opens(self, qapp, monkeypatch):  # pylint: disable=unused-argument
+        _host, edit = self._open_with_host(qapp)
+        seen: dict = {}
+
+        def fake(*_a, **_k) -> QColor:
+            seen["popup_visible"] = edit._toolbar.isVisible()
+            return QColor()
+
+        monkeypatch.setattr("decker.client.widgets.color_tool_button.QColorDialog.getColor", fake)
+        edit._toolbar._outline.click()
+
+        assert_that(seen["popup_visible"]).is_false()
+        assert_that(edit._toolbar.isVisible()).is_true()  # and it is back afterwards
+        edit._toolbar.close()

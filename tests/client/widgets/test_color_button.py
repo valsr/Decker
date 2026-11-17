@@ -88,3 +88,31 @@ class TestColorButtonAlpha:
 
         assert_that(button.icon().isNull()).is_false()
         assert_that(button.color).is_equal_to("#00000000")
+
+
+class TestColorButtonSwatchOnly:
+    def test_hiding_the_name_leaves_only_the_swatch_and_a_tooltip(self, qapp):  # pylint: disable=unused-argument
+        button = ColorButton("#11223380", alpha=True)
+
+        button.set_show_name(False)
+
+        assert_that(button.text()).is_equal_to("")
+        assert_that(button.icon().isNull()).is_false()
+        assert_that(button.toolTip()).is_equal_to("#11223380")
+
+    def test_tooltip_follows_the_colour(self, qapp):  # pylint: disable=unused-argument
+        button = ColorButton("#000000")
+        button.set_show_name(False)
+
+        button.set_color("#ff0000")
+
+        assert_that(button.toolTip()).is_equal_to("#ff0000")
+        assert_that(button.text()).is_equal_to("")
+
+    def test_showing_the_name_again_restores_the_text(self, qapp):  # pylint: disable=unused-argument
+        button = ColorButton("#ff0000")
+        button.set_show_name(False)
+
+        button.set_show_name(True)
+
+        assert_that(button.text()).is_equal_to("#ff0000")

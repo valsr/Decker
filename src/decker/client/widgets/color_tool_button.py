@@ -70,7 +70,7 @@ class ColorToolButton(QToolButton):
         self.picker_opened.emit()
         try:
             chosen = QColorDialog.getColor(
-                initial, self, "Choose colour", QColorDialog.ColorDialogOption.ShowAlphaChannel
+                initial, self._dialog_parent(), "Choose colour", QColorDialog.ColorDialogOption.ShowAlphaChannel
             )
             if chosen.isValid() and chosen != self._color:
                 self._color = chosen
@@ -78,6 +78,12 @@ class ColorToolButton(QToolButton):
                 self.color_changed.emit(self.color)
         finally:
             self.picker_closed.emit()
+
+    def _dialog_parent(self) -> QWidget:
+        """The window that owns our popup: a dialog parented inside a popup would vanish with it."""
+        top = self.window()
+        owner = top.parentWidget() if top is not None else None
+        return (owner.window() or owner) if owner is not None else self
 
     def _clear(self) -> None:
         if self._color is not None:

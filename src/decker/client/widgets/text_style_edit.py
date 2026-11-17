@@ -60,6 +60,7 @@ class TextStyleEdit(QWidget):
 
     def _on_picker_opened(self) -> None:
         self._reopen_after_picker = self._toolbar.isVisible()
+        self._toolbar.hide()  # a popup holds the mouse grab and would swallow the dialog's clicks
 
     def _on_picker_closed(self) -> None:
         # A Popup window closes when the modal colour dialog takes focus; bring it back so editing can continue.
