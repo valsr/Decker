@@ -153,3 +153,14 @@ def test_stop_returns_when_plugin_never_reads_stdin(make: Callable[[str], Harnes
     assert_that(time.monotonic() - began).is_less_than(5.0)
     assert_that(h.proc.is_running).is_false()
     assert_that(wait_for(lambda: len(h.exits) == 1)).is_true()
+
+
+def test_stderr_without_newline_is_read_in_bounded_chunks(
+    make: Callable[[str], Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    h = make("stderr_flood.py")
+    h.proc.start()
+    assert_that(wait_for(lambda: len(h.messages) == 1)).is_true()
+    assert_that(wait_for(lambda: sum(len(r.getMessage()) for r in caplog.records) > 2 * 1024 * 1024)).is_true()
+    assert_that(max(len(r.getMessage()) for r in caplog.records)).is_less_than(16 * 1024)

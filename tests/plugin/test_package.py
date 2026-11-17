@@ -194,3 +194,9 @@ def test_keyboard_interrupt_cleans_up_and_propagates(tmp_path, monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         extract(_zip(), dest)
     assert_that(dest.exists()).is_false()
+
+
+def test_oversized_manifest_is_rejected():
+    big = json.dumps({**_MANIFEST, "description": "x" * (package.MAX_MANIFEST_BYTES + 10)})
+    with pytest.raises(PackageError, match="too large"):
+        read_manifest(_zip({"manifest.json": big}))

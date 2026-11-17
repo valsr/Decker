@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _DISCARD_CHUNK = 64 * 1024
 _SEND_QUEUE_SIZE = 256
+_STDERR_CHUNK = 8 * 1024
 
 
 class PluginProcess:
@@ -170,7 +171,7 @@ class PluginProcess:
             logger.exception("[%s] message handler failed for %s", self._plugin_id, message.event)
 
     def _read_stderr(self, stream: IO[bytes]) -> None:
-        for raw in iter(stream.readline, b""):
+        for raw in iter(lambda: stream.readline(_STDERR_CHUNK), b""):
             logger.info("[%s] %s", self._plugin_id, raw.decode("utf-8", errors="replace").rstrip())
 
     def _watch(self, proc: subprocess.Popen[bytes], readers: list[threading.Thread]) -> None:

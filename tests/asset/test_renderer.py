@@ -65,3 +65,20 @@ class TestRenderBytes:
     def test_returns_none_for_malformed_svg(self):
         image = AssetRenderer().render_bytes(b"<svg unterminated", 10, 10)
         assert_that(image).is_none()
+
+
+class TestLimitsAndSniffing:
+    def test_oversized_raster_is_rejected_before_decoding(self):
+        import pytest
+
+        from decker.asset.renderer import ImageTooLargeError
+
+        data = _png_bytes(size=(5000, 5000))
+        with pytest.raises(ImageTooLargeError):
+            AssetRenderer().render_bytes(data, 10, 10)
+
+    def test_svg_with_leading_comment_and_doctype_is_rendered(self):
+        data = ("<!-- c -->\n<!DOCTYPE svg>\n" + _SVG).encode()
+        image = AssetRenderer().render_bytes(data, 8, 8)
+        assert_that(image).is_not_none()
+        assert_that(image.size).is_equal_to((8, 8))

@@ -11,6 +11,7 @@ from decker.plugin.manifest import ManifestValidationError, PluginManifest
 
 MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_ENTRIES = 10_000
 _MANIFEST_NAME = "manifest.json"
 _S_IFMT = 0o170000
@@ -88,10 +89,12 @@ def _read_manifest_bytes(zf: zipfile.ZipFile) -> bytes:
     info = zf.getinfo(_MANIFEST_NAME)
     if info.is_dir():
         raise PackageError(f"{_MANIFEST_NAME} must be a file")
+    if info.file_size > MAX_MANIFEST_BYTES:
+        raise PackageError(f"{_MANIFEST_NAME} is too large (limit {MAX_MANIFEST_BYTES // 1024} KiB)")
     with zf.open(info) as src:
-        raw = src.read(MAX_UNCOMPRESSED_BYTES + 1)
-    if len(raw) > MAX_UNCOMPRESSED_BYTES:
-        raise PackageError("package is too large when uncompressed")
+        raw = src.read(MAX_MANIFEST_BYTES + 1)
+    if len(raw) > MAX_MANIFEST_BYTES:
+        raise PackageError(f"{_MANIFEST_NAME} is too large (limit {MAX_MANIFEST_BYTES // 1024} KiB)")
     return raw
 
 
