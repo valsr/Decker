@@ -63,6 +63,7 @@ class ActionSpec:
     states: tuple[StateSpec, ...] = ()
     settings: tuple[SettingEntry, ...] = ()
     appearance: dict[str, Any] = field(default_factory=dict, hash=False)
+    static: bool = False
 
 
 @dataclass(frozen=True)
@@ -122,8 +123,11 @@ class PluginManifest:
         runtime = _parse_runtime(data.get("runtime")) if data.get("runtime") is not None else None
         actions = tuple(_parse_action(e, plugin_id) for e in _as_list(contributes.get("actions", []), "actions"))
         packs = tuple(_parse_icon_pack(e, plugin_id) for e in _as_list(contributes.get("icon_packs", []), "icon_packs"))
-        if actions and runtime is None:
-            raise ManifestValidationError("manifest contributes actions but declares no runtime")
+        needs_runtime = next((a for a in actions if not a.static), None)
+        if needs_runtime and runtime is None:
+            raise ManifestValidationError(
+                f"manifest contributes actions but declares no runtime (action {needs_runtime.id} is not static)"
+            )
         if not actions and not packs:
             raise ManifestValidationError("manifest contributes no actions or icon packs")
 
@@ -227,6 +231,7 @@ def _parse_action(entry: Any, plugin_id: str) -> ActionSpec:
     if not isinstance(entry, dict) or "id" not in entry or "name" not in entry:
         raise ManifestValidationError(f"invalid action entry: {entry!r}")
     action_id = _parse_contribution_id(entry["id"], plugin_id, "action id")
+    static = _parse_static(entry, action_id)
     gestures = entry.get("gestures", ["press"])
     if (
         not isinstance(gestures, list)
@@ -252,7 +257,19 @@ def _parse_action(entry: Any, plugin_id: str) -> ActionSpec:
         states=states,
         settings=_parse_settings(entry.get("settings", []), f"action {action_id} settings"),
         appearance=dict(appearance),
+        static=static,
     )
+
+
+def _parse_static(entry: dict[str, Any], action_id: str) -> bool:
+    static = entry.get("static", False)
+    if not isinstance(static, bool):
+        raise ManifestValidationError(f"action {action_id} static must be a boolean")
+    if static:
+        for name in ("settings", "gestures"):
+            if name in entry:
+                raise ManifestValidationError(f"static action {action_id} cannot declare {name}")
+    return static
 
 
 def _parse_state(entry: Any, action_id: str) -> StateSpec:
