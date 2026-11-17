@@ -470,7 +470,7 @@ class TestServiceRules:
         ).is_true()
 
         assert _wait_for(lambda: _lines(log, "global_settings_changed"))
-        assert_that(_lines(log, "global_settings_changed")[0]["payload"]).is_equal_to({"settings": {"token": "abc"}})
+        assert_that(_lines(log, "global_settings_changed")[0]["payload"]).is_equal_to({"global_settings": {"token": "abc"}})
         assert_that(env.manager.global_settings("com.example.tool")).is_equal_to({"token": "abc"})
         listed = {p["id"]: p for p in json.loads(service.plugins_list())}
         assert_that(listed["com.example.tool"]["global_settings"]).is_equal_to({"token": "abc"})
