@@ -25,6 +25,8 @@ None so far (it can list devices)!
 **Decker Server** depends on the following libraries to be installed:
 
 - libhidapi
+- [uv](https://docs.astral.sh/uv/), needed to install plugins that have a Python runtime (it builds each plugin's
+  own environment)
 
 For installation/setup for common distributions see the subsections below.
 
@@ -39,6 +41,26 @@ For installation/setup for common distributions see the subsections below.
 ### Arch Linux
 
 `sudo pacman -S hidapi`
+
+## Plugins
+
+Key actions and icon packs come from plugins, shipped as `.deckerplugin` packages. Each plugin runs in its own
+process, so a misbehaving plugin cannot take the server down. Plugins run with your user's permissions and are not
+sandboxed: only install plugins you trust.
+
+```bash
+poe cli plugin new com.example.hello          # scaffold a plugin
+poe cli plugin pack com.example.hello         # build com.example.hello-0.1.0.deckerplugin
+poe cli plugin install com.example.hello-0.1.0.deckerplugin
+poe cli plugin list
+poe cli plugin remove com.example.hello
+```
+
+You can also install from Settings, Plugins in the client, or by dropping a package on the main window. Installing
+is only allowed from the server's own machine unless `server.allow_remote_plugin_install` is `true`.
+
+Writing a plugin: see the [plugin documentation](docs/plugins/README.md) (package format and manifest, settings
+schema, protocol, Python SDK and limits).
 
 ## Contributing
 

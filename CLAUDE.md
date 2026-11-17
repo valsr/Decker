@@ -49,7 +49,7 @@ poe cli status          # call a specific command
 poe cli stop            # gracefully stop the server (monitor exits too)
 ```
 
-System dependency required: `libhidapi` (`sudo pacman -S hidapi` on Arch/Manjaro).
+System dependencies required: `libhidapi` (`sudo pacman -S hidapi` on Arch/Manjaro) and `uv` (builds per-plugin environments). Plugin author docs live in `docs/plugins/`; keep them in sync with protocol and manifest changes.
 
 ## Quality gates — run all before marking work done
 
