@@ -333,3 +333,12 @@ def test_go_to_page_emits_page_id() -> None:
     ctx.go_to_page("p2")
 
     assert_that(sent).is_equal_to([("switch_page", "c1", {"page_id": "p2"})])
+
+
+def test_set_settings_keeps_the_local_keys_it_was_not_given() -> None:
+    ctx, _sent = _context_with_log()
+    ctx.settings = {"page": {"page_id": "p1"}, "count": 1}
+
+    ctx.set_settings({"count": 2})
+
+    assert_that(ctx.settings).is_equal_to({"page": {"page_id": "p1"}, "count": 2})

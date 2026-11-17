@@ -73,7 +73,7 @@ class ActionContext:
 
     def set_settings(self, settings: dict[str, Any]) -> None:
         """Store settings for this key; send only the keys you changed (others are kept)."""
-        self.settings = dict(settings)
+        self.settings = {**self.settings, **settings}
         self._emit("set_settings", {"settings": settings})
 
     def set_global_settings(self, settings: dict[str, Any]) -> None:
