@@ -179,22 +179,25 @@ def _build_field(entry: dict[str, Any], values: dict[str, Any]) -> _Field | None
 
 
 def _watch(widget: QWidget, slot: Callable[[], None]) -> None:
-    """Call ``slot`` whenever the user edits ``widget`` or any control inside it."""
-    for part in (widget, *widget.findChildren(QWidget)):
-        if isinstance(part, (IconEdit, PageEdit, TextStyleEdit)):
-            part.value_changed.connect(slot)
-        elif isinstance(part, ColorButton):
-            part.color_changed.connect(lambda _color: slot())
-        elif isinstance(part, QCheckBox):
-            part.toggled.connect(lambda _checked: slot())
-        elif isinstance(part, QComboBox):
-            part.currentIndexChanged.connect(lambda _index: slot())
-        elif isinstance(part, (QSpinBox, QDoubleSpinBox)):
-            part.valueChanged.connect(lambda _value: slot())
-        elif isinstance(part, QLineEdit):
-            part.textChanged.connect(lambda _text: slot())
-        elif isinstance(part, QPlainTextEdit):
-            part.textChanged.connect(slot)
+    """Call ``slot`` once per user edit of ``widget``; controls inside a composite or spin box are not watched twice."""
+    if isinstance(widget, (IconEdit, PageEdit, TextStyleEdit)):
+        widget.value_changed.connect(slot)
+    elif isinstance(widget, ColorButton):
+        widget.color_changed.connect(lambda _color: slot())
+    elif isinstance(widget, QCheckBox):
+        widget.toggled.connect(lambda _checked: slot())
+    elif isinstance(widget, QComboBox):
+        widget.currentIndexChanged.connect(lambda _index: slot())
+    elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+        widget.valueChanged.connect(lambda _value: slot())
+    elif isinstance(widget, QLineEdit):
+        widget.textChanged.connect(lambda _text: slot())
+    elif isinstance(widget, QPlainTextEdit):
+        widget.textChanged.connect(slot)
+    else:
+        for child in widget.children():
+            if isinstance(child, QWidget):
+                _watch(child, slot)
 
 
 class SchemaForm(QWidget):
