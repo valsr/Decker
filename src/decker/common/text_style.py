@@ -26,7 +26,7 @@ TEXT_STYLE_DEFAULTS: Mapping[str, Any] = MappingProxyType(
     }
 )
 
-_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
+_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _LEGACY_FIELDS: dict[str, str] = {
     "title": "text",
     "show_title": "visible",
@@ -37,6 +37,7 @@ _LEGACY_FIELDS: dict[str, str] = {
     "title_outline": "outline",
     "title_outline_width": "outline_width",
 }
+LEGACY_TITLE_KEYS: frozenset[str] = frozenset(_LEGACY_FIELDS) - {"title"}
 
 
 def _is_int_in(value: Any, bounds: tuple[int, int]) -> bool:

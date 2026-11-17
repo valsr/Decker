@@ -18,8 +18,8 @@ can declare it for their own text without writing UI.
   - Size and outline width: numeric input with +/- buttons.
   - Bold, italic, underline, strike: independent toggle buttons with tooltips (Ctrl+B/I/U shortcuts while the popup is focused).
   - Position: three icon toggles, exactly one selected.
-  - Color and outline: buttons showing an icon with a coloured bar; click opens the existing colour dialog
-    (reusing `ColorButton` behaviour). Outline's menu has "No outline"; outline width is disabled while there is none.
+  - Color and outline: buttons showing an icon with a coloured bar; click opens the colour dialog with an alpha
+    channel (RGBA, added at your request mid-implementation); values are `#rrggbb` or `#rrggbbaa`. Outline's menu has "No outline"; outline width is disabled while there is none.
   - Visible: toggle replacing the old "Show title" checkbox; off hides the text, including a plugin's fallback title.
 - Popup closes on outside click or Esc, clamps to the window edge, and edits update the form live; the panel's Save
   button still commits.
