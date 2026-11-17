@@ -4,6 +4,7 @@ import pytest
 from assertpy import assert_that
 
 from decker.asset.iconpack import IconPackRegistry
+from decker.common.icon_ref import DECKER_ICON_REF
 from decker.plugin.icons import MAX_ICON_BYTES
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import PluginManifest
@@ -203,3 +204,11 @@ def _manifest_data():
         "description": "d",
         "contributes": {"icon_packs": [{"id": "com.t.p.icons", "name": "Pack", "path": "pack"}]},
     }
+
+
+def test_read_ref_serves_the_builtin_decker_icon():
+    registry = IconPackRegistry()
+
+    data = registry.read_ref(DECKER_ICON_REF)
+
+    assert_that(data).is_not_none().contains(b"<svg")

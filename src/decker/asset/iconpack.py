@@ -8,12 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from decker.common.icon_ref import parse_icon_ref
+from decker.common.icon_ref import DECKER_ICON_REF, parse_icon_ref
 from decker.plugin.icons import MAX_ICON_BYTES
 from decker.plugin.loader import InstalledPlugin
 
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".svg"})
 _FailureCallback = Callable[[str, str], None]
+_DECKER_ICON = Path(__file__).parent.parent / "assets" / "decker.svg"
 
 
 @dataclass(frozen=True)
@@ -102,7 +103,9 @@ class IconPackRegistry:
             return None
 
     def read_ref(self, ref: Any) -> bytes | None:
-        """Return the bytes of the icon a ``pack:<pack id>/<path>`` reference names, or None if it cannot be served."""
+        """Return the bytes of the icon a ``pack:<pack id>/<path>`` or ``decker:logo`` reference names, or None."""
+        if ref == DECKER_ICON_REF:
+            return _DECKER_ICON.read_bytes()
         parsed = parse_icon_ref(ref)
         return self.read_icon(*parsed) if parsed is not None else None
 
