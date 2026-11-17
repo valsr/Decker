@@ -1,0 +1,57 @@
+import time
+
+import pytest
+from assertpy import assert_that
+
+from decker.common.template import TEMPLATE_VARIABLES, expand_template
+
+VARS = {"page_name": "Home", "page_index": "2", "page_count": "5"}
+
+
+def test_replaces_known_variables():
+    assert_that(expand_template("{page_index} / {page_count} {page_name}", VARS)).is_equal_to("2 / 5 Home")
+
+
+def test_unknown_names_are_left_as_typed():
+    assert_that(expand_template("{nope} {page_name}", VARS)).is_equal_to("{nope} Home")
+
+
+def test_double_braces_are_literal():
+    assert_that(expand_template("{{page_name}}", VARS)).is_equal_to("{page_name}")
+    assert_that(expand_template("}}", VARS)).is_equal_to("}")
+
+
+def test_no_recursion():
+    assert_that(expand_template("{page_name}", {"page_name": "{page_name}"})).is_equal_to("{page_name}")
+
+
+def test_plain_text_is_unchanged():
+    assert_that(expand_template("hello world", VARS)).is_equal_to("hello world")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["{", "}", "{}", "{ page_name }", "{page_name", "page_name}", "{{{page_name}}}", "{page-name}", "{Page_Name}"],
+)
+def test_malformed_braces_never_raise(text: str):
+    assert_that(expand_template(text, VARS)).is_instance_of(str)
+
+
+def test_values_are_inserted_verbatim():
+    value = "a{b}\\n\\1😀"
+    assert_that(expand_template("[{page_name}]", {"page_name": value})).is_equal_to(f"[{value}]")
+
+
+def test_empty_text_and_empty_variables():
+    assert_that(expand_template("", VARS)).is_equal_to("")
+    assert_that(expand_template("{page_name}", {})).is_equal_to("{page_name}")
+
+
+def test_very_long_text_is_linear():
+    start = time.monotonic()
+    expand_template("{page_name} x " * 20000 + "{" * 1000, VARS)
+    assert_that(time.monotonic() - start).is_less_than(2.0)
+
+
+def test_variable_names_are_published():
+    assert_that(TEMPLATE_VARIABLES).is_equal_to(("page_name", "page_index", "page_count"))
