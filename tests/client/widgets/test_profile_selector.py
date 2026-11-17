@@ -18,7 +18,10 @@ _PROFILES = [ProfileInfo(0, "Default", ""), ProfileInfo(2, "Work", "pack:a/b.svg
 def selector(qapp):
     widget = ProfileSelector()
     widget.set_profiles(_PROFILES, 2)
-    return widget
+    yield widget
+    widget._finish_rename(commit=False)  # a popup closed by garbage collection mid-edit aborts Qt
+    widget.hide_popup()
+    widget.deleteLater()
 
 
 def _rows(selector):
