@@ -370,7 +370,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if plugin is None:
             self._mark_missing(target)
             return
-        if spec is None or plugin.manifest.runtime is None:
+        if spec is None or (plugin.manifest.runtime is None and not spec.static):
             logging.warning("Cannot activate unknown action %s/%s", target.plugin_uuid, target.action_uuid)
             return
         with self._lock:
@@ -390,6 +390,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         with self._lock:
             self._live[target.context_id] = live
         self._recompose(live)
+        if spec.static:
+            return
         self._supervisor.acquire(target.plugin_uuid)
         if self._supervisor.is_failed(target.plugin_uuid):
             self._mark_failed(live)
@@ -403,6 +405,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if live is None:
             return
         live.recognizer.cancel()
+        if live.action.static:
+            return
         plugin_id = target.plugin_uuid
         if self._supervisor.is_ready(plugin_id):
             self._supervisor.send(plugin_id, Message("will_disappear", target.context_id))
@@ -411,7 +415,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def dispatch_key_down(self, target: ActionTarget) -> None:
         """Forward the raw key down, then feed the press to the instance's gesture recognizer."""
         live = self._live.get(target.context_id)
-        if live is None:
+        if live is None or live.action.static:
             return
         self._send_context(live, "key_down")
         live.recognizer.key_down(live.gestures)
@@ -419,7 +423,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def dispatch_key_up(self, target: ActionTarget) -> None:
         """Forward the raw key up, then feed the release to the instance's gesture recognizer."""
         live = self._live.get(target.context_id)
-        if live is None:
+        if live is None or live.action.static:
             return
         self._send_context(live, "key_up")
         live.recognizer.key_up()
@@ -427,6 +431,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def dispatch_settings_changed(self, target: ActionTarget) -> None:
         """Send the instance its new settings; re-saving settings retries a failed plugin."""
         plugin_id = target.plugin_uuid
+        existing = self._live.get(target.context_id)
+        if existing is not None and existing.action.static:
+            return
         if self._supervisor.is_failed(plugin_id):
             with self._lock:
                 self._drop_failure(plugin_id)
@@ -593,7 +600,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def _on_ready(self, plugin_id: str) -> None:
         with self._lock:
-            lives = [live for live in self._live.values() if live.target.plugin_uuid == plugin_id]
+            lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.action.static]
         for live in lives:
             self._clear_placeholder(live.target.device_id, live.target.key_index)
             self._send_will_appear(live)
@@ -680,7 +687,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         with self._lock:
             self._drop_failure(plugin_id)
             self._failures.append(event)
-            lives = [live for live in self._live.values() if live.target.plugin_uuid == plugin_id]
+            lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.action.static]
         for live in lives:
             self._mark_failed(live)
         self._push("plugin_failed", {"plugin_id": plugin_id, "error": reason})
