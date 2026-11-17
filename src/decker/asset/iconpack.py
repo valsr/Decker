@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from decker.common.icon_ref import parse_icon_ref
 from decker.plugin.icons import MAX_ICON_BYTES
 from decker.plugin.loader import InstalledPlugin
 
@@ -18,6 +19,7 @@ _FailureCallback = Callable[[str, str], None]
 @dataclass(frozen=True)
 class _Pack:
     plugin_id: str
+    plugin_name: str
     name: str
     description: str
     root: Path
@@ -46,7 +48,7 @@ class IconPackRegistry:
                     self._on_failure(plugin_id, f"icon pack {spec.id}: {error}")
                 continue
             with self._lock:
-                self._packs[spec.id] = _Pack(plugin_id, spec.name, spec.description, root)
+                self._packs[spec.id] = _Pack(plugin_id, plugin.manifest.name, spec.name, spec.description, root)
 
     def unregister(self, plugin_id: str) -> None:
         """Drop every pack the plugin contributed."""
@@ -63,6 +65,7 @@ class IconPackRegistry:
                 "name": pack.name,
                 "description": pack.description,
                 "plugin_id": pack.plugin_id,
+                "plugin_name": pack.plugin_name,
                 "icon_count": len(self._icons_of(pack)),
             }
             for pack_id, pack in sorted(packs, key=lambda item: item[1].name)
@@ -93,6 +96,11 @@ class IconPackRegistry:
         except OSError as exc:
             logging.warning("Could not read icon %s: %s", path, exc)
             return None
+
+    def read_ref(self, ref: Any) -> bytes | None:
+        """Return the bytes of the icon a ``pack:<pack id>/<path>`` reference names, or None if it cannot be served."""
+        parsed = parse_icon_ref(ref)
+        return self.read_icon(*parsed) if parsed is not None else None
 
     def _pack(self, pack_id: str) -> _Pack | None:
         with self._lock:
