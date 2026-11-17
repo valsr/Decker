@@ -77,11 +77,13 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
     def show_placeholder(self) -> None:
         """Switch to the placeholder page."""
         self._loaded = None
+        self._preview.set_image(None)
         self.setCurrentIndex(_PAGE_PLACEHOLDER)
 
     def forget_loaded(self) -> None:
         """Treat the next values as a different key's, so edits made for the previous key are replaced."""
         self._loaded = None
+        self._preview.set_image(None)
 
     def show_action_config(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
