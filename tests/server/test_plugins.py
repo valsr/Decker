@@ -592,22 +592,47 @@ class TestIconOverride:
 
         assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
 
-    def test_plugin_image_beats_the_override(self, env, tmp_path):
+    def test_override_beats_an_image_the_plugin_set(self, env, tmp_path):
         _icon_env(env, tmp_path)
         _send_set_image(env, {"image": base64.b64encode(_RED_PNG).decode(), "format": "png"})
-        before = env.image()
 
         env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#00ff00"}})
 
-        assert_that(env.image()).is_equal_to(before)
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((0, 255, 0))
+        assert_that(_pixel(env.image(), 5, 5)).is_equal_to((31, 97, 141))  # no longer the plugin's full-bleed red
 
-    def test_plugin_icon_beats_the_override(self, env, tmp_path):
+    def test_override_beats_an_icon_the_plugin_set(self, env, tmp_path):
         _icon_env(env, tmp_path)
         _send_set_image(env, {"icon": _DOT_REF, "color": "#ff0000"})
 
         env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#00ff00"}})
 
-        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((255, 0, 0))
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((0, 255, 0))
+
+    def test_a_later_plugin_image_does_not_replace_the_override(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+        env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#00ff00"}})
+
+        _send_set_image(env, {"image": base64.b64encode(_RED_PNG).decode(), "format": "png"})
+
+        assert_that(_pixel(env.image(), 72, 72)).is_equal_to((0, 255, 0))
+
+    def test_clearing_the_override_brings_the_plugin_image_back(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+        _send_set_image(env, {"image": base64.b64encode(_RED_PNG).decode(), "format": "png"})
+        env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#00ff00"}})
+
+        env.manager.set_appearance(COUNTER_TARGET, {})
+
+        assert_that(_pixel(env.image(), 5, 5)).is_equal_to((255, 0, 0))
+
+    def test_an_unreadable_override_leaves_the_plugin_image(self, env, tmp_path):
+        _icon_env(env, tmp_path)
+        _send_set_image(env, {"image": base64.b64encode(_RED_PNG).decode(), "format": "png"})
+
+        env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": "pack:no.such/x.svg", "color": "#00ff00"}})
+
+        assert_that(_pixel(env.image(), 5, 5)).is_equal_to((255, 0, 0))
 
     def test_override_to_an_unknown_pack_falls_back_to_the_default(self, env, tmp_path):
         _icon_env(env, tmp_path)

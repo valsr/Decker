@@ -14,8 +14,9 @@ edited in the grid.
 - Left of the form: a live preview of the key (right click: **Set icon**, **Clear icon**; double click: icon picker).
 - Right of the preview, in order: Title row, Icon row (thumbnail, icon colour button when supported, `[x]` clear) and
   Background row on one line, **Save**. The action's own settings form follows below.
-- A per-key **icon override** replaces the action's static default icon (manifest icon or state image). Anything the plugin
-  draws through `set_image` still wins over it.
+- A per-key **icon override** replaces whatever the key would show: the manifest icon, a state image and anything the plugin
+  draws through `set_image` (changed after review: plugins such as Counter and Pages draw their own image, so a
+  static-only override never showed; Clear icon restores the plugin's image).
 - While the form differs from the last loaded/saved values the Save button is highlighted; saving (or loading another
   key) clears it. The server's echo of a save must not re-trigger it.
 - The key being edited is outlined in the button grid; the outline clears when the panel returns to the placeholder.
