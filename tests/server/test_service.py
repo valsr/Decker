@@ -540,10 +540,18 @@ class TestRepositoryRpcs:
         ctx.repository_store.icon.return_value = None
         assert_that(svc.repository_icon("x")).is_equal_to("")
         payload: dict[str, list] = {"updates": [], "missing": []}
-        ctx.update_checker.check_now.return_value.to_payload.return_value = payload
         ctx.update_checker.report.return_value.to_payload.return_value = payload
-        assert_that(svc.repositories_check()).is_equal_to(payload)
         assert_that(svc.plugin_updates()).is_equal_to(payload)
+
+    def test_repositories_check_returns_immediately(self, repo_service):
+        svc, ctx = repo_service
+        ctx.update_checker.check_async.return_value = True
+        assert_that(svc.repositories_check()).is_equal_to({"started": True})
+        ctx.update_checker.check_async.return_value = False
+        result = svc.repositories_check()
+        assert_that(result["started"]).is_false()
+        assert_that(result["reason"]).contains("already running")
+        ctx.update_checker.check_now.assert_not_called()
 
     def test_schedule(self, repo_service):
         svc, ctx = repo_service

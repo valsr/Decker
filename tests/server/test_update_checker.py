@@ -1,5 +1,7 @@
 import json
 import tempfile
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator, cast
@@ -13,7 +15,7 @@ from decker.plugin.target import ActionTarget
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
 from decker.server.repositories import FetchError, RepositoryStore
-from decker.server.update_checker import UpdateChecker
+from decker.server.update_checker import CHECK_FINISHED_EVENT, UpdateChecker
 
 DAY = 86400.0
 
@@ -210,3 +212,63 @@ def test_failed_check_does_not_mark_checked(env: Env) -> None:
 def test_future_last_check_is_due(env: Env) -> None:
     env.store.mark_checked(env.clock.now + 10 * DAY)
     assert_that(env.checker.check_if_due()).is_true()
+
+
+def _wait_for(predicate: Any, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_check_async_pushes_finished_event_with_repositories(env: Env) -> None:
+    env.publish({"com.t.a": [_version("2.0.0")]})
+    env.plugins.installed = {"com.t.a": "1.0.0"}
+    assert_that(env.checker.check_async()).is_true()
+    assert_that(_wait_for(lambda: any(name == CHECK_FINISHED_EVENT for name, _ in env.pushed))).is_true()
+    names = [name for name, _ in env.pushed]
+    assert_that(names).contains("plugin_updates_available")
+    assert_that(names.index("plugin_updates_available")).is_less_than(names.index(CHECK_FINISHED_EVENT))
+    payload = dict(env.pushed)[CHECK_FINISHED_EVENT]
+    assert_that(payload["repositories"]).is_length(1)
+    assert_that(payload["repositories"][0]["plugin_count"]).is_equal_to(1)
+    assert_that(env.store.last_check()).is_not_none()
+
+
+def test_check_async_refuses_while_running(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    release = threading.Event()
+    monkeypatch.setattr(env.store, "refresh_all", lambda: (release.wait(5), [])[1])
+    assert_that(env.checker.check_async()).is_true()
+    assert_that(env.checker.check_async()).is_false()
+    release.set()
+    assert_that(_wait_for(lambda: any(name == CHECK_FINISHED_EVENT for name, _ in env.pushed))).is_true()
+    assert_that(_wait_for(lambda: env.checker.check_async())).is_true()
+
+
+def test_failing_async_check_still_reports_finished(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(env.store, "refresh_all", MagicMock(side_effect=RuntimeError("boom")))
+    assert_that(env.checker.check_async()).is_true()
+    assert_that(_wait_for(lambda: any(name == CHECK_FINISHED_EVENT for name, _ in env.pushed))).is_true()
+
+
+def test_start_runs_an_overdue_check_without_waiting_an_hour(env: Env) -> None:
+    env.publish({"com.t.a": [_version("1.0.0")]})
+    env.store.mark_checked(env.clock.now - 30 * DAY)
+    env.checker.start()
+    try:
+        assert_that(_wait_for(lambda: (env.store.last_check() or 0) >= env.clock.now)).is_true()
+    finally:
+        env.checker.stop()
+
+
+def test_start_skips_check_that_is_not_due(env: Env) -> None:
+    env.publish({"com.t.a": [_version("1.0.0")]})
+    env.store.mark_checked(env.clock.now - 1)
+    env.checker.start()
+    try:
+        time.sleep(0.3)
+        assert_that(env.store.last_check()).is_equal_to(env.clock.now - 1)
+    finally:
+        env.checker.stop()

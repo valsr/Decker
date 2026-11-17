@@ -259,8 +259,8 @@ class ServerProcess:
         self._context.server = server
         DeckerService.configure_context(self._context)
         logging.info("RPyC server listening on %s:%d", self.host, self.port)
-        ctx.update_checker.start()
         try:
+            ctx.update_checker.start()
             server.start()
         finally:
             ctx.update_checker.stop()
