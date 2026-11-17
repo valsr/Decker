@@ -2,8 +2,18 @@ import json
 
 import pytest
 from assertpy import assert_that
-from PyQt6.QtCore import QByteArray, QEvent, QMimeData, QPointF, Qt
-from PyQt6.QtGui import QColor, QDropEvent, QEnterEvent, QFocusEvent, QPalette
+from PyQt6.QtCore import QByteArray, QEvent, QMimeData, QPoint, QPointF, Qt
+from PyQt6.QtGui import (
+    QColor,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QEnterEvent,
+    QFocusEvent,
+    QMouseEvent,
+    QPalette,
+)
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -451,3 +461,277 @@ class TestSelectedKey:
     def test_theme_outlines_the_selected_key(self, qapp):  # pylint: disable=unused-argument
         stylesheet = render_stylesheet(next(iter(BUNDLED.values())))
         assert_that(stylesheet).contains('KeyButtonWidget[selected="true"]')
+
+
+_KEY_MIME = "application/x-decker-key"
+_GREEN = (46, 204, 113)
+
+
+def _key_drop(source: int, modifiers=Qt.KeyboardModifier.NoModifier, payload: bytes | None = None) -> QDropEvent:
+    mime = QMimeData()
+    mime.setData(_KEY_MIME, QByteArray(payload if payload is not None else json.dumps({"key_index": source}).encode()))
+    event = QDropEvent(QPointF(5, 5), Qt.DropAction.MoveAction, mime, Qt.MouseButton.LeftButton, modifiers)
+    event.keep_alive = mime  # type: ignore[attr-defined]  # the event only borrows the mime data
+    return event
+
+
+def _drag_move(widget, modifiers=Qt.KeyboardModifier.NoModifier, mime_type: str = _KEY_MIME) -> None:
+    mime = QMimeData()
+    mime.setData(mime_type, QByteArray(b"{}"))
+    event = QDragMoveEvent(QPoint(5, 5), Qt.DropAction.MoveAction, mime, Qt.MouseButton.LeftButton, modifiers)
+    event.keep_alive = mime  # type: ignore[attr-defined]
+    widget.dragMoveEvent(event)
+
+
+def _badge_ink(badge) -> list[tuple[int, int, int]]:
+    pixmap = badge.pixmap()
+    assert pixmap is not None
+    image = pixmap.toImage()
+    return [
+        (c.red(), c.green(), c.blue())
+        for y in range(image.height())
+        for x in range(image.width())
+        if (c := image.pixelColor(x, y)).alpha() > 200
+    ]
+
+
+class TestDragSource:  # pylint: disable=protected-access,unused-argument
+    @pytest.fixture(autouse=True)
+    def _capture_drags(self, monkeypatch):
+        self.drags: list = []
+        monkeypatch.setattr(button_grid_module, "_exec_drag", self.drags.append)
+
+    @staticmethod
+    def _press_and_move(button, distance: int) -> None:
+        QTest.mousePress(button, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(10, 40))  # type: ignore[call-overload]
+        move = QMouseEvent(
+            QEvent.Type.MouseMove,
+            QPointF(10 + distance, 40),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        QApplication.sendEvent(button, move)
+
+    def test_moving_past_the_drag_distance_starts_a_drag_with_the_key_payload(self, qapp):
+        button = _key(5)
+        button.set_draggable(True)
+
+        self._press_and_move(button, QApplication.startDragDistance() + 5)
+
+        assert_that(self.drags).is_length(1)
+        mime = self.drags[0].mimeData()
+        assert_that(mime.hasFormat(_KEY_MIME)).is_true()
+        assert_that(json.loads(bytes(mime.data(_KEY_MIME)).decode())).is_equal_to({"key_index": 5})
+        assert_that(self.drags[0].pixmap().isNull()).is_false()
+
+    def test_a_short_move_is_still_a_click(self, qapp):
+        button = _key(5)
+        button.set_draggable(True)
+        edits: list[int] = []
+        button.edit_clicked.connect(edits.append)
+
+        self._press_and_move(button, 1)
+        QTest.mouseRelease(button, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(11, 40))  # type: ignore[call-overload]
+
+        assert_that(self.drags).is_empty()
+        assert_that(edits).is_equal_to([5])
+
+    def test_a_key_that_is_not_draggable_never_drags(self, qapp):
+        button = _key(5)
+
+        self._press_and_move(button, 50)
+
+        assert_that(self.drags).is_empty()
+
+    def test_a_drag_does_not_also_select_on_release(self, qapp):
+        button = _key(5)
+        button.set_draggable(True)
+        edits: list[int] = []
+        button.edit_clicked.connect(edits.append)
+
+        self._press_and_move(button, 50)
+        QTest.mouseRelease(button, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(60, 40))  # type: ignore[call-overload]
+
+        assert_that(self.drags).is_length(1)
+        assert_that(edits).is_empty()
+
+    def test_only_one_drag_starts_per_press(self, qapp):
+        button = _key(5)
+        button.set_draggable(True)
+
+        self._press_and_move(button, 50)
+        QApplication.sendEvent(
+            button,
+            QMouseEvent(
+                QEvent.Type.MouseMove,
+                QPointF(80, 40),
+                Qt.MouseButton.NoButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            ),
+        )
+
+        assert_that(self.drags).is_length(1)
+
+
+class TestKeyDropTarget:  # pylint: disable=protected-access,unused-argument
+    def test_a_key_drop_emits_the_source_target_and_no_copy(self, qapp):
+        button = _key(7)
+        dropped: list[tuple[int, int, bool]] = []
+        button.key_dropped.connect(lambda a, b, c: dropped.append((a, b, c)))
+
+        button.dropEvent(_key_drop(2))
+
+        assert_that(dropped).is_equal_to([(2, 7, False)])
+
+    def test_ctrl_makes_it_a_copy(self, qapp):
+        button = _key(7)
+        dropped: list[tuple[int, int, bool]] = []
+        button.key_dropped.connect(lambda a, b, c: dropped.append((a, b, c)))
+
+        button.dropEvent(_key_drop(2, Qt.KeyboardModifier.ControlModifier))
+
+        assert_that(dropped).is_equal_to([(2, 7, True)])
+
+    def test_dropping_a_key_on_itself_does_nothing(self, qapp):
+        button = _key(7)
+        dropped: list[tuple[int, int, bool]] = []
+        button.key_dropped.connect(lambda a, b, c: dropped.append((a, b, c)))
+
+        button.dropEvent(_key_drop(7))
+
+        assert_that(dropped).is_empty()
+
+    @pytest.mark.parametrize(
+        "payload",
+        [b"not json", b"{}", b'{"key_index": "2"}', b'{"key_index": true}', b'{"key_index": 1.5}', b"[2]", b"\xff"],
+    )
+    def test_garbage_payloads_emit_nothing(self, qapp, payload):
+        button = _key(7)
+        dropped: list[tuple[int, int, bool]] = []
+        button.key_dropped.connect(lambda a, b, c: dropped.append((a, b, c)))
+
+        button.dropEvent(_key_drop(2, payload=payload))
+
+        assert_that(dropped).is_empty()
+
+    def test_action_drops_still_work(self, qapp):
+        button = _key(4)
+        dropped: list[tuple[int, object]] = []
+        button.action_dropped.connect(lambda i, d: dropped.append((i, d)))
+        mime = QMimeData()
+        mime.setData("application/x-decker-action", QByteArray(json.dumps({"plugin_uuid": "p"}).encode()))
+
+        button.dropEvent(
+            QDropEvent(
+                QPointF(5, 5), Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+            )
+        )
+
+        assert_that(dropped).is_equal_to([(4, {"plugin_uuid": "p"})])
+
+    def test_a_key_drag_is_accepted_on_enter(self, qapp):
+        button = _key(7)
+        mime = QMimeData()
+        mime.setData(_KEY_MIME, QByteArray(b"{}"))
+        event = QDragEnterEvent(
+            QPoint(5, 5), Qt.DropAction.MoveAction, mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+        )
+        event.keep_alive = mime  # type: ignore[attr-defined]
+
+        button.dragEnterEvent(event)
+
+        assert_that(event.isAccepted()).is_true()
+
+
+class TestCopyBadge:  # pylint: disable=protected-access,unused-argument
+    def test_the_badge_is_hidden_until_a_ctrl_drag_is_over_the_key(self, qapp):
+        button = _key(7)
+        button.show()
+
+        assert_that(button._copy_badge.isVisible()).is_false()
+
+    def test_ctrl_drag_over_shows_the_badge_bottom_left(self, qapp):
+        button = _key(7)
+        button.show()
+
+        _drag_move(button, Qt.KeyboardModifier.ControlModifier)
+
+        badge = button._copy_badge
+        assert_that(badge.isVisible()).is_true()
+        geometry = badge.geometry()
+        assert_that(geometry.left()).is_equal_to(4)
+        assert_that(button.height() - geometry.bottom() - 1).is_equal_to(4)
+        assert_that((geometry.width(), geometry.height())).is_equal_to((30, 30))
+
+    def test_releasing_ctrl_hides_it_and_pressing_it_again_shows_it(self, qapp):
+        button = _key(7)
+        button.show()
+
+        _drag_move(button, Qt.KeyboardModifier.ControlModifier)
+        _drag_move(button)
+        assert_that(button._copy_badge.isVisible()).is_false()
+        _drag_move(button, Qt.KeyboardModifier.ControlModifier)
+
+        assert_that(button._copy_badge.isVisible()).is_true()
+
+    def test_leaving_and_dropping_hide_it(self, qapp):
+        button = _key(7)
+        button.show()
+        _drag_move(button, Qt.KeyboardModifier.ControlModifier)
+        button.dragLeaveEvent(QDragLeaveEvent())
+        assert_that(button._copy_badge.isVisible()).is_false()
+
+        _drag_move(button, Qt.KeyboardModifier.ControlModifier)
+        button.dropEvent(_key_drop(2, Qt.KeyboardModifier.ControlModifier))
+        assert_that(button._copy_badge.isVisible()).is_false()
+
+    def test_an_action_drag_with_ctrl_shows_no_badge(self, qapp):
+        button = _key(7)
+        button.show()
+
+        _drag_move(button, Qt.KeyboardModifier.ControlModifier, "application/x-decker-action")
+
+        assert_that(button._copy_badge.isVisible()).is_false()
+
+    def test_the_badge_is_the_green_plus_circle_and_ignores_the_mouse(self, qapp):
+        badge = _key(7)._copy_badge
+
+        ink = _badge_ink(badge)
+
+        assert_that(ink).is_not_empty()
+        assert_that(all(max(abs(a - b) for a, b in zip(pixel, _GREEN)) <= 4 for pixel in ink)).is_true()
+        assert_that(badge.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)).is_true()
+        assert_that(button_grid_module._PLUS_ICON.name).is_equal_to("plus-circle.svg")
+
+
+class TestGridDragWiring:  # pylint: disable=protected-access,unused-argument
+    def test_set_draggable_keys_marks_exactly_those_keys(self, qapp):
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(6))
+
+        grid.set_draggable_keys({1, 4})
+
+        assert_that([i for i, b in grid._buttons.items() if b._draggable]).is_equal_to([1, 4])
+        grid.set_draggable_keys(set())
+        assert_that([i for i, b in grid._buttons.items() if b._draggable]).is_empty()
+
+    def test_the_draggable_set_survives_a_rebuild(self, qapp):
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(6))
+        grid.set_draggable_keys({2})
+
+        grid.build(_make_keys(6))
+
+        assert_that([i for i, b in grid._buttons.items() if b._draggable]).is_equal_to([2])
+
+    def test_a_key_drop_is_forwarded_as_key_moved(self, qapp):
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(6))
+        moved: list[tuple[int, int, bool]] = []
+        grid.key_moved.connect(lambda a, b, c: moved.append((a, b, c)))
+
+        grid._buttons[3].dropEvent(_key_drop(1, Qt.KeyboardModifier.ControlModifier))
+
+        assert_that(moved).is_equal_to([(1, 3, True)])

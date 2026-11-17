@@ -2,11 +2,22 @@
 
 import base64
 import json
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QByteArray, QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import (
+    QByteArray,
+    QEvent,
+    QMimeData,
+    QPoint,
+    QSize,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtGui import (
+    QDrag,
     QEnterEvent,
     QFocusEvent,
     QIcon,
@@ -15,7 +26,15 @@ from PyQt6.QtGui import (
     QPixmap,
     QResizeEvent,
 )
-from PyQt6.QtWidgets import QGridLayout, QPushButton, QToolButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QGridLayout,
+    QLabel,
+    QPushButton,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from decker.client.action_icons import decode_icon
 from decker.common.model import KeyInfo
@@ -26,6 +45,29 @@ _RUN_ICON_PX = 21  # px, the play-circle drawing inside its 30 px button
 _PLAY_ICON = Path(__file__).resolve().parents[2] / "assets" / "play-circle.svg"
 _RUN_MARGIN = 4  # px from the key's top-right corner
 _MIME_TYPE = "application/x-decker-action"
+_KEY_MIME_TYPE = "application/x-decker-key"
+_PLUS_ICON = Path(__file__).resolve().parents[2] / "assets" / "plus-circle.svg"
+_BADGE_COLOR = "#2ecc71"  # the copy badge's green
+_BADGE_SIZE = 30  # px, the label holding the badge
+
+
+def _exec_drag(drag: QDrag) -> None:
+    """Run a drag (a seam the tests replace; a real drag blocks until the drop)."""
+    drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction, Qt.DropAction.MoveAction)
+
+
+def _badge_pixmap() -> QPixmap:
+    """The green plus-circle (blank if the SVG is unusable)."""
+    try:
+        raw = _PLUS_ICON.read_bytes()
+    except OSError:
+        return QPixmap()
+    pixmap = decode_icon(base64.b64encode(raw).decode("ascii"), _BADGE_COLOR)
+    if pixmap is None:
+        return QPixmap()
+    return pixmap.scaled(
+        _RUN_ICON_PX, _RUN_ICON_PX, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+    )
 
 
 def _play_icon(color: str) -> QIcon | None:
@@ -84,6 +126,7 @@ class KeyButtonWidget(QPushButton):
     long_pressed = pyqtSignal(int)
     edit_clicked = pyqtSignal(int)
     run_clicked = pyqtSignal(int)
+    key_dropped = pyqtSignal(int, int, bool)  # from index, to index (this key), copy
 
     def __init__(self, index: int, key_info: KeyInfo) -> None:
         super().__init__()
@@ -95,6 +138,9 @@ class KeyButtonWidget(QPushButton):
         self.setAcceptDrops(True)
         self.clicked.connect(lambda _checked=False: self.edit_clicked.emit(self.index))
         self._run_button = self._build_run_button()
+        self._draggable = False
+        self._drag_start: QPoint | None = None
+        self._copy_badge = self._build_copy_badge()
         self.setProperty("selected", False)
 
     def set_selected(self, selected: bool) -> None:
@@ -103,6 +149,21 @@ class KeyButtonWidget(QPushButton):
         if (style := self.style()) is not None:
             style.unpolish(self)
             style.polish(self)
+
+    def _build_copy_badge(self) -> QLabel:
+        badge = QLabel(self)
+        badge.setObjectName("keyCopyBadge")
+        badge.setPixmap(_badge_pixmap())
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setFixedSize(_BADGE_SIZE, _BADGE_SIZE)
+        badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        badge.move(_RUN_MARGIN, self.height() - _BADGE_SIZE - _RUN_MARGIN)
+        badge.hide()
+        return badge
+
+    def set_draggable(self, draggable: bool) -> None:
+        """Whether this key can be dragged (keys with an action can; empty ones cannot)."""
+        self._draggable = draggable
 
     def _build_run_button(self) -> _RunButton:
         button = _RunButton(self)
@@ -143,6 +204,7 @@ class KeyButtonWidget(QPushButton):
         """Keep the play button in the top-right corner."""
         super().resizeEvent(a0)
         self._run_button.move(self._run_position())
+        self._copy_badge.move(_RUN_MARGIN, self.height() - _BADGE_SIZE - _RUN_MARGIN)
 
     def enterEvent(self, event: QEnterEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
         """Show the play button while the pointer is over the key."""
@@ -196,21 +258,102 @@ class KeyButtonWidget(QPushButton):
         self.setText("")
 
     # ------------------------------------------------------------------
+    # Drag source
+    # ------------------------------------------------------------------
+
+    def mousePressEvent(self, e: QMouseEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Remember where a left press began, so a move can become a drag."""
+        if e is not None and e.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = e.position().toPoint()
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e: QMouseEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Start dragging this key once the pointer has moved past the platform's drag distance."""
+        start = self._drag_start
+        if (
+            e is not None
+            and start is not None
+            and self._draggable
+            and e.buttons() & Qt.MouseButton.LeftButton
+            and (e.position().toPoint() - start).manhattanLength() >= QApplication.startDragDistance()
+        ):
+            self._drag_start = None
+            self._start_drag()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e: QMouseEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """End a press; a drag in progress has already cancelled the click."""
+        self._drag_start = None
+        super().mouseReleaseEvent(e)
+
+    def _start_drag(self) -> None:
+        mime = QMimeData()
+        mime.setData(_KEY_MIME_TYPE, QByteArray(json.dumps({"key_index": self.index}).encode()))
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.setPixmap(self.grab())
+        drag.setHotSpot(QPoint(self.width() // 2, self.height() // 2))
+        self.setDown(False)  # the release that ends the drag must not click the key
+        _exec_drag(drag)
+        self.setDown(False)
+
+    # ------------------------------------------------------------------
     # Drag-and-drop target
     # ------------------------------------------------------------------
 
-    def dragEnterEvent(self, a0: Any) -> None:
-        if a0.mimeData().hasFormat(_MIME_TYPE):
+    def dragEnterEvent(self, a0: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Accept action drops and key drags."""
+        mime = a0.mimeData()
+        if mime.hasFormat(_MIME_TYPE) or mime.hasFormat(_KEY_MIME_TYPE):
             a0.acceptProposedAction()
+            self._show_copy_badge(a0)
 
-    def dropEvent(self, a0: Any) -> None:
-        raw: bytes = bytes(a0.mimeData().data(_MIME_TYPE))
+    def dragMoveEvent(self, a0: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Show the copy badge while Ctrl is held over a key drag."""
+        mime = a0.mimeData()
+        if mime.hasFormat(_MIME_TYPE) or mime.hasFormat(_KEY_MIME_TYPE):
+            a0.acceptProposedAction()
+            self._show_copy_badge(a0)
+
+    def dragLeaveEvent(self, a0: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Hide the copy badge when the drag leaves."""
+        self._copy_badge.hide()
+        super().dragLeaveEvent(a0)
+
+    def dropEvent(self, a0: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Assign a dropped action, or move/copy a dropped key onto this one."""
+        self._copy_badge.hide()
+        mime = a0.mimeData()
+        if mime.hasFormat(_KEY_MIME_TYPE):
+            self._drop_key(a0)
+            return
+        raw: bytes = bytes(mime.data(_MIME_TYPE))
         try:
             data: dict[str, Any] = json.loads(raw.decode())
         except (ValueError, UnicodeDecodeError):
             return
         self.action_dropped.emit(self.index, data)
         a0.acceptProposedAction()
+
+    def _drop_key(self, event: Any) -> None:
+        try:
+            source = json.loads(bytes(event.mimeData().data(_KEY_MIME_TYPE)).decode()).get("key_index")
+        except (ValueError, UnicodeDecodeError, AttributeError):
+            return
+        if isinstance(source, bool) or not isinstance(source, int) or source == self.index:
+            return
+        copy = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        event.setDropAction(Qt.DropAction.CopyAction if copy else Qt.DropAction.MoveAction)
+        event.accept()
+        self.key_dropped.emit(source, self.index, copy)
+
+    def _show_copy_badge(self, event: Any) -> None:
+        is_key = event.mimeData().hasFormat(_KEY_MIME_TYPE)
+        copy = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        self._copy_badge.setVisible(is_key and copy)
+        if self._copy_badge.isVisible():
+            self._copy_badge.raise_()
 
     # ------------------------------------------------------------------
     # Private
@@ -227,9 +370,11 @@ class ButtonGridWidget(QWidget):
     key_edit_requested = pyqtSignal(int)
     key_long_pressed = pyqtSignal(int)
     action_dropped = pyqtSignal(int, object)
+    key_moved = pyqtSignal(int, int, bool)  # from index, to index, copy
 
     def __init__(self) -> None:
         super().__init__()
+        self._draggable: frozenset[int] = frozenset()
         self._grid_layout = QGridLayout()
         self._grid_layout.setSpacing(4)
         self._key_info: list[KeyInfo] = []
@@ -261,8 +406,16 @@ class ButtonGridWidget(QWidget):
             button.edit_clicked.connect(self.key_edit_requested.emit)
             button.long_pressed.connect(self.key_long_pressed.emit)
             button.action_dropped.connect(self.action_dropped.emit)
+            button.key_dropped.connect(self.key_moved.emit)
+            button.set_draggable(index in self._draggable)
             self._grid_layout.addWidget(button, row, col)
             self._buttons[index] = button
+
+    def set_draggable_keys(self, indexes: Collection[int]) -> None:
+        """Make exactly these keys draggable (remembered across rebuilds)."""
+        self._draggable = frozenset(indexes)
+        for index, button in self._buttons.items():
+            button.set_draggable(index in self._draggable)
 
     def set_selected(self, key_index: int | None) -> None:
         """Outline the key being edited; None (or an unknown index) outlines nothing."""
