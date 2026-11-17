@@ -1,5 +1,6 @@
 from typing import Any
 
+import pytest
 from assertpy import assert_that
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -305,8 +306,12 @@ class TestChangedEmitsOncePerEdit:  # pylint: disable=protected-access
     def test_a_font_change_emits_once(self, qapp):  # pylint: disable=unused-argument
         form = _form([{"key": "f", "type": "font"}])
         combo = form._fields["f"].widget
+        if combo.count() < 2:  # type: ignore[attr-defined]
+            pytest.skip("this machine has a single font, so there is nothing to change to")
 
-        assert_that(self._count(form, lambda: combo.setCurrentIndex(1))).is_equal_to(1)  # type: ignore[attr-defined]
+        other = 0 if combo.currentIndex() != 0 else 1  # type: ignore[attr-defined]
+
+        assert_that(self._count(form, lambda: combo.setCurrentIndex(other))).is_equal_to(1)  # type: ignore[attr-defined]
 
     def test_a_title_style_change_emits_once(self, qapp):  # pylint: disable=unused-argument
         form = AppearanceForm()
