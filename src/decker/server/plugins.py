@@ -15,6 +15,8 @@ from decker.asset.iconpack import IconPackRegistry
 from decker.asset.renderer import AssetRenderer
 from decker.common import config
 from decker.common.manager import Manager
+from decker.common.model import PageInfo
+from decker.common.template import expand_template
 from decker.common.text_style import is_color
 from decker.common.version import decker_version
 from decker.plugin.environment import stage_sdk
@@ -40,6 +42,12 @@ from decker.server.appearance import (
     resolve_appearance,
 )
 from decker.server.contributions import ContributionRegistry
+from decker.server.page_vars import (
+    deliver_settings,
+    has_dynamic_fields,
+    page_variables,
+    stored_page_ids,
+)
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
@@ -132,6 +140,7 @@ class _Live:  # pylint: disable=too-many-instance-attributes
     plugin_image_color: str | None = None
     plugin_title: str = ""
     state: int = 0
+    delivered: dict[str, Any] = field(default_factory=dict)
 
 
 def _gestures_from(names: Any) -> frozenset[Gesture]:
@@ -159,6 +168,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._sdk_path: Path | None = None
         self._device_manager: Any = None
         self._event_bus: Any = None
+        self._page_controller: Any = None
+        self._page_store: Any = None
         self._icon_cache: dict[tuple[Path, str | None], str] = {}
         self._hellos: dict[str, dict[str, Any]] = {}
         self._sink: _StreamDeckHardwareSink = _StreamDeckHardwareSink(None, self._set_key_label)
@@ -175,6 +186,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Wire up the device manager, then scan plugins and start the supervisor."""
         self._device_manager = context.device_manager
         self._event_bus = context.event_bus
+        self._page_controller = getattr(context, "page_controller", None)
+        self._page_store = getattr(context, "page_store", None)
         self._sink = _StreamDeckHardwareSink(self._device_manager, self._set_key_label)
         self._state_changed_cb = self._make_state_changed_cb(context)
         self.settings_persister = self._make_settings_persister(context)
@@ -443,7 +456,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             return
         stored = self._settings_store.get_settings(target.plugin_uuid, target.action_uuid, target.context_id)
         live.settings = apply_schema(live.action.settings, stored)
-        self._send_context(live, "settings_changed", {"settings": live.settings})
+        self._send_context(live, "settings_changed", {"settings": self._delivery(live)})
 
     # ------------------------------------------------------------------
     # Server -> plugin helpers
@@ -479,12 +492,74 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             image = read_icon(plugin.plugin_dir, state.image) if plugin is not None else None
         title = plugin_title or (state.title if state is not None and state.title else "")
         return compose_key_image(
-            resolve_appearance(spec.appearance, stored),
+            self._expanded_appearance(live.target.device_id, resolve_appearance(spec.appearance, stored)),
             image,
             title,
             plugin_image_color=image_color,
             plugin_image_scale=PACK_ICON_SCALE if icon_ref is not None else 1.0,
         )
+
+    # ------------------------------------------------------------------
+    # Page variables and settings delivery
+    # ------------------------------------------------------------------
+
+    def _device_pages(self, device_id: str) -> tuple[list[PageInfo], str]:
+        if self._page_store is None or self._page_controller is None:
+            return [], ""
+        try:
+            return list(self._page_store.list_pages(device_id)), str(self._page_controller.active_page_id(device_id))
+        except Exception:  # pylint: disable=broad-except
+            logging.debug("Pages unavailable for %s", device_id, exc_info=True)
+            return [], ""
+
+    def page_variables(self, device_id: str) -> dict[str, str]:
+        """Template variables for the page shown on the device (empty when pages are unavailable)."""
+        pages, active = self._device_pages(device_id)
+        return page_variables(pages, active)
+
+    def delivered_settings(self, live: _Live) -> dict[str, Any]:
+        """The settings a plugin receives: opted-in text expanded and page ids resolved; stored values stay raw."""
+        pages, active = self._device_pages(live.target.device_id)
+        return deliver_settings(live.action.settings, live.settings, page_variables(pages, active), pages)
+
+    def _delivery(self, live: _Live) -> dict[str, Any]:
+        delivered = self.delivered_settings(live)
+        live.delivered = delivered
+        return delivered
+
+    def _expanded_appearance(self, device_id: str, appearance: dict[str, Any]) -> dict[str, Any]:
+        variables = self.page_variables(device_id)
+        title = appearance.get("title")
+        if variables and isinstance(title, dict) and isinstance(title.get("text"), str):
+            return {**appearance, "title": {**title, "text": expand_template(title["text"], variables)}}
+        return appearance
+
+    def refresh_page_dependent(self, device_id: str) -> None:
+        """Redraw and re-notify the device's keys whose title or settings depend on its pages."""
+        with self._lock:
+            lives = [live for live in self._live.values() if live.target.device_id == device_id]
+        for live in lives:
+            try:
+                self._refresh_live(live)
+            except Exception:  # pylint: disable=broad-except
+                logging.warning("Refreshing key %s after a page change failed", live.target.context_id, exc_info=True)
+
+    def _refresh_live(self, live: _Live) -> None:
+        with self._lock:
+            title = resolve_appearance(live.action.appearance, live.appearance).get("title", {})
+        if "{" in str(title.get("text", "")):
+            self._recompose(live)
+        plugin_id = live.target.plugin_uuid
+        if (
+            live.action.static
+            or not has_dynamic_fields(live.action.settings)
+            or not self._supervisor.is_ready(plugin_id)
+        ):
+            return
+        delivered = self.delivered_settings(live)
+        if delivered != live.delivered:
+            live.delivered = delivered
+            self._send_context(live, "settings_changed", {"settings": delivered})
 
     def _notify_state(self, device_id: str, key_index: int) -> None:
         callback = self._state_changed_cb
@@ -505,7 +580,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             "action": target.action_uuid,
             "device": target.device_id,
             "key": {"index": target.key_index, "column": column, "row": row},
-            "settings": live.settings,
+            "settings": self._delivery(live),
             "state": live.state,
         }
         self._supervisor.send(target.plugin_uuid, Message("will_appear", target.context_id, payload))
@@ -647,8 +722,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if not isinstance(raw, dict):
             logging.warning("[%s] set_settings without a settings object dropped", live.target.plugin_uuid)
             return
-        settings = apply_schema(live.action.settings, raw)
+        merged = {**live.settings, **stored_page_ids(live.action.settings, raw)}
+        settings = apply_schema(live.action.settings, merged)
         live.settings = settings
+        live.delivered = self.delivered_settings(live)
         self.store_settings(live.target, settings)
         if self.settings_persister is not None:
             self.settings_persister(live.target, settings)
