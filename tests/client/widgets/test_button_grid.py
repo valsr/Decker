@@ -467,9 +467,12 @@ _KEY_MIME = "application/x-decker-key"
 _GREEN = (46, 204, 113)
 
 
-def _key_drop(source: int, modifiers=Qt.KeyboardModifier.NoModifier, payload: bytes | None = None) -> QDropEvent:
+def _key_drop(
+    source: int, modifiers=Qt.KeyboardModifier.NoModifier, payload: bytes | None = None, scope: str = ""
+) -> QDropEvent:
     mime = QMimeData()
-    mime.setData(_KEY_MIME, QByteArray(payload if payload is not None else json.dumps({"key_index": source}).encode()))
+    body = json.dumps({"key_index": source, "scope": scope}).encode()
+    mime.setData(_KEY_MIME, QByteArray(payload if payload is not None else body))
     event = QDropEvent(QPointF(5, 5), Qt.DropAction.MoveAction, mime, Qt.MouseButton.LeftButton, modifiers)
     event.keep_alive = mime  # type: ignore[attr-defined]  # the event only borrows the mime data
     return event
@@ -522,7 +525,7 @@ class TestDragSource:  # pylint: disable=protected-access,unused-argument
         assert_that(self.drags).is_length(1)
         mime = self.drags[0].mimeData()
         assert_that(mime.hasFormat(_KEY_MIME)).is_true()
-        assert_that(json.loads(bytes(mime.data(_KEY_MIME)).decode())).is_equal_to({"key_index": 5})
+        assert_that(json.loads(bytes(mime.data(_KEY_MIME)).decode())).is_equal_to({"key_index": 5, "scope": ""})
         assert_that(self.drags[0].pixmap().isNull()).is_false()
 
     def test_a_short_move_is_still_a_click(self, qapp):
@@ -735,3 +738,88 @@ class TestGridDragWiring:  # pylint: disable=protected-access,unused-argument
         grid._buttons[3].dropEvent(_key_drop(1, Qt.KeyboardModifier.ControlModifier))
 
         assert_that(moved).is_equal_to([(1, 3, True)])
+
+
+class TestDragScope:  # pylint: disable=protected-access,unused-argument
+    @pytest.fixture(autouse=True)
+    def _capture_drags(self, monkeypatch):
+        self.drags: list = []
+        monkeypatch.setattr(button_grid_module, "_exec_drag", self.drags.append)
+
+    def test_the_drag_payload_carries_the_scope(self, qapp):
+        button = _key(5)
+        button.set_draggable(True)
+        button.set_scope("dev1/p1")
+
+        TestDragSource._press_and_move(button, 50)
+
+        payload = json.loads(bytes(self.drags[0].mimeData().data(_KEY_MIME)).decode())
+        assert_that(payload).is_equal_to({"key_index": 5, "scope": "dev1/p1"})
+
+    def test_a_drop_from_another_scope_is_ignored(self, qapp):
+        button = _key(7)
+        button.set_scope("dev1/p2")
+        dropped: list[tuple[int, int, bool]] = []
+        button.key_dropped.connect(lambda a, b, c: dropped.append((a, b, c)))
+
+        button.dropEvent(_key_drop(2, scope="dev1/p1"))
+
+        assert_that(dropped).is_empty()
+
+    def test_a_drop_from_the_same_scope_goes_through(self, qapp):
+        button = _key(7)
+        button.set_scope("dev1/p1")
+        dropped: list[tuple[int, int, bool]] = []
+        button.key_dropped.connect(lambda a, b, c: dropped.append((a, b, c)))
+
+        button.dropEvent(_key_drop(2, scope="dev1/p1"))
+
+        assert_that(dropped).is_equal_to([(2, 7, False)])
+
+    def test_the_grid_applies_its_scope_to_every_key_and_across_rebuilds(self, qapp):
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(4))
+
+        grid.set_drag_scope("dev1/p1")
+        assert_that({b._scope for b in grid._buttons.values()}).is_equal_to({"dev1/p1"})
+        grid.build(_make_keys(4))
+
+        assert_that({b._scope for b in grid._buttons.values()}).is_equal_to({"dev1/p1"})
+
+
+class TestDragEndsThePress:  # pylint: disable=protected-access,unused-argument
+    def test_moves_and_the_release_after_a_drag_do_not_select(self, qapp, monkeypatch):
+        monkeypatch.setattr(button_grid_module, "_exec_drag", lambda _drag: None)
+        button = _key(5)
+        button.set_draggable(True)
+        edits: list[int] = []
+        button.edit_clicked.connect(edits.append)
+
+        TestDragSource._press_and_move(button, 50)
+        QApplication.sendEvent(
+            button,
+            QMouseEvent(
+                QEvent.Type.MouseMove,
+                QPointF(20, 40),
+                Qt.MouseButton.NoButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            ),
+        )
+        QTest.mouseRelease(button, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(20, 40))  # type: ignore[call-overload]
+
+        assert_that(edits).is_empty()
+        assert_that(button.isDown()).is_false()
+
+    def test_the_next_press_clicks_normally_again(self, qapp, monkeypatch):
+        monkeypatch.setattr(button_grid_module, "_exec_drag", lambda _drag: None)
+        button = _key(5)
+        button.set_draggable(True)
+        edits: list[int] = []
+        button.edit_clicked.connect(edits.append)
+        TestDragSource._press_and_move(button, 50)
+        QTest.mouseRelease(button, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(60, 40))  # type: ignore[call-overload]
+
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(10, 40))  # type: ignore[call-overload]
+
+        assert_that(edits).is_equal_to([5])

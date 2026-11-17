@@ -140,6 +140,8 @@ class KeyButtonWidget(QPushButton):
         self._run_button = self._build_run_button()
         self._draggable = False
         self._drag_start: QPoint | None = None
+        self._dragged = False  # a drag began during this press, so its remaining moves and release are not clicks
+        self._scope = ""
         self._copy_badge = self._build_copy_badge()
         self.setProperty("selected", False)
 
@@ -160,6 +162,10 @@ class KeyButtonWidget(QPushButton):
         badge.move(_RUN_MARGIN, self.height() - _BADGE_SIZE - _RUN_MARGIN)
         badge.hide()
         return badge
+
+    def set_scope(self, scope: str) -> None:
+        """Tag drags from this key with the device and page they belong to; drops from another scope are ignored."""
+        self._scope = scope
 
     def set_draggable(self, draggable: bool) -> None:
         """Whether this key can be dragged (keys with an action can; empty ones cannot)."""
@@ -263,12 +269,15 @@ class KeyButtonWidget(QPushButton):
 
     def mousePressEvent(self, e: QMouseEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
         """Remember where a left press began, so a move can become a drag."""
+        self._dragged = False
         if e is not None and e.button() == Qt.MouseButton.LeftButton:
             self._drag_start = e.position().toPoint()
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e: QMouseEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
         """Start dragging this key once the pointer has moved past the platform's drag distance."""
+        if self._dragged:
+            return
         start = self._drag_start
         if (
             e is not None
@@ -283,17 +292,23 @@ class KeyButtonWidget(QPushButton):
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e: QMouseEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """End a press; a drag in progress has already cancelled the click."""
+        """End a press; the release that ends a drag is not a click."""
         self._drag_start = None
+        if self._dragged:
+            self._dragged = False
+            self.setDown(False)
+            return
         super().mouseReleaseEvent(e)
 
     def _start_drag(self) -> None:
         mime = QMimeData()
-        mime.setData(_KEY_MIME_TYPE, QByteArray(json.dumps({"key_index": self.index}).encode()))
+        payload = {"key_index": self.index, "scope": self._scope}
+        mime.setData(_KEY_MIME_TYPE, QByteArray(json.dumps(payload).encode()))
         drag = QDrag(self)
         drag.setMimeData(mime)
         drag.setPixmap(self.grab())
         drag.setHotSpot(QPoint(self.width() // 2, self.height() // 2))
+        self._dragged = True
         self.setDown(False)  # the release that ends the drag must not click the key
         _exec_drag(drag)
         self.setDown(False)
@@ -338,9 +353,12 @@ class KeyButtonWidget(QPushButton):
 
     def _drop_key(self, event: Any) -> None:
         try:
-            source = json.loads(bytes(event.mimeData().data(_KEY_MIME_TYPE)).decode()).get("key_index")
+            payload = json.loads(bytes(event.mimeData().data(_KEY_MIME_TYPE)).decode())
+            source, scope = payload.get("key_index"), payload.get("scope", "")
         except (ValueError, UnicodeDecodeError, AttributeError):
             return
+        if scope != self._scope:
+            return  # dragged from another page or device (the page may have changed mid-drag)
         if isinstance(source, bool) or not isinstance(source, int) or source == self.index:
             return
         copy = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
@@ -375,6 +393,7 @@ class ButtonGridWidget(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._draggable: frozenset[int] = frozenset()
+        self._scope = ""
         self._grid_layout = QGridLayout()
         self._grid_layout.setSpacing(4)
         self._key_info: list[KeyInfo] = []
@@ -408,8 +427,15 @@ class ButtonGridWidget(QWidget):
             button.action_dropped.connect(self.action_dropped.emit)
             button.key_dropped.connect(self.key_moved.emit)
             button.set_draggable(index in self._draggable)
+            button.set_scope(self._scope)
             self._grid_layout.addWidget(button, row, col)
             self._buttons[index] = button
+
+    def set_drag_scope(self, scope: str) -> None:
+        """Tag drags with the active device and page, so a drop after the page changed is refused."""
+        self._scope = scope
+        for button in self._buttons.values():
+            button.set_scope(scope)
 
     def set_draggable_keys(self, indexes: Collection[int]) -> None:
         """Make exactly these keys draggable (remembered across rebuilds)."""

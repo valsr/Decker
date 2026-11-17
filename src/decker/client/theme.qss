@@ -119,7 +119,7 @@ QToolButton:hover {
     background-color: $hover;
 }
 
-/* The hover pencil on a key: a small disc, so its glyph is not squeezed by the generic tool-button padding. */
+/* The hover play button on a key: a small disc, so its glyph is not squeezed by the generic tool-button padding. */
 QToolButton#keyRunButton {
     background-color: $raised;
     border: none;

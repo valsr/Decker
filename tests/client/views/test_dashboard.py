@@ -1176,8 +1176,11 @@ class TestKeyMoveAndCopy:  # pylint: disable=protected-access
         view._grid.key_moved.emit(1, 3, False)
 
         cm.call.assert_called_once_with("key_move", "dev1", "p1", 1, 3)
-        assert_that(view._selected_key).is_equal_to(3)
         cm.request_device_refresh.assert_called_once_with()
+        assert_that(view._selected_key).is_none()  # nothing stale is shown while the server's data is on its way
+        assert_that(view._key_slots).is_empty()
+        view.handle_event(KeyDisplayStatesUpdatedEvent(device_id="dev1", states=[_assigned_state(3)]))
+        assert_that(view._selected_key).is_equal_to(3)
 
     def test_ctrl_drop_copies(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view, cm = self._view(tmp_path)
@@ -1185,6 +1188,7 @@ class TestKeyMoveAndCopy:  # pylint: disable=protected-access
         view._grid.key_moved.emit(1, 3, True)
 
         cm.call.assert_called_once_with("key_copy", "dev1", "p1", 1, 3)
+        view.handle_event(KeyDisplayStatesUpdatedEvent(device_id="dev1", states=[_assigned_state(3)]))
         assert_that(view._selected_key).is_equal_to(3)
 
     @pytest.mark.parametrize("result", [False, None])
@@ -1225,3 +1229,68 @@ class TestKeyMoveAndCopy:  # pylint: disable=protected-access
         view._reset_key_selection()
 
         assert_that([i for i, b in view._grid._buttons.items() if b._draggable]).is_empty()
+
+
+def _assigned_state(key_index: int) -> dict[str, Any]:
+    return {
+        "key_index": key_index,
+        "plugin_uuid": "p",
+        "action_uuid": "a",
+        "context_id": f"c{key_index}",
+        "settings": {},
+    }
+
+
+class TestKeyMoveSelection:  # pylint: disable=protected-access
+    def setup_method(self):
+        AppContext._instance = None
+
+    def _view(self, tmp_path):
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        view._pages = _PAGES
+        cm = MagicMock()
+        cm.call.return_value = True
+        AppContext.get().connection_manager = cm
+        view._grid.build(_KEYS_15)
+        view._key_slots[1] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": "c1", "settings": {}}
+        return view, cm
+
+    def test_the_selection_waits_for_the_target_to_come_back_from_the_server(
+        self, qapp, tmp_path
+    ):  # pylint: disable=unused-argument
+        view, _cm = self._view(tmp_path)
+        view._selected_key = 3  # the replaced key was open in the editor
+
+        view._grid.key_moved.emit(1, 3, False)
+
+        assert_that(view._selected_key).is_none()
+        view.handle_event(KeyDisplayStatesUpdatedEvent(device_id="dev1", states=[_assigned_state(1)]))
+        assert_that(view._selected_key).is_none()  # key 3 has not come back yet
+        view.handle_event(KeyDisplayStatesUpdatedEvent(device_id="dev1", states=[_assigned_state(3)]))
+        assert_that(view._selected_key).is_equal_to(3)
+
+    def test_a_failed_move_does_not_arm_a_selection(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view, cm = self._view(tmp_path)
+        cm.call.return_value = False
+
+        view._grid.key_moved.emit(1, 3, False)
+        view.handle_event(KeyDisplayStatesUpdatedEvent(device_id="dev1", states=[_assigned_state(3)]))
+
+        assert_that(view._selected_key).is_none()
+
+
+class TestDragScopeFollowsThePage:  # pylint: disable=protected-access
+    def setup_method(self):
+        AppContext._instance = None
+
+    def test_the_grids_scope_is_the_active_device_and_page(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        view._grid.build(_KEYS_15)
+
+        view.handle_event(PagesUpdatedEvent(pages=_PAGES))
+        assert_that(view._grid._scope).is_equal_to("dev1/p1")
+
+        view.handle_event(PagesUpdatedEvent(pages=dataclasses.replace(_PAGES, active_page_id="p2")))
+        assert_that(view._grid._scope).is_equal_to("dev1/p2")

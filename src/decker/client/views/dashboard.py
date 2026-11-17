@@ -60,6 +60,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._selected_key: int | None = None
         self._key_images: dict[int, str] = {}  # last composed image per key, to seed the editor preview
         self._key_slots: dict[int, dict[str, Any]] = {}  # key_index → assignment metadata
+        self._select_after_refresh: int | None = None  # the key to open once its data arrives after a move or copy
         self._active_device_id: str | None = None
         self._actions: list[dict[str, Any]] = []  # action list from the server (with settings schemas)
 
@@ -227,6 +228,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if pages.active_page_id != self._active_page_id:
             self._reset_key_selection()
         self._pages = pages
+        self._sync_draggable()
         self._render_page_tabs()
 
     def _render_page_tabs(self) -> None:
@@ -323,6 +325,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._key_slots = {}
         self._key_images = {}
         self._selected_key = None
+        self._select_after_refresh = None
         self._sync_draggable()
         self._grid.set_selected(None)
         self._config_panel.show_placeholder()
@@ -375,8 +378,11 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._refresh_config_panel()
 
     def _sync_draggable(self) -> None:
-        """Only keys with an action can be dragged."""
+        """Only keys with an action can be dragged, and drags are tagged with the device and page they start on."""
         self._grid.set_draggable_keys(self._key_slots.keys())
+        device_id = AppContext.get().active_device_id
+        page_id = self._active_page_id
+        self._grid.set_drag_scope(f"{device_id}/{page_id}" if device_id and page_id else "")
 
     def _on_key_moved(self, from_index: int, to_index: int, copy: bool) -> None:
         """Move (or, with Ctrl, copy) a key's action; the destination key is selected afterwards."""
@@ -387,7 +393,9 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             return
         if not cm.call("key_copy" if copy else "key_move", device_id, page_id, from_index, to_index):
             return
-        self._on_key_edit_requested(to_index)
+        # nothing stale stays on screen: the editor reopens on the target once the server's data for it arrives
+        self._reset_key_selection()
+        self._select_after_refresh = to_index
         cm.request_device_refresh()
 
     def _on_key_pressed(self, index: int) -> None:
@@ -461,6 +469,10 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             if not image_b64:
                 self._grid.set_key_label(key_index, str(state.get("label", "")))
             self._sync_slot(key_index, state)
+        pending = self._select_after_refresh
+        if pending is not None and pending in self._key_slots:
+            self._select_after_refresh = None
+            self._on_key_edit_requested(pending)
         self._refresh_config_panel()
 
     def _refresh_config_panel(self) -> None:

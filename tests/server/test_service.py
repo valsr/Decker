@@ -731,9 +731,7 @@ class TestProfileRpcs:
 class TestKeyMoveAndCopy:
     @pytest.fixture(autouse=True)
     def _device(self, service):
-        service._context.device_manager.open_device.return_value.get_hw_info.return_value.num_keys = (
-            15  # pylint: disable=protected-access
-        )
+        service._context.device_manager.open_device.return_value.key_count = 15  # pylint: disable=protected-access
 
     @staticmethod
     def _seed(service, store, with_target=True):
@@ -746,9 +744,7 @@ class TestKeyMoveAndCopy:
     def _reset(manager, service):
         manager.reset_mock()
         service._context.device_manager.reset_mock()  # pylint: disable=protected-access
-        service._context.device_manager.open_device.return_value.get_hw_info.return_value.num_keys = (
-            15  # pylint: disable=protected-access
-        )
+        service._context.device_manager.open_device.return_value.key_count = 15  # pylint: disable=protected-access
 
     def test_move_on_the_active_page_swaps_the_live_instances(self, service, manager, store):
         self._seed(service, store)
@@ -862,3 +858,50 @@ class TestKeyMoveAndCopy:
 
     def test_commands_are_listed(self, service):
         assert_that(json.loads(service.commands())).contains_key("key.move", "key.copy")
+
+
+class TestKeyMoveAndCopyAreAllOrNothing:
+    @pytest.fixture(autouse=True)
+    def _device(self, service):
+        service._context.device_manager.open_device.return_value.key_count = 15  # pylint: disable=protected-access
+
+    @staticmethod
+    def _seed(service, manager):
+        service.key_assign("dev1", P1, 0, "com.p", "com.p.a", "c0", "{}")
+        service.key_assign("dev1", P1, 4, "com.p", "com.p.a", "c4", "{}")
+        manager.reset_mock()
+
+    def test_a_move_the_store_refuses_deactivates_nothing(self, service, manager, store):
+        self._seed(service, manager)
+
+        with patch.object(store, "move", return_value=False):
+            assert_that(service.key_move("dev1", P1, 0, 4)).is_false()
+
+        manager.deactivate_action.assert_not_called()
+        manager.activate_action.assert_not_called()
+        service._context.device_manager.blank_key.assert_not_called()  # pylint: disable=protected-access
+
+    def test_a_copy_the_store_refuses_deactivates_nothing(self, service, manager, store):
+        self._seed(service, manager)
+
+        with patch.object(store, "copy_key", return_value=None):
+            assert_that(service.key_copy("dev1", P1, 0, 4)).is_false()
+
+        manager.deactivate_action.assert_not_called()
+        manager.activate_action.assert_not_called()
+
+    def test_a_store_error_leaves_the_live_instances_alone(self, service, manager, store):
+        self._seed(service, manager)
+
+        with patch.object(store, "move", side_effect=RuntimeError("disk")), pytest.raises(RuntimeError):
+            service.key_move("dev1", P1, 0, 4)
+
+        manager.deactivate_action.assert_not_called()
+
+    def test_the_replaced_instance_is_still_deactivated_after_a_successful_move(self, service, manager, store):
+        self._seed(service, manager)
+        replaced = store.get("dev1", P1, 4).target
+
+        assert_that(service.key_move("dev1", P1, 0, 4)).is_true()
+
+        manager.deactivate_action.assert_any_call(replaced)

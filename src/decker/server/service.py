@@ -465,12 +465,14 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             return False
         ctx = self._context
         active = self._is_active_page(device_id, page_id)
-        if active:
-            ctx.plugin_manager.deactivate_action(source.target)
-            self._deactivate_slot(device_id, page_id, to_index)
+        replaced = ctx.key_assignment_store.get(device_id, page_id, to_index)
+        # the store goes first: a refused or failed write must leave the live instances as they were
         if not ctx.key_assignment_store.move(device_id, page_id, from_index, to_index):
             return False
         if active:
+            ctx.plugin_manager.deactivate_action(source.target)
+            if replaced is not None:
+                ctx.plugin_manager.deactivate_action(replaced.target)
             ctx.device_manager.blank_key(device_id, from_index)
             ctx.device_manager.clear_key_state(device_id, to_index)
             self._activate_slot(device_id, page_id, to_index)
@@ -492,11 +494,12 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             return False
         ctx = self._context
         active = self._is_active_page(device_id, page_id)
-        if active:
-            self._deactivate_slot(device_id, page_id, to_index)
+        replaced = ctx.key_assignment_store.get(device_id, page_id, to_index)
         if ctx.key_assignment_store.copy_key(device_id, page_id, from_index, to_index, uuid.uuid4().hex) is None:
             return False
         if active:
+            if replaced is not None:
+                ctx.plugin_manager.deactivate_action(replaced.target)
             ctx.device_manager.clear_key_state(device_id, to_index)
             self._activate_slot(device_id, page_id, to_index)
         else:
@@ -511,16 +514,9 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         if any(isinstance(i, bool) or not isinstance(i, int) for i in indexes) or from_index == to_index:
             return None
         device = self._context.device_manager.open_device(device_id)
-        if device is None or not all(0 <= i < device.get_hw_info().num_keys for i in indexes):
+        if device is None or not all(0 <= i < device.key_count for i in indexes):
             return None
         return self._context.key_assignment_store.get(device_id, page_id, from_index)
-
-    def _deactivate_slot(self, device_id: str, page_id: str, key_index: int) -> None:
-        """Deactivate the instance stored at a slot, if there is one."""
-        assert self._context is not None
-        existing = self._context.key_assignment_store.get(device_id, page_id, key_index)
-        if existing is not None:
-            self._context.plugin_manager.deactivate_action(existing.target)
 
     def _activate_slot(self, device_id: str, page_id: str, key_index: int) -> None:
         """Bring the (stored) assignment of a slot live on the device."""
