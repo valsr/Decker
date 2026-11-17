@@ -68,3 +68,8 @@ def assets() -> Path:
 def user_icons() -> Path:
     """Return the user-uploaded icons directory."""
     return assets() / "user-icons"
+
+
+def icon_cache() -> Path:
+    """Return the client's rasterized icon thumbnail cache directory."""
+    return home() / "cache" / "icons"
