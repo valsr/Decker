@@ -1,9 +1,11 @@
 """Installs, upgrades and uninstalls .deckerplugin packages on the server."""
 
+import hashlib
 import json
 import logging
 import shutil
 import threading
+import urllib.request
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -16,7 +18,13 @@ from decker.common.version import is_compatible
 from decker.plugin.environment import EnvironmentBuildError, build_environment
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import PluginManifest
-from decker.plugin.package import PackageError, extract, read_manifest
+from decker.plugin.package import (
+    MAX_PACKAGE_BYTES,
+    PackageError,
+    extract,
+    read_manifest,
+)
+from decker.plugin.repository_index import IndexVersion
 from decker.plugin.runtime.launcher import launch_command
 from decker.server.page_controller import PAGES_CHANGED_EVENT
 
@@ -28,6 +36,8 @@ PLUGIN_INSTALL_FINISHED_EVENT = "plugin_install_finished"
 PLUGINS_CHANGED_EVENT = "plugins_changed"
 _UNINSTALL_WAIT_S = 2.0
 _MAX_JOBS = 20
+_DOWNLOAD_CHUNK = 64 * 1024
+_DOWNLOAD_TIMEOUT_S = 20.0
 _BUSY = "busy: another plugin install or uninstall is in progress; try again when it has finished"
 
 
@@ -66,12 +76,30 @@ class PluginInstaller:
 
     def install(self, filename: str, data: bytes) -> str:
         """Start installing a package in the background and return the job id; raises if one is already running."""
+
+        def work(job_id: str, progress: Callable[[str], None]) -> _Outcome:
+            progress(f"Checking {filename}")
+            return self._install(job_id, data, progress)
+
+        return self._start_job(f"Checking {filename}", filename, work)
+
+    def install_from_repository(self, plugin_id: str, version: IndexVersion) -> str:
+        """Download a repository version and install it in the background; returns the job id (raises if busy)."""
+        label = f"{plugin_id} {version.version}"
+
+        def work(job_id: str, progress: Callable[[str], None]) -> _Outcome:
+            data = self._download(version, label, progress)
+            return self._install(job_id, data, progress, expect=(plugin_id, version.version))
+
+        return self._start_job(f"Downloading {label} (0%)", label, work)
+
+    def _start_job(self, message: str, label: str, work: Callable[[str, Callable[[str], None]], _Outcome]) -> str:
         if not self._op_lock.acquire(blocking=False):
             raise PluginInstallError(_BUSY)
         job_id = uuid.uuid4().hex
         try:
-            self._update_job(job_id, state="running", message=f"Checking {filename}")
-            threading.Thread(target=self._run_install, args=(job_id, filename, data), daemon=True).start()
+            self._update_job(job_id, state="running", message=message)
+            threading.Thread(target=self._run_job, args=(job_id, label, work), daemon=True).start()
         except BaseException:
             self._op_lock.release()
             raise
@@ -130,20 +158,19 @@ class PluginInstaller:
     # Install
     # ------------------------------------------------------------------
 
-    def _run_install(self, job_id: str, filename: str, data: bytes) -> None:
+    def _run_job(self, job_id: str, label: str, work: Callable[[str, Callable[[str], None]], _Outcome]) -> None:
         def progress(message: str) -> None:
             self._update_job(job_id, message=message)
-            self._push("plugin_install_progress", {"job_id": job_id, "message": message})
+            self._push(PLUGIN_INSTALL_PROGRESS_EVENT, {"job_id": job_id, "message": message})
 
         try:
-            progress(f"Checking {filename}")
-            outcome = self._install(job_id, data, progress)
+            outcome = work(job_id, progress)
         except (PackageError, EnvironmentBuildError, PluginInstallError, OSError) as exc:
             self._op_lock.release()
             self._finish(job_id, None, str(exc))
             return
         except Exception:  # pylint: disable=broad-except
-            logging.exception("Unexpected failure installing %s", filename)
+            logging.exception("Unexpected failure installing %s", label)
             self._op_lock.release()
             self._finish(job_id, None, "unexpected error while installing the plugin")
             return
@@ -151,8 +178,42 @@ class PluginInstaller:
         self._finish(job_id, outcome, f"Installed {outcome.plugin_id} {outcome.version}")
         self._push(PLUGINS_CHANGED_EVENT, {})
 
-    def _install(self, job_id: str, data: bytes, progress: Callable[[str], None]) -> _Outcome:
+    @staticmethod
+    def _download(version: IndexVersion, label: str, progress: Callable[[str], None]) -> bytes:
+        if not version.url.lower().startswith(("http://", "https://", "file://")):
+            raise PluginInstallError(f"unsupported download URL: {version.url}")
+        limit = min(version.size, MAX_PACKAGE_BYTES)
+        chunks: list[bytes] = []
+        received = 0
+        reported = -1
+        progress(f"Downloading {label} (0%)")
+        try:
+            with urllib.request.urlopen(version.url, timeout=_DOWNLOAD_TIMEOUT_S) as response:  # nosec B310
+                while received <= limit:
+                    chunk: bytes = response.read(min(_DOWNLOAD_CHUNK, limit + 1 - received))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    received += len(chunk)
+                    percent = min(100, received * 100 // version.size) // 10 * 10 if version.size else 100
+                    if percent > reported and percent > 0:
+                        reported = percent
+                        progress(f"Downloading {label} ({percent}%)")
+        except (OSError, ValueError) as exc:
+            raise PluginInstallError(f"download failed: {exc}") from exc
+        if received != version.size:
+            raise PluginInstallError(f"download is {received} bytes, index says {version.size}")
+        data = b"".join(chunks)
+        if hashlib.sha256(data).hexdigest() != version.sha256.lower():
+            raise PluginInstallError("download does not match the index checksum (sha256)")
+        return data
+
+    def _install(
+        self, job_id: str, data: bytes, progress: Callable[[str], None], expect: tuple[str, str] | None = None
+    ) -> _Outcome:
         manifest = read_manifest(data)
+        if expect is not None and (manifest.id, manifest.version) != expect:
+            raise PluginInstallError(f"package is {manifest.id} {manifest.version}, index says {expect[0]} {expect[1]}")
         existing = self._find(manifest.id)
         if existing is not None and existing.bundled:
             raise PluginInstallError(f"{manifest.id} is bundled with Decker and cannot be replaced")
