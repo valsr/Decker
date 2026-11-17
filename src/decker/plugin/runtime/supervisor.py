@@ -29,6 +29,9 @@ class SupervisorPolicy:
     max_crashes: int = 3
     crash_window_s: float = 60.0
     backoff_s: tuple[float, ...] = (0.5, 2.0, 5.0)
+    flood_rate: float = 100.0
+    flood_burst: float = 200.0
+    flood_kill_s: float = 5.0
 
 
 @dataclass
@@ -49,6 +52,11 @@ class _Entry:  # pylint: disable=too-many-instance-attributes
     started_at: float = 0.0
     ping_sent_at: float | None = None
     crashes: list[float] = field(default_factory=list)
+    tokens: float = 0.0
+    token_time: float = 0.0
+    over_since: float | None = None
+    last_drop: float = 0.0
+    last_flood_warning: float = -1e9
     queue: deque[Message] = field(default_factory=lambda: deque(maxlen=_MAX_QUEUED))
 
 
@@ -244,6 +252,9 @@ class PluginSupervisor:
         entry.restart_at = None
         entry.ping_sent_at = None
         entry.started_at = self._clock()
+        entry.tokens = self._policy.flood_burst
+        entry.token_time = entry.started_at
+        entry.over_since = None
         try:
             process = self._factory(
                 plugin_id,
@@ -286,6 +297,7 @@ class PluginSupervisor:
             thread.join()
 
     def _handle_message(self, plugin_id: str, generation: int, message: Message) -> None:
+        flood_victim: PluginProcess | None = None
         with self._lock:
             entry = self._entries.get(plugin_id)
             if entry is None or entry.generation != generation:
@@ -293,11 +305,45 @@ class PluginSupervisor:
             if message.event == "pong":
                 entry.ping_sent_at = None
                 return
+            admitted, flood_victim = self._admit(plugin_id, entry)
+            if not admitted:
+                if flood_victim is not None:
+                    threading.Thread(target=flood_victim.stop, args=(_KILL_TIMEOUT_S,), daemon=True).start()
+                return
             if message.event == "ready" and not entry.ready:
                 entry.ready = True
                 entry.last_ping = self._clock()
-                self._flush(entry)
         self._on_message(plugin_id, message)
+        if message.event == "ready":
+            self._flush_ready(plugin_id, generation)
+
+    def _admit(self, plugin_id: str, entry: _Entry) -> tuple[bool, PluginProcess | None]:
+        """Token bucket per plugin; a plugin that keeps exceeding it is killed (returned as the victim)."""
+        policy = self._policy
+        now = self._clock()
+        entry.tokens = min(policy.flood_burst, entry.tokens + (now - entry.token_time) * policy.flood_rate)
+        entry.token_time = now
+        if entry.tokens >= 1.0:
+            entry.tokens -= 1.0
+            return True, None
+        if entry.over_since is None or now - entry.last_drop > 1.0:
+            entry.over_since = now
+        entry.last_drop = now
+        if now - entry.last_flood_warning >= 1.0:
+            entry.last_flood_warning = now
+            logger.warning("[%s] message rate limit exceeded, dropping messages", plugin_id)
+        if now - entry.over_since >= policy.flood_kill_s and not entry.killing and entry.process is not None:
+            logger.warning("[%s] killing plugin: message flood", plugin_id)
+            entry.killing = True
+            return False, entry.process
+        return False, None
+
+    def _flush_ready(self, plugin_id: str, generation: int) -> None:
+        with self._lock:
+            entry = self._entries.get(plugin_id)
+            if entry is None or entry.generation != generation or entry.process is None:
+                return
+            self._flush(entry)
 
     @staticmethod
     def _flush(entry: _Entry) -> None:

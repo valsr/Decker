@@ -377,3 +377,59 @@ def test_stale_queue_not_delivered_after_crash() -> None:
     assert_that(rig.procs).is_length(2)
     rig.last.emit("ready")
     assert_that(rig.last.events()).is_equal_to(["hello"])
+
+
+def test_queued_messages_follow_what_the_ready_handler_sends() -> None:
+    rig = Rig()
+    rig.sup.acquire("a.b")
+    rig.sup.send("a.b", Message("key_down", "c1"))
+    rig.messages.clear()
+    original = rig.sup._on_message  # pylint: disable=protected-access
+    rig.sup._on_message = lambda pid, msg: (  # pylint: disable=protected-access
+        rig.sup.send(pid, Message("will_appear", "c1")) if msg.event == "ready" else original(pid, msg)
+    )
+    rig.last.emit("ready")
+    assert_that(rig.last.events()).is_equal_to(["hello", "will_appear", "key_down"])
+
+
+def test_burst_within_budget_is_delivered_and_excess_is_dropped() -> None:
+    rig = Rig()
+    rig.sup.acquire("a.b")
+    for _ in range(250):
+        rig.last.emit("log")
+    assert_that(rig.messages).is_length(200)
+    rig.clock.now += 1.0
+    for _ in range(50):
+        rig.last.emit("log")
+    assert_that(rig.messages).is_length(250)
+
+
+def test_sustained_flood_kills_plugin_and_counts_a_crash() -> None:
+    rig = Rig(flood_kill_s=5.0, backoff_s=(0.5,))
+    rig.sup.acquire("a.b")
+    first = rig.last
+    for _ in range(300):
+        first.emit("log")
+    for _ in range(8):
+        rig.clock.now += 0.7
+        for _ in range(200):
+            first.emit("log")
+        if not first.running:
+            break
+    deadline = time.monotonic() + 3
+    while rig.sup._entries["a.b"].restart_at is None and time.monotonic() < deadline:  # pylint: disable=protected-access
+        time.sleep(0.01)
+    assert_that(first.stops).is_greater_than(0)
+    rig.advance(1.0)
+    assert_that(rig.procs).is_length(2)
+
+
+def test_steady_rate_under_budget_never_kills() -> None:
+    rig = Rig(flood_kill_s=1.0)
+    rig.sup.acquire("a.b")
+    for _ in range(20):
+        rig.clock.now += 1.0
+        for _ in range(90):
+            rig.last.emit("log")
+    assert_that(rig.last.stops).is_equal_to(0)
+    assert_that(rig.messages).is_length(1800)
