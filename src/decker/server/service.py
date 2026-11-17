@@ -252,16 +252,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         store = self._repository_store()
         if store is None:
             return []
-        return [
-            {
-                "url": info.url,
-                "name": info.name,
-                "plugin_count": info.plugin_count,
-                "last_checked": info.last_checked,
-                "error": info.error,
-            }
-            for info in store.list_repositories()
-        ]
+        return [info.to_payload() for info in store.list_repositories()]
 
     @exposed
     def repository_add(self, url: str) -> str:
@@ -287,11 +278,13 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
 
     @exposed
     def repositories_check(self) -> dict[str, Any]:
-        """Refresh every repository now and return the update report."""
+        """Start a background refresh of every repository; `repositories_check_finished` reports the outcome."""
         checker = self._update_checker()
         if checker is None:
-            return {"updates": [], "missing": []}
-        return checker.check_now().to_payload()
+            return {"started": False, "reason": "repositories are not available"}
+        if not checker.check_async():
+            return {"started": False, "reason": "a check is already running"}
+        return {"started": True}
 
     @exposed
     def repository_catalog(self) -> list[dict[str, Any]]:

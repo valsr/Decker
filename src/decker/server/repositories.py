@@ -50,6 +50,16 @@ class RepositoryInfo:
     last_checked: float | None
     error: str | None
 
+    def to_payload(self) -> dict[str, Any]:
+        """Return the RPC/event representation."""
+        return {
+            "url": self.url,
+            "name": self.name,
+            "plugin_count": self.plugin_count,
+            "last_checked": self.last_checked,
+            "error": self.error,
+        }
+
 
 @dataclass(frozen=True)
 class CatalogEntry:

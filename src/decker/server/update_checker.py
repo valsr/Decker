@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 SCHEDULES: dict[str, int | None] = {"daily": 1, "weekly": 7, "monthly": 30, "manual": None}
 EVENT_NAME = "plugin_updates_available"
+CHECK_FINISHED_EVENT = "repositories_check_finished"
 _CONFIG_KEY = "plugin.update_check"
 _WAKE_SECONDS = 3600.0
 _DAY_SECONDS = 86400.0
@@ -70,6 +71,8 @@ class UpdateChecker:
         self._clock: Callable[[], float] = clock
         self._lock: threading.Lock = threading.Lock()
         self._check_lock: threading.Lock = threading.Lock()
+        self._build_lock: threading.Lock = threading.Lock()
+        self._async_running: bool = False
         self._report: UpdateReport = UpdateReport()
         self._stop: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -126,24 +129,49 @@ class UpdateChecker:
                 self._store.mark_checked(self._clock())
             return self._recompute(push_if_changed=True)
 
+    def check_async(self) -> bool:
+        """Run a check on a background thread; returns False when one is already running."""
+        with self._lock:
+            if self._async_running or self._check_lock.locked():
+                return False
+            self._async_running = True
+        threading.Thread(target=self._run_async_check, name="plugin-manual-check", daemon=True).start()
+        return True
+
     def refresh_local(self) -> UpdateReport:
         """Recompute from the cached indexes (no network) and push the report if it changed."""
         return self._recompute(push_if_changed=True)
 
+    def _run_async_check(self) -> None:
+        try:
+            self.check_now()
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("Plugin update check failed")
+        finally:
+            with self._lock:
+                self._async_running = False
+            repositories = [info.to_payload() for info in self._store.list_repositories()]
+            self._push(CHECK_FINISHED_EVENT, {"repositories": repositories})
+
     def _run(self) -> None:
+        self._scheduled_check()
         while not self._stop.wait(_WAKE_SECONDS):
-            try:
-                self.check_if_due()
-            except Exception:  # pylint: disable=broad-exception-caught
-                logger.exception("Scheduled plugin update check failed")
+            self._scheduled_check()
+
+    def _scheduled_check(self) -> None:
+        try:
+            self.check_if_due()
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("Scheduled plugin update check failed")
 
     def _recompute(self, push_if_changed: bool) -> UpdateReport:
-        report = self._build()
-        with self._lock:
-            changed = report != self._report
-            self._report = report
-        if push_if_changed and changed:
-            self._push(EVENT_NAME, report.to_payload())
+        with self._build_lock:
+            report = self._build()
+            with self._lock:
+                changed = report != self._report
+                self._report = report
+            if push_if_changed and changed:
+                self._push(EVENT_NAME, report.to_payload())
         return report
 
     def _build(self) -> UpdateReport:
