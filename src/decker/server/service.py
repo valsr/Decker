@@ -16,7 +16,15 @@ from rpyc.utils import exposed
 
 from decker.common import config
 from decker.common.appearance_schema import APPEARANCE_KEYS
-from decker.common.model import DeviceHardwareInfo, DevicePages, KeyState, PageInfo
+from decker.common.icon_ref import DECKER_ICON_REF, parse_icon_ref
+from decker.common.model import (
+    DeviceHardwareInfo,
+    DevicePages,
+    DeviceProfiles,
+    KeyState,
+    PageInfo,
+    ProfileInfo,
+)
 from decker.common.utils import api_response
 from decker.common.version import is_compatible
 from decker.plugin.icons import read_icon
@@ -29,6 +37,7 @@ from decker.server.repositories import CatalogEntry, RepositoryError, Repository
 from decker.server.update_checker import UpdateChecker
 
 if TYPE_CHECKING:
+    from decker.server.page_controller import PageController
     from decker.server.server_context import ServerContext
 
 _LONG_PRESS_HOLD_S = 0.6
@@ -507,11 +516,70 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
 
     @exposed
     @api_response
-    def pages_list(self, device_id: str) -> DevicePages | None:
-        """Return the device's pages in order, its default page and the page shown on the device."""
+    def pages_list(self, device_id: str, profile_id: int = -1) -> DevicePages | None:
+        """Return a profile's pages in order, its default page and the page shown on the device.
+
+        A negative profile_id means the device's active profile; an unknown profile returns nothing.
+        """
+        if self._context is None or isinstance(profile_id, bool) or not isinstance(profile_id, int):
+            return None
+        if profile_id < 0:
+            return self._context.page_controller.device_pages(device_id)
+        return self._context.page_controller.device_pages(device_id, profile_id)
+
+    @exposed
+    @api_response
+    def profiles_list(self, device_id: str) -> DeviceProfiles | None:
+        """Return the device's profiles in dropdown order and its active profile."""
         if self._context is None:
             return None
-        return self._context.page_controller.device_pages(device_id)
+        return self._context.page_controller.device_profiles(device_id)
+
+    @exposed
+    @api_response
+    def profile_add(self, device_id: str, name: str = "") -> ProfileInfo | None:
+        """Append a new profile with one page (named "Profile <id>" unless a name is given)."""
+        if self._context is None:
+            return None
+        return self._context.page_controller.add_profile(device_id, name or None)
+
+    @exposed
+    def profile_rename(self, device_id: str, profile_id: int, name: str) -> bool:
+        """Rename a profile. Returns False for an unknown profile or a blank name."""
+        controller = self._controller_for(profile_id)
+        return controller is not None and controller.rename_profile(device_id, profile_id, name)
+
+    @exposed
+    def profile_set_icon(self, device_id: str, profile_id: int, icon: str) -> bool:
+        """Set a profile's icon ref ("" = the Decker icon). Returns False for an unknown profile or a bad ref."""
+        controller = self._controller_for(profile_id)
+        valid = isinstance(icon, str) and (icon in ("", DECKER_ICON_REF) or parse_icon_ref(icon) is not None)
+        return valid and controller is not None and controller.set_profile_icon(device_id, profile_id, icon)
+
+    @exposed
+    def profile_delete(self, device_id: str, profile_id: int) -> bool:
+        """Delete a profile with its pages and keys. The last profile cannot be deleted."""
+        controller = self._controller_for(profile_id)
+        return controller is not None and controller.delete_profile(device_id, profile_id)
+
+    @exposed
+    @api_response
+    def profile_clone(self, device_id: str, profile_id: int) -> ProfileInfo | None:
+        """Copy a profile with its pages and keys; the copy does not become active."""
+        controller = self._controller_for(profile_id)
+        return controller.clone_profile(device_id, profile_id) if controller is not None else None
+
+    @exposed
+    def profile_activate(self, device_id: str, profile_id: int) -> bool:
+        """Show a profile's default page on the device. Returns False for an unknown profile."""
+        controller = self._controller_for(profile_id)
+        return controller is not None and controller.activate_profile(device_id, profile_id)
+
+    def _controller_for(self, profile_id: object) -> "PageController | None":
+        """The page controller when a context exists and profile_id is a real int (not a bool)."""
+        if self._context is None or isinstance(profile_id, bool) or not isinstance(profile_id, int):
+            return None
+        return self._context.page_controller
 
     @exposed
     @api_response

@@ -64,16 +64,23 @@ class PageController(Manager):
         """The profile shown on the device."""
         return self._ctx.page_store.active_profile_id(device_id)
 
-    def device_pages(self, device_id: str) -> DevicePages:
-        """Return the pages of the device's active profile, its default page and the active page."""
+    def device_pages(self, device_id: str, profile_id: int | None = None) -> DevicePages | None:
+        """Return a profile's pages, its default page and the active page (the active profile's when profile_id is None).
+
+        A profile other than the active one has no active page (empty id); an unknown profile returns None.
+        """
         with self._lock:
             store = self._ctx.page_store
+            active_profile = store.active_profile_id(device_id)
+            wanted = active_profile if profile_id is None else profile_id
+            if store.get_profile(device_id, wanted) is None:
+                return None
             return DevicePages(
                 device_id=device_id,
-                pages=store.list_pages(device_id),
-                default_page_id=store.default_page_id(device_id),
-                active_page_id=self.active_page_id(device_id),
-                profile_id=store.active_profile_id(device_id),
+                pages=store.list_pages(device_id, wanted),
+                default_page_id=store.default_page_id(device_id, wanted),
+                active_page_id=self.active_page_id(device_id) if wanted == active_profile else "",
+                profile_id=wanted,
             )
 
     def device_profiles(self, device_id: str) -> DeviceProfiles:

@@ -643,3 +643,81 @@ class TestRepositoryRpcs:
         ctx.repository_store.remove.assert_not_called()
         ctx.update_checker.set_schedule.assert_not_called()
         ctx.plugin_installer.install_from_repository.assert_not_called()
+
+
+class TestProfileRpcs:
+    def test_without_context(self):
+        s = DeckerService()
+        assert_that(json.loads(s.profiles_list("dev1"))).is_none()
+        assert_that(json.loads(s.profile_add("dev1"))).is_none()
+        assert_that(s.profile_rename("dev1", 0, "x")).is_false()
+        assert_that(s.profile_set_icon("dev1", 0, "")).is_false()
+        assert_that(s.profile_delete("dev1", 0)).is_false()
+        assert_that(json.loads(s.profile_clone("dev1", 0))).is_none()
+        assert_that(s.profile_activate("dev1", 0)).is_false()
+
+    def test_list_add_rename_icon_activate_clone_delete(self, service):
+        assert_that(json.loads(service.profiles_list("dev1"))).is_equal_to(
+            {
+                "device_id": "dev1",
+                "profiles": [{"profile_id": 0, "name": "Default", "icon": ""}],
+                "active_profile_id": 0,
+            }
+        )
+        added = json.loads(service.profile_add("dev1", "Media"))
+        assert_that(added).is_equal_to({"profile_id": 1, "name": "Media", "icon": ""})
+
+        assert_that(service.profile_rename("dev1", 1, "Audio")).is_true()
+        assert_that(service.profile_set_icon("dev1", 1, "decker:logo")).is_true()
+        assert_that(service.profile_activate("dev1", 1)).is_true()
+        clone = json.loads(service.profile_clone("dev1", 1))
+        assert_that(clone["name"]).is_equal_to("Audio copy")
+
+        listing = json.loads(service.profiles_list("dev1"))
+        assert_that([p["name"] for p in listing["profiles"]]).is_equal_to(["Default", "Audio", "Audio copy"])
+        assert_that(listing["active_profile_id"]).is_equal_to(1)
+        assert_that(listing["profiles"][1]["icon"]).is_equal_to("decker:logo")
+
+        assert_that(service.profile_delete("dev1", clone["profile_id"])).is_true()
+        assert_that(json.loads(service.profiles_list("dev1"))["profiles"]).is_length(2)
+
+    def test_pages_list_for_an_explicit_profile(self, service):
+        added = json.loads(service.profile_add("dev1"))
+
+        other = json.loads(service.pages_list("dev1", added["profile_id"]))
+        current = json.loads(service.pages_list("dev1"))
+
+        assert_that(other["profile_id"]).is_equal_to(1)
+        assert_that(other["pages"]).is_length(1)
+        assert_that(other["active_page_id"]).is_equal_to("")
+        assert_that(current["profile_id"]).is_equal_to(0)
+        assert_that(json.loads(service.pages_list("dev1", 99))).is_none()
+
+    @pytest.mark.parametrize("bad", ["1", None, True, 1.5])
+    def test_non_int_profile_ids_fail_without_raising(self, service, bad):
+        assert_that(service.profile_rename("dev1", bad, "x")).is_false()
+        assert_that(service.profile_set_icon("dev1", bad, "")).is_false()
+        assert_that(service.profile_delete("dev1", bad)).is_false()
+        assert_that(service.profile_activate("dev1", bad)).is_false()
+        assert_that(json.loads(service.profile_clone("dev1", bad))).is_none()
+
+    @pytest.mark.parametrize("icon", ["http://x", "pack:", "pack:a/../b", 5, None])
+    def test_set_icon_rejects_bad_refs(self, service, icon):
+        assert_that(service.profile_set_icon("dev1", 0, icon)).is_false()
+
+    def test_set_icon_accepts_blank_pack_and_decker_refs(self, service):
+        for icon in ("", "pack:com.x/a.svg", "decker:logo"):
+            assert_that(service.profile_set_icon("dev1", 0, icon)).is_true()
+
+    def test_profile_commands_are_listed(self, service):
+        commands = json.loads(service.commands())
+
+        assert_that(commands).contains_key(
+            "profiles.list",
+            "profile.add",
+            "profile.rename",
+            "profile.set.icon",
+            "profile.delete",
+            "profile.clone",
+            "profile.activate",
+        )
