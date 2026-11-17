@@ -66,6 +66,7 @@ def store():
 @pytest.fixture()
 def manager():
     mock = MagicMock()
+    mock.is_builtin.return_value = False
     mock.complete_settings.side_effect = lambda _target, settings: settings
     mock.appearance_for.side_effect = lambda _target, stored: (dict(stored), {"background": "#000000"})
     return mock

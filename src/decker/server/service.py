@@ -197,7 +197,12 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         if self._context is None:
             return []
         manager = self._context.plugin_manager
-        return [self._plugin_info(plugin, manager.global_settings(plugin.manifest.id)) for plugin in manager.plugins()]
+        return [
+            self._plugin_info(
+                plugin, manager.global_settings(plugin.manifest.id), manager.is_builtin(plugin.manifest.id)
+            )
+            for plugin in manager.plugins()
+        ]
 
     @exposed
     @api_response
@@ -293,7 +298,12 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         if store is None or self._context is None:
             return []
         installed = {item.manifest.id: item.manifest.version for item in self._context.plugin_manager.plugins()}
-        return [_catalog_item(entry, installed.get(entry.plugin.id)) for entry in store.catalog()]
+        manager = self._context.plugin_manager
+        return [
+            _catalog_item(entry, installed.get(entry.plugin.id))
+            for entry in store.catalog()
+            if not manager.is_builtin(entry.plugin.id)
+        ]
 
     @exposed
     def repository_icon(self, plugin_id: str) -> str:
@@ -644,7 +654,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         return self._context.plugin_installer
 
     @staticmethod
-    def _plugin_info(plugin: InstalledPlugin, global_settings: dict[str, Any]) -> dict[str, Any]:
+    def _plugin_info(plugin: InstalledPlugin, global_settings: dict[str, Any], builtin: bool = False) -> dict[str, Any]:
         manifest = plugin.manifest
         icon = read_icon(plugin.plugin_dir, manifest.icon)
         return {
@@ -658,6 +668,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             "icon_b64": base64.b64encode(icon).decode("ascii") if icon else "",
             "global_settings_schema": schema_to_json(manifest.global_settings),
             "global_settings": global_settings,
+            "builtin": builtin,
         }
 
     def _is_active_page(self, device_id: str, page_id: str) -> bool:

@@ -164,6 +164,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._failures: list[PluginLoadFailedEvent] = []
         self._placeholders: set[tuple[str, int]] = set()
         self._plugins: dict[str, InstalledPlugin] = {}
+        self._builtin_ids: set[str] = set()
         self._live: dict[str, _Live] = {}
         self._lock = threading.RLock()
         self._sdk_path: Path | None = None
@@ -197,9 +198,13 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         except OSError:
             logging.exception("Could not stage the plugin SDK; installed plugins will not be able to start")
         recover_interrupted_installs(self._user_loader.plugins_dir)
+        builtin = self._user_loader.scan_builtin()
         user = self._user_loader.scan()
         with self._lock:
-            self._failures = user.failures
+            self._failures = builtin.failures + user.failures
+        for plugin in builtin.plugins:
+            self._builtin_ids.add(plugin.manifest.id)
+            self.add_plugin(plugin)
         for plugin in user.plugins:
             with self._lock:
                 duplicate = plugin.manifest.id in self._plugins
@@ -279,6 +284,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def _record_failure(self, plugin_id: str, error: str) -> None:
         with self._lock:
             self._failures.append(PluginLoadFailedEvent(plugin_id, error))
+
+    def is_builtin(self, plugin_id: str) -> bool:
+        """Whether the plugin ships inside Decker (it cannot be uninstalled or replaced)."""
+        return plugin_id in self._builtin_ids
 
     def plugins(self) -> list[InstalledPlugin]:
         """Return every known plugin."""

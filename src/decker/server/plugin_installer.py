@@ -89,6 +89,7 @@ class PluginInstaller:
     def install_from_repository(self, plugin_id: str, version: IndexVersion) -> str:
         """Download a repository version and install it in the background; returns the job id (raises if busy)."""
         label = f"{plugin_id} {version.version}"
+        self._refuse_builtin(plugin_id)
 
         def work(job_id: str, progress: Callable[[str], None]) -> _Outcome:
             data = self._download(version, label, progress)
@@ -127,7 +128,12 @@ class PluginInstaller:
         for device_id in sorted(devices):
             self._push(PAGES_CHANGED_EVENT, {"device_id": device_id})
 
+    def _refuse_builtin(self, plugin_id: str) -> None:
+        if self._context.plugin_manager.is_builtin(plugin_id):
+            raise PluginInstallError(f"{plugin_id} is built into Decker")
+
     def _uninstall_locked(self, plugin_id: str) -> set[str]:
+        self._refuse_builtin(plugin_id)
         plugin = self._find(plugin_id)
         plugins = self._context.plugin_manager
         if plugin is None:
@@ -218,6 +224,7 @@ class PluginInstaller:
         self, job_id: str, data: bytes, progress: Callable[[str], None], expect: tuple[str, str] | None = None
     ) -> _Outcome:
         manifest = read_manifest(data)
+        self._refuse_builtin(manifest.id)
         if expect is not None and (manifest.id, manifest.version) != expect:
             raise PluginInstallError(f"package is {manifest.id} {manifest.version}, index says {expect[0]} {expect[1]}")
         existing = self._find(manifest.id)
