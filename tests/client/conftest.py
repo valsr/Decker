@@ -26,3 +26,12 @@ def isolated_config(tmp_path):
     config.configure_prefix(tmp_path / "config.yaml")
     yield config
     config._config, config._USER_CONFIG_PATH = saved  # pylint: disable=protected-access
+
+
+@pytest.fixture(autouse=True)
+def _isolated_icon_cache(tmp_path_factory, monkeypatch):
+    """Point the process-wide icon thumbnail cache at a temp directory so no test writes under the real ~/.decker."""
+    import decker.client.icon_cache as icon_cache_module  # pylint: disable=import-outside-toplevel
+
+    root = tmp_path_factory.mktemp("icon-cache")
+    monkeypatch.setattr(icon_cache_module, "_INSTANCE", icon_cache_module.IconThumbnailCache(root))
