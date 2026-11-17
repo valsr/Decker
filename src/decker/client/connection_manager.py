@@ -368,8 +368,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
                 OpenUrlRequestedEvent(plugin_id=str(data.get("plugin_id", "")), url=str(data.get("url", "")))
             )
         elif event_type in ("pages_changed", "profiles_changed"):
-            if data.get("device_id") == _active_device_id():
-                self.request_device_refresh()
+            self._on_layout_changed(data)
         elif event_type == "plugin_install_progress":
             EventManager.get().push(
                 PluginInstallProgressEvent(job_id=str(data.get("job_id", "")), message=str(data.get("message", "")))
@@ -385,6 +384,10 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             EventManager.get().push(PluginsChangedEvent())
         else:
             logging.debug("Unknown server event type: %s", event_type)
+
+    def _on_layout_changed(self, data: dict[str, Any]) -> None:
+        if data.get("device_id") == _active_device_id():
+            self.request_device_refresh()
 
     def _close_connection(self) -> None:
         self.state = ServerState.DISCONNECTED
