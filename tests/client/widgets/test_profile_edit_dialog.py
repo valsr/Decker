@@ -63,10 +63,13 @@ class TestAccept:
 
 class TestDeleteAndClone:
     def test_delete_asks_first(self, dialog, monkeypatch):
-        asked = []
-        monkeypatch.setattr(
-            profile_edit_dialog, "_confirm_delete_profile", lambda parent, name: asked.append(name) or True
-        )
+        asked: list[str] = []
+
+        def _confirm(_parent, name):
+            asked.append(name)
+            return True
+
+        monkeypatch.setattr(profile_edit_dialog, "_confirm_delete_profile", _confirm)
 
         dialog._delete_button.click()
 
