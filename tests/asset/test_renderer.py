@@ -80,5 +80,5 @@ class TestLimitsAndSniffing:
     def test_svg_with_leading_comment_and_doctype_is_rendered(self):
         data = ("<!-- c -->\n<!DOCTYPE svg>\n" + _SVG).encode()
         image = AssetRenderer().render_bytes(data, 8, 8)
-        assert_that(image).is_not_none()
+        assert image is not None
         assert_that(image.size).is_equal_to((8, 8))
