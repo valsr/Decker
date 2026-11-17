@@ -10,6 +10,8 @@ to build one without reading Decker's source.
 - [Limits, lifecycle and the launch environment](limits.md)
 - [Plugin repositories](repositories.md): index format, update checks, hosting your own repository
 
+Presets (`"static"` actions), `{page_name}`-style templates, `page` settings and `switch_page` are described in the manifest, settings-schema and protocol pages above; Decker itself ships one built-in static plugin, Blank.
+
 Plugins run with your user's permissions and are not sandboxed. Only install plugins from authors you trust.
 
 ## What a plugin can contribute

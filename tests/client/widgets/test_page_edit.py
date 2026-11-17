@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 from assertpy import assert_that
+from PyQt6.QtGui import QStandardItemModel
 
 from decker.client.widgets.page_edit import PageEdit
 
@@ -71,7 +72,11 @@ def test_unknown_stored_id_shows_deleted_page_and_keeps_the_value(qapp):
 
     assert_that(edit.currentText()).is_equal_to("(deleted page)")
     assert_that(edit.value()).is_equal_to("gone")
-    assert_that(edit.model().item(edit.currentIndex()).isEnabled()).is_false()  # type: ignore[attr-defined]
+    model = edit.model()
+    assert isinstance(model, QStandardItemModel)
+    item = model.item(edit.currentIndex())
+    assert item is not None
+    assert_that(item.isEnabled()).is_false()
 
 
 @pytest.mark.parametrize("value", [5, None, {"x": 1}])

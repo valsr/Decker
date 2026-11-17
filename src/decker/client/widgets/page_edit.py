@@ -79,8 +79,9 @@ class PageEdit(QComboBox):
         if self._value and self._pages and self._value not in known:
             self.addItem(_DELETED, self._value)
             model = self.model()
-            if isinstance(model, QStandardItemModel):
-                model.item(self.count() - 1).setEnabled(False)
+            item = model.item(self.count() - 1) if isinstance(model, QStandardItemModel) else None
+            if item is not None:
+                item.setEnabled(False)
         index = self.findData(self._value)
         self.setCurrentIndex(max(index, 0))
         self.setToolTip("" if self._pages else _NO_DEVICE_HINT)
