@@ -4,13 +4,15 @@ import base64
 import json
 from typing import Any
 
-from PyQt6.QtCore import QByteArray, QSize, QTimer, pyqtSignal
-from PyQt6.QtGui import QIcon, QMouseEvent, QPixmap
-from PyQt6.QtWidgets import QGridLayout, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtCore import QByteArray, QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QEnterEvent, QIcon, QMouseEvent, QPixmap, QResizeEvent
+from PyQt6.QtWidgets import QGridLayout, QPushButton, QToolButton, QVBoxLayout, QWidget
 
 from decker.common.model import KeyInfo
 
 _LONG_PRESS_MS = 500
+_EDIT_SIZE = 20  # px, the hover pencil
+_EDIT_MARGIN = 4  # px from the key's top-right corner
 _MIME_TYPE = "application/x-decker-action"
 
 
@@ -19,6 +21,7 @@ class KeyButtonWidget(QPushButton):
 
     action_dropped = pyqtSignal(int, object)
     long_pressed = pyqtSignal(int)
+    edit_clicked = pyqtSignal(int)
 
     def __init__(self, index: int, key_info: KeyInfo) -> None:
         super().__init__()
@@ -33,6 +36,45 @@ class KeyButtonWidget(QPushButton):
         self._long_press_timer.setSingleShot(True)
         self._long_press_timer.setInterval(_LONG_PRESS_MS)
         self._long_press_timer.timeout.connect(self._on_long_press_fired)
+        self._edit_button = self._build_edit_button()
+
+    def _build_edit_button(self) -> QToolButton:
+        button = QToolButton(self)
+        button.setObjectName("keyEditButton")
+        icon = QIcon.fromTheme("document-edit")
+        if icon.isNull():
+            button.setText("✎")
+        else:
+            button.setIcon(icon)
+        button.setToolTip("Edit this key")
+        button.setAutoRaise(True)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setFixedSize(_EDIT_SIZE, _EDIT_SIZE)
+        button.setAcceptDrops(False)  # a drop on the pencil falls through to the key
+        button.clicked.connect(lambda _checked=False: self.edit_clicked.emit(self.index))
+        button.hide()
+        button.move(self._edit_position())
+        return button
+
+    def _edit_position(self) -> QPoint:
+        return QPoint(self.width() - _EDIT_SIZE - _EDIT_MARGIN, _EDIT_MARGIN)
+
+    def resizeEvent(self, a0: QResizeEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Keep the pencil in the top-right corner."""
+        super().resizeEvent(a0)
+        self._edit_button.move(self._edit_position())
+
+    def enterEvent(self, event: QEnterEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Show the edit pencil while the pointer is over the key."""
+        super().enterEvent(event)
+        self._edit_button.show()
+        self._edit_button.raise_()
+
+    def leaveEvent(self, a0: QEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Hide the pencil once the pointer is outside the key and its pencil."""
+        super().leaveEvent(a0)
+        if not self.underMouse():
+            self._edit_button.hide()
 
     def set_label(self, label: str) -> None:
         """Update the display label (shows label if set, otherwise key number)."""
