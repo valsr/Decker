@@ -12,6 +12,7 @@
 | stderr | read in 8 KiB chunks and logged; never buffered unbounded |
 | Raster image from `set_image` | at most 4096 x 4096 pixels |
 | Icon file (pack icon or action `icon`) | at most 4 MiB; larger files are ignored |
+| Animated GIF (`set_image` bytes or pack icon) | at most 4 MiB, 300 frames, 4096 x 4096 pixels per frame, and 96 million pixels in total (frames x width x height, so 300 frames of 480 x 480 fit but 100 frames of 1024 x 1024 do not); frame delays under 20 ms play as 100 ms; a GIF over any limit stays a still first frame |
 
 ## Process lifecycle
 
