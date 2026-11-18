@@ -2,6 +2,7 @@
 
 import json
 import logging
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -359,17 +360,29 @@ class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
         if not path_str:
             return
         path = Path(path_str)
-        try:
-            if path.stat().st_size > MAX_IMPORT_BYTES:
-                QMessageBox.warning(self, "Import icon", f"{path.name} is larger than 4 MiB and cannot be imported.")
-                return
-            data = path.read_bytes()
-        except OSError as exc:
-            QMessageBox.warning(self, "Import icon", f"Cannot read {path.name}: {exc}")
+        data = self._read_icon_file(path)
+        if data is None:
             return
         dialog = IconImportDialog(self, self.connection_manager, path.name, data)
         dialog.imported.connect(lambda file: self.pack_icon_selected.emit("decker.user", file))
         dialog.exec()
+
+    def _read_icon_file(self, path: Path) -> bytes | None:
+        try:
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode):
+                QMessageBox.warning(self, "Import icon", f"{path.name} is not a regular file.")
+                return None
+            if info.st_size <= MAX_IMPORT_BYTES:
+                with path.open("rb") as handle:
+                    data = handle.read(MAX_IMPORT_BYTES + 1)
+                if len(data) <= MAX_IMPORT_BYTES:
+                    return data
+        except OSError as exc:
+            QMessageBox.warning(self, "Import icon", f"Cannot read {path.name}: {exc}")
+            return None
+        QMessageBox.warning(self, "Import icon", f"{path.name} is larger than 4 MiB and cannot be imported.")
+        return None
 
     def _browse_icon_packs(self) -> None:
         dialog = IconBrowserDialog(self, self.connection_manager)

@@ -30,7 +30,7 @@ class _RpcCaller(Protocol):  # pylint: disable=too-few-public-methods
         ...
 
 
-class IconImportDialog(QDialog):  # pylint: disable=too-many-instance-attributes
+class IconImportDialog(QDialog):  # pylint: disable=too-many-instance-attributes,too-few-public-methods
     """Choose an id and resize options for an image file, then import it through the server."""
 
     imported = pyqtSignal(str)
