@@ -1,8 +1,11 @@
 import io
+import random
+import time
+import warnings
 
 import pytest
 from assertpy import assert_that
-from PIL import Image
+from PIL import Image, ImageFile
 from PIL.GifImagePlugin import GifImageFile
 
 from decker.animation import gif
@@ -162,16 +165,29 @@ def test_gif_bytes_over_the_icon_size_cap_are_not_animated(monkeypatch: pytest.M
         decode_gif(data)
 
 
-def _count_seeks(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    seeks: list[int] = []
-    original = GifImageFile.seek
+def _spy_on_pillow_work(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record every frame seek (Image.open and n_frames included) and every pixel load or load preparation."""
+    calls: list[str] = []
+    original_seek = GifImageFile._seek  # pylint: disable=protected-access
+    original_prepare = GifImageFile.load_prepare
+    original_load = ImageFile.ImageFile.load
 
-    def seek(self: GifImageFile, frame: int) -> None:
-        seeks.append(frame)
-        original(self, frame)
+    def seek(self: GifImageFile, frame: int, update_image: bool = True) -> None:
+        calls.append(f"seek {frame}")
+        original_seek(self, frame, update_image)
 
-    monkeypatch.setattr(GifImageFile, "seek", seek)
-    return seeks
+    def load_prepare(self: GifImageFile) -> None:
+        calls.append("load_prepare")
+        original_prepare(self)
+
+    def load(self: ImageFile.ImageFile) -> object:
+        calls.append("load")
+        return original_load(self)
+
+    monkeypatch.setattr(GifImageFile, "_seek", seek)
+    monkeypatch.setattr(GifImageFile, "load_prepare", load_prepare)
+    monkeypatch.setattr(ImageFile.ImageFile, "load", load)
+    return calls
 
 
 # 2x2 logical screen and a 2x2 first frame, then frames that make Pillow grow the canvas while iterating.
@@ -183,18 +199,112 @@ _GROWN_SHAPES = {
 
 
 @pytest.mark.parametrize("sizes", _GROWN_SHAPES.values(), ids=_GROWN_SHAPES.keys())
-def test_frames_that_outgrow_the_logical_screen_are_rejected_before_any_frame_is_decoded(
-    sizes: list[tuple[int, int]], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("junk", [b"", b"\x00", b"\x7f\x00\xff"], ids=["clean", "zero-byte", "junk-bytes"])
+def test_frames_that_outgrow_the_logical_screen_are_rejected_before_pillow_touches_them(
+    sizes: list[tuple[int, int]], junk: bytes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    data = grown_gif((2, 2), sizes)
+    data = grown_gif((2, 2), sizes, junk=junk)
     assert_that(len(data)).is_less_than(300 * 1024)
-    seeks = _count_seeks(monkeypatch)
+    seeks = _spy_on_pillow_work(monkeypatch)
 
     assert_that(is_animated_gif(data)).is_false()
     with pytest.raises(GifError, match="too large|too many pixels"):
         decode_gif(data)
 
     assert_that(seeks).is_empty()
+
+
+@pytest.mark.parametrize("junk", [b"", b"\x00"], ids=["clean", "zero-byte"])
+def test_a_huge_frame_with_a_disposal_fill_is_rejected_before_pillow_allocates_it(
+    junk: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = grown_gif((2, 2), [(2, 2), (12000, 12000), (2, 2)], junk=junk, disposal=2)
+    calls = _spy_on_pillow_work(monkeypatch)
+
+    assert_that(is_animated_gif(data)).is_false()
+    with pytest.raises(GifError, match="too large"):
+        decode_gif(data)
+
+    assert_that(calls).is_empty()
+
+
+def test_padding_bytes_between_blocks_do_not_stop_a_gif_from_playing() -> None:
+    data = grown_gif((16, 16), [(16, 16)] * 3, junk=b"\x00\x00")
+
+    assert_that(is_animated_gif(data)).is_true()
+    assert_that(decode_gif(data)).is_length(3)
+
+
+def test_a_block_walk_that_disagrees_with_the_decoder_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = grown_gif((8, 8), [(8, 8)] * 3)
+    monkeypatch.setattr(gif, "_check_descriptors", lambda data: 2)
+
+    assert_that(is_animated_gif(data)).is_false()
+    with pytest.raises(GifError, match="block walk"):
+        decode_gif(data)
+
+
+def _canvas_costs(data: bytes) -> list[int]:
+    """The canvas pixels Pillow itself pays for each frame; an unreadable GIF costs nothing."""
+    costs: list[int] = []
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            for index in range(getattr(image, "n_frames", 1)):
+                image.seek(index)
+                costs.append(image.width * image.height)
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+    return costs
+
+
+def _mutants(count: int) -> list[bytes]:
+    rng = random.Random(20260518)
+    bases = [
+        grown_gif((4, 4), [(4, 4), (9, 7), (5, 5)]),
+        grown_gif((4, 4), [(4, 4), (60, 60)], junk=b"\x00", disposal=2),
+        _make_gif([_solid((255, 0, 0), 6), _solid((0, 255, 0), 6), _solid((0, 0, 255), 6)], duration=50),
+    ]
+    mutants = []
+    for _ in range(count):
+        data = bytearray(rng.choice(bases))
+        for _ in range(rng.randint(1, 3)):
+            kind = rng.randrange(3)
+            at = rng.randrange(len(data))
+            if kind == 0:
+                data[at] = rng.randrange(256)
+            elif kind == 1:
+                data.insert(at, rng.choice([0x00, 0x21, 0x2C, 0x3B, rng.randrange(256)]))
+            else:
+                del data[at:]
+                break
+        mutants.append(bytes(data))
+    return mutants
+
+
+def test_mutated_gifs_never_cost_pillow_more_than_the_budget_the_walk_enforces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gif, "MAX_RASTER_PIXELS", 2_000)
+    monkeypatch.setattr(gif, "MAX_GIF_PIXELS", 6_000)
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 40_000)  # Pillow itself cannot allocate a big canvas here
+    started = time.perf_counter()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for data in _mutants(400):
+            try:
+                gif._check_descriptors(data)  # pylint: disable=protected-access
+            except GifError:
+                continue
+            costs = _canvas_costs(data)
+            assert_that(max(costs, default=0)).is_less_than_or_equal_to(gif.MAX_RASTER_PIXELS)
+            assert_that(sum(costs)).is_less_than_or_equal_to(gif.MAX_GIF_PIXELS)
+            try:
+                decode_gif(data)
+            except GifError:
+                pass
+
+    assert_that(time.perf_counter() - started).is_less_than(20)
 
 
 def test_the_running_canvas_total_is_checked_as_frames_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
