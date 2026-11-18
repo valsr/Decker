@@ -68,11 +68,10 @@ def detect_theme(configured: str, home: Path, search_dirs: Sequence[Path]) -> st
 def build_index(theme: str, search_dirs: Sequence[Path]) -> ThemeIndex:
     """Index ``theme`` and the themes it inherits from (ending at hicolor); unreadable parts are skipped."""
     roots = _theme_roots(theme, search_dirs)
-    best: dict[tuple[str, str], tuple[int, tuple[int, int], Path]] = {}
-    for position, root in roots:
-        parser = _read_ini(root / "index.theme")
-        if parser is not None:
-            _scan_theme(root, parser, position, best)
+    allowed = _allowed_prefixes(search_dirs)
+    best: dict[tuple[str, str], tuple[int, tuple[int, int, int], Path]] = {}
+    for position, root, parser in roots:
+        _scan_theme(root, parser, position, allowed, best)
     icons: dict[str, dict[str, Path]] = {}
     for (category, icon_name), (_position, _quality, path) in best.items():
         icons.setdefault(category, {})[icon_name] = path
@@ -84,45 +83,75 @@ def theme_version(theme: str, search_dirs: Sequence[Path]) -> str:
     return _version(theme, _theme_roots(theme, search_dirs))
 
 
-def _version(theme: str, roots: Sequence[tuple[int, Path]]) -> str:
-    index_files = [root / "index.theme" for _position, root in roots]
-    return f"{theme}-{_fingerprint(index_files)}"
-
-
-def _theme_roots(theme: str, search_dirs: Sequence[Path]) -> list[tuple[int, Path]]:
-    """``(chain position, theme directory)`` for every directory in the search path that holds a theme of the chain."""
-    chain = _theme_chain(theme, search_dirs)
-    return [
-        (position, base / name)
-        for position, name in enumerate(chain)
-        for base in search_dirs
-        if (base / name / "index.theme").is_file()
-    ]
-
-
-def _fingerprint(index_files: Sequence[Path]) -> str:
+def _version(theme: str, roots: Sequence[tuple[int, Path, configparser.ConfigParser]]) -> str:
+    """Hash of what changes when a theme does: its index, its icon cache and its icon directories' mtimes."""
     digest = hashlib.md5(usedforsecurity=False)
-    for path in index_files:
-        try:
-            digest.update(f"{path}:{path.stat().st_mtime_ns};".encode())
-        except OSError:
+    for _position, root, parser in roots:
+        stamps = [root / "index.theme", root / "icon-theme.cache", *(root / d for d in _directories(parser))]
+        for path in stamps:
+            digest.update(f"{path}:{_mtime(path)};".encode())
+    return f"{theme}-{digest.hexdigest()[:8]}"
+
+
+def _mtime(path: Path) -> int:
+    try:
+        return path.stat().st_mtime_ns
+    except (OSError, ValueError):
+        return 0
+
+
+def _resolved(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return path
+
+
+def _directories(parser: configparser.ConfigParser) -> list[str]:
+    """The theme's icon directories that are safe to join onto its root (relative, no ``..``, no NUL)."""
+    listed = (d.strip() for d in parser.get("Icon Theme", "Directories", fallback="").split(","))
+    return [d for d in listed if d and "\x00" not in d and not Path(d).is_absolute() and ".." not in Path(d).parts]
+
+
+def _theme_roots(theme: str, search_dirs: Sequence[Path]) -> list[tuple[int, Path, configparser.ConfigParser]]:
+    """``(chain position, theme directory, theme definition)`` for every base dir that holds a theme of the chain.
+
+    A theme is defined by the first ``index.theme`` found; its icons may live in any base dir, including ones
+    (such as ``~/.local/share/icons/hicolor``) that have no index of their own.
+    """
+    roots: list[tuple[int, Path, configparser.ConfigParser]] = []
+    for position, name in enumerate(_theme_chain(theme, search_dirs)):
+        parser = _definition(name, search_dirs)
+        if parser is None:
             continue
-    return digest.hexdigest()[:8]
+        roots += [(position, base / name, parser) for base in search_dirs if (base / name).is_dir()]
+    return roots
+
+
+def _definition(name: str, search_dirs: Sequence[Path]) -> configparser.ConfigParser | None:
+    for base in search_dirs:
+        parser = _read_ini(base / name / "index.theme")
+        if parser is not None:
+            return parser
+    return None
 
 
 def _theme_chain(theme: str, search_dirs: Sequence[Path]) -> list[str]:
+    """The theme, then what it inherits from depth-first, then hicolor as the final fallback."""
     chain: list[str] = []
-    queue = [theme]
-    while queue:
-        name = queue.pop(0)
+
+    def visit(name: str) -> None:
         if name in chain:
-            continue
+            return
         chain.append(name)
-        for base in search_dirs:
-            parser = _read_ini(base / name / "index.theme")
-            if parser is not None:
-                queue += [p.strip() for p in parser.get("Icon Theme", "Inherits", fallback="").split(",") if p.strip()]
-                break
+        parser = _definition(name, search_dirs)
+        if parser is None:
+            return
+        for parent in (p.strip() for p in parser.get("Icon Theme", "Inherits", fallback="").split(",")):
+            if parent and parent != "hicolor":
+                visit(parent)
+
+    visit(theme)
     if "hicolor" not in chain:
         chain.append("hicolor")
     return chain
@@ -132,27 +161,54 @@ def _scan_theme(
     root: Path,
     parser: configparser.ConfigParser,
     position: int,
-    best: dict[tuple[str, str], tuple[int, tuple[int, int], Path]],
+    allowed: Sequence[str],
+    best: dict[tuple[str, str], tuple[int, tuple[int, int, int], Path]],
 ) -> None:
-    for directory in (d.strip() for d in parser.get("Icon Theme", "Directories", fallback="").split(",")):
-        if not directory or not parser.has_section(directory):
+    for directory in _directories(parser):
+        if not parser.has_section(directory):
             continue
         section = parser[directory]
         category = category_of(section.get("Context"))
         scalable = section.get("Type", "").strip().lower() == "scalable" or "scalable" in directory.lower()
-        quality = (1 if scalable else 0, _size(section))
         try:
             entries = list(os.scandir(root / directory))
-        except OSError:
+        except (OSError, ValueError):
             continue
         for entry in entries:
             icon_name = _icon_name(entry.name)
-            if icon_name is None:
+            if icon_name is None or not _servable(entry, allowed):
                 continue
+            quality = (1 if scalable else 0, _size(section), 1 if entry.name.lower().endswith(".svg") else 0)
             key = (category, icon_name)
             current = best.get(key)
             if current is None or (position, tuple(-q for q in quality)) < (current[0], tuple(-q for q in current[1])):
                 best[key] = (position, quality, Path(entry.path))
+
+
+def _servable(entry: os.DirEntry[str], allowed: Sequence[str]) -> bool:
+    """A regular image file, or a symlink to an existing image file inside the icon directories.
+
+    Symlinks are judged from their link text (resolving tens of thousands of them is slow); ``read_icon`` checks
+    the fully resolved target again before serving anything.
+    """
+    try:
+        if not entry.is_symlink():
+            return entry.is_file(follow_symlinks=False)
+        target = os.path.normpath(os.path.join(os.path.dirname(entry.path), os.readlink(entry.path)))
+        if not target.lower().endswith(IMAGE_SUFFIXES) or not any(target.startswith(root + os.sep) for root in allowed):
+            return False
+        return entry.is_file()  # follows the link: false for broken links, loops and directories
+    except (OSError, ValueError):
+        return False
+
+
+def _inside(path: Path, roots: Sequence[Path]) -> bool:
+    return any(path.is_relative_to(root) for root in roots)
+
+
+def _allowed_prefixes(search_dirs: Sequence[Path]) -> tuple[str, ...]:
+    """The search directories as plain strings, both as given and fully resolved."""
+    return tuple({os.path.normpath(str(d)) for d in search_dirs} | {str(_resolved(d)) for d in search_dirs})
 
 
 def _size(section: configparser.SectionProxy) -> int:
@@ -170,7 +226,10 @@ def _icon_name(filename: str) -> str | None:
     return None
 
 
-def _read_ini(path: Path) -> configparser.ConfigParser | None:
+_INI_CACHE: dict[Path, tuple[int, configparser.ConfigParser | None]] = {}
+
+
+def _parse_ini(path: Path) -> configparser.ConfigParser | None:
     parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.optionxform = str  # type: ignore[assignment,method-assign]  # keys are case-sensitive in desktop files
     try:
@@ -178,6 +237,20 @@ def _read_ini(path: Path) -> configparser.ConfigParser | None:
             parser.read_file(handle)
     except (OSError, UnicodeDecodeError, configparser.Error):
         return None
+    return parser
+
+
+def _read_ini(path: Path) -> configparser.ConfigParser | None:
+    """Parse an ini/desktop file, reusing the last parse while its mtime is unchanged (theme files are large)."""
+    try:
+        mtime = path.stat().st_mtime_ns
+    except (OSError, ValueError):
+        return None
+    cached = _INI_CACHE.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    parser = _parse_ini(path)
+    _INI_CACHE[path] = (mtime, parser)
     return parser
 
 
@@ -217,6 +290,18 @@ class SystemIcons:
         self._checked = 0.0
         self._lock = threading.Lock()
         self._build_lock = threading.Lock()
+        self._warm_thread: threading.Thread | None = None
+
+    def warm(self) -> None:
+        """Build the index in the background so the first icon request does not wait for it."""
+        self._warm_thread = threading.Thread(target=self._warm, name="system-icons-warm", daemon=True)
+        self._warm_thread.start()
+
+    def _warm(self) -> None:
+        try:
+            self._snapshot()
+        except Exception:  # pylint: disable=broad-except
+            logging.warning("Could not index the system icon theme", exc_info=True)
 
     def theme_name(self) -> str:
         """The theme in use (see ``detect_theme``)."""
@@ -261,37 +346,51 @@ class SystemIcons:
         if path is None:
             return None
         try:
-            resolved = path.resolve()
-            if resolved.suffix.lower() not in IMAGE_SUFFIXES or not resolved.is_file():
-                return None
-            if resolved.stat().st_size > MAX_ICON_BYTES:
-                return None
-            return resolved.read_bytes()
-        except OSError as exc:
+            return self._read_servable(path)
+        except (OSError, ValueError) as exc:
             logging.debug("Could not read system icon %s: %s", path, exc)
             return None
 
+    def _read_servable(self, path: Path) -> bytes | None:
+        """The file's bytes if it resolves to an image inside the icon directories and is small enough."""
+        resolved = path.resolve()
+        within = _inside(resolved, [_resolved(d) for d in self._search_dirs])
+        if resolved.suffix.lower() not in IMAGE_SUFFIXES or not resolved.is_file() or not within:
+            return None
+        return resolved.read_bytes() if resolved.stat().st_size <= MAX_ICON_BYTES else None
+
     def _snapshot(self) -> ThemeIndex:
+        """The current index. The theme is re-checked at most every ``recheck_s`` seconds, by one thread at a time;
+        meanwhile readers keep getting the previous index. Only the very first build makes callers wait."""
         now = time.monotonic()
         with self._lock:
             index, checked = self._index, self._checked
         if index is not None and now - checked < self._recheck_s:
             return index
+        if index is not None:
+            if not self._build_lock.acquire(blocking=False):  # pylint: disable=consider-using-with
+                return index  # another thread is refreshing; its result is picked up by the next call
+        else:
+            self._build_lock.acquire()  # pylint: disable=consider-using-with
+        try:
+            return self._refresh(now)
+        finally:
+            self._build_lock.release()
+
+    def _refresh(self, now: float) -> ThemeIndex:
+        """Rebuild the index if the theme changed (caller holds the build lock; no other lock is held during I/O)."""
+        with self._lock:
+            index = self._index
         theme = self.theme_name()
         version = theme_version(theme, self._search_dirs)
         if index is not None and index.version == version:
             with self._lock:
                 self._checked = now
             return index
-        with self._build_lock:  # one build at a time; readers never wait on file I/O
-            with self._lock:
-                index = self._index
-            if index is not None and index.version == version:
-                return index
-            built = build_index(theme, self._search_dirs)
-            with self._lock:
-                self._index, self._checked = built, now
-            return built
+        built = build_index(theme, self._search_dirs)
+        with self._lock:
+            self._index, self._checked = built, now
+        return built
 
 
 def _category_of_pack(pack_id: str) -> str | None:

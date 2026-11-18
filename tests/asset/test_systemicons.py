@@ -15,6 +15,7 @@ from decker.asset.systemicons import (
     category_of,
     detect_theme,
     icon_search_dirs,
+    theme_version,
 )
 
 
@@ -404,12 +405,23 @@ class TestSystemIcons:
         assert_that(icons.read_icon("decker.system.places", "broken")).is_none()
         assert_that(icons.read_icon("decker.system.places", "folder")).is_equal_to(b"png")
 
-    def test_a_symlink_to_an_image_elsewhere_is_served(self, tree: Path, tmp_path: Path) -> None:
-        target = tmp_path / "real.svg"
+    def test_a_symlink_to_an_image_inside_the_icon_dirs_is_served(self, tree: Path) -> None:
+        target = tree / "other-theme" / "real.svg"
+        target.parent.mkdir()
         target.write_bytes(b"<svg>real</svg>")
         (tree / "T" / "places" / "48" / "linked.png").symlink_to(target)
 
         assert_that(self._icons(tree).read_icon("decker.system.places", "linked")).is_equal_to(b"<svg>real</svg>")
+
+    def test_a_symlink_to_an_image_outside_the_icon_dirs_is_refused(self, tree: Path, tmp_path: Path) -> None:
+        private = tmp_path / "Pictures" / "private.svg"
+        private.parent.mkdir()
+        private.write_bytes(b"<svg>private</svg>")
+        (tree / "T" / "places" / "48" / "linked.png").symlink_to(private)
+        icons = self._icons(tree)
+
+        assert_that(icons.read_icon("decker.system.places", "linked")).is_none()
+        assert_that(icons.list_icons("decker.system.places")).does_not_contain("linked")
 
     def test_files_over_the_size_limit_are_refused(self, tree: Path, monkeypatch) -> None:
         import decker.asset.systemicons as module
@@ -493,3 +505,204 @@ class TestSystemIcons:
     def test_the_theme_is_detected_from_the_configured_name(self, tree: Path) -> None:
         assert_that(self._icons(tree).theme_name()).is_equal_to("T")
         assert_that(self._icons(tree, "NotInstalled").theme_name()).is_equal_to("hicolor")
+
+
+class TestReviewFixes:
+    DIRS = {"apps/scalable": {"Context": "Applications", "Size": "48", "Type": "Scalable"}}
+
+    def test_icons_in_a_base_dir_without_an_index_theme_are_indexed(self, tmp_path: Path) -> None:
+        system, user = tmp_path / "system", tmp_path / "user"
+        make_theme(system, "hicolor", self.DIRS, files=("apps/scalable/sys-app.svg",))
+        (user / "hicolor" / "apps" / "scalable").mkdir(parents=True)
+        (user / "hicolor" / "apps" / "scalable" / "steam_icon_1.svg").write_bytes(b"<svg/>")
+
+        icons = build_index("hicolor", [user, system]).icons["applications"]
+
+        assert_that(sorted(icons)).is_equal_to(["steam_icon_1", "sys-app"])
+
+    def test_a_theme_without_any_index_theme_stays_unknown(self, tmp_path: Path) -> None:
+        (tmp_path / "Ghost" / "apps").mkdir(parents=True)
+        (tmp_path / "Ghost" / "apps" / "x.png").write_bytes(b"png")
+
+        assert_that(build_index("Ghost", [tmp_path]).icons).is_empty()
+
+    def test_the_version_changes_when_an_icon_is_added_or_removed(self, tmp_path: Path) -> None:
+        theme = make_theme(tmp_path, "T", self.DIRS, files=("apps/scalable/a.svg",))
+        before = theme_version("T", [tmp_path])
+
+        added = theme / "apps/scalable/b.svg"
+        added.write_bytes(b"<svg/>")
+        os.utime(theme / "apps/scalable", ns=(5_000_000_000, 5_000_000_000))
+        after_add = theme_version("T", [tmp_path])
+        added.unlink()
+        os.utime(theme / "apps/scalable", ns=(6_000_000_000, 6_000_000_000))
+        after_remove = theme_version("T", [tmp_path])
+
+        assert_that(after_add).is_not_equal_to(before)
+        assert_that(after_remove).is_not_equal_to(after_add)
+
+    def test_the_version_changes_when_the_icon_theme_cache_is_refreshed(self, tmp_path: Path) -> None:
+        theme = make_theme(tmp_path, "T", self.DIRS, files=("apps/scalable/a.svg",))
+        (theme / "icon-theme.cache").write_bytes(b"x")
+        before = theme_version("T", [tmp_path])
+
+        os.utime(theme / "icon-theme.cache", ns=(7_000_000_000, 7_000_000_000))
+
+        assert_that(theme_version("T", [tmp_path])).is_not_equal_to(before)
+
+    def test_index_files_are_parsed_once_until_they_change(self, tmp_path: Path, monkeypatch) -> None:
+        import decker.asset.systemicons as module
+
+        make_theme(tmp_path, "T", self.DIRS, files=("apps/scalable/a.svg",))
+        make_theme(tmp_path, "hicolor", {})
+        parsed: list[Path] = []
+        real = module._parse_ini
+
+        def counting(path: Path):
+            parsed.append(path)
+            return real(path)
+
+        monkeypatch.setattr(module, "_parse_ini", counting)
+
+        theme_version("T", [tmp_path])
+        first = len(parsed)
+        theme_version("T", [tmp_path])
+        theme_version("T", [tmp_path])
+
+        assert_that(first).is_greater_than(0)
+        assert_that(parsed).is_length(first)
+
+    def test_readers_are_not_blocked_while_the_index_is_rebuilt(self, tmp_path: Path, monkeypatch) -> None:
+        import threading
+        import time
+
+        import decker.asset.systemicons as module
+        from decker.asset.systemicons import SystemIcons
+
+        theme = make_theme(tmp_path, "T", self.DIRS, files=("apps/scalable/a.svg",))
+        make_theme(tmp_path, "hicolor", {})
+        icons = SystemIcons(search_dirs=[tmp_path], home=tmp_path / "h", configured_theme=lambda: "T", recheck_s=0)
+        assert_that(icons.list_icons("decker.system.applications")).is_equal_to(["a"])
+        real = module.build_index
+        started = threading.Event()
+
+        def slow(*args, **kwargs):
+            started.set()
+            time.sleep(0.4)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(module, "build_index", slow)
+        (theme / "apps/scalable/b.svg").write_bytes(b"<svg/>")
+        os.utime(theme / "apps/scalable", ns=(8_000_000_000, 8_000_000_000))
+        refresher = threading.Thread(target=lambda: icons.list_icons("decker.system.applications"))
+        refresher.start()
+        assert_that(started.wait(2)).is_true()
+
+        began = time.monotonic()
+        old = icons.list_icons("decker.system.applications")
+        waited = time.monotonic() - began
+        refresher.join(5)
+
+        assert_that(waited).is_less_than(0.2)
+        assert_that(old).is_equal_to(["a"])
+        assert_that(icons.list_icons("decker.system.applications")).is_equal_to(["a", "b"])
+
+    def test_a_nul_in_directories_does_not_break_listing(self, tmp_path: Path) -> None:
+        theme = make_theme(tmp_path, "T", self.DIRS, files=("apps/scalable/a.svg",))
+        text = (theme / "index.theme").read_text(encoding="utf-8")
+        text = text.replace("Directories=", "Directories=bad\x00dir,") + "\n[bad\x00dir]\nContext=Actions\nSize=48\n"
+        (theme / "index.theme").write_text(text, encoding="utf-8")
+
+        assert_that(sorted(build_index("T", [tmp_path]).icons["applications"])).is_equal_to(["a"])
+
+    def test_directories_cannot_leave_the_theme(self, tmp_path: Path) -> None:
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        (outside / "stolen.png").write_bytes(b"png")
+        theme = make_theme(tmp_path, "T", self.DIRS, files=("apps/scalable/a.svg",))
+        text = (theme / "index.theme").read_text(encoding="utf-8")
+        text = text.replace("Directories=", f"Directories={outside},../elsewhere,")
+        text += f"\n[{outside}]\nContext=Actions\nSize=48\n\n[../elsewhere]\nContext=Actions\nSize=48\n"
+        (theme / "index.theme").write_text(text, encoding="utf-8")
+
+        icons = build_index("T", [tmp_path]).icons
+
+        assert_that(icons.get("actions", {})).does_not_contain_key("stolen")
+        assert_that(icons["applications"]).contains_key("a")
+
+    def test_names_that_can_never_be_served_are_not_listed(self, tmp_path: Path) -> None:
+        theme = make_theme(tmp_path, "T", self.DIRS, files=("apps/scalable/ok.svg",))
+        folder = theme / "apps/scalable"
+        text_file = tmp_path / "pw.txt"
+        text_file.write_text("x")
+        (folder / "broken.svg").symlink_to(tmp_path / "gone.svg")
+        (folder / "nonimage.svg").symlink_to(text_file)
+        (folder / "dir.svg").symlink_to(tmp_path)
+        (folder / "loop.svg").symlink_to(folder / "loop.svg")
+
+        assert_that(sorted(build_index("T", [tmp_path]).icons["applications"])).is_equal_to(["ok"])
+
+    def test_inheritance_is_depth_first_and_hicolor_comes_last(self, tmp_path: Path) -> None:
+        make_theme(tmp_path, "Child", {}, inherits="hicolor,Mid,Other")
+        make_theme(tmp_path, "Mid", {}, inherits="Grand")
+        make_theme(tmp_path, "Grand", {})
+        make_theme(tmp_path, "Other", {})
+        make_theme(tmp_path, "hicolor", {})
+
+        from decker.asset.systemicons import _theme_chain
+
+        assert_that(_theme_chain("Child", [tmp_path])).is_equal_to(["Child", "Mid", "Grand", "Other", "hicolor"])
+
+    def test_svg_beats_png_in_the_same_directory(self, tmp_path: Path) -> None:
+        make_theme(
+            tmp_path,
+            "T",
+            {"apps/48": {"Context": "Applications", "Size": "48", "Type": "Fixed"}},
+            files=("apps/48/both.png", "apps/48/both.svg"),
+        )
+
+        assert_that(build_index("T", [tmp_path]).icons["applications"]["both"].suffix).is_equal_to(".svg")
+
+
+class TestWarmUp:
+    def test_warm_builds_the_index_in_the_background_once(self, tmp_path: Path, monkeypatch) -> None:
+        import threading
+
+        import decker.asset.systemicons as module
+        from decker.asset.systemicons import SystemIcons
+
+        make_theme(tmp_path, "T", TestReviewFixes.DIRS, files=("apps/scalable/a.svg",))
+        make_theme(tmp_path, "hicolor", {})
+        builds: list[str] = []
+        real = module.build_index
+        done = threading.Event()
+
+        def counting(*args, **kwargs):
+            builds.append("x")
+            try:
+                return real(*args, **kwargs)
+            finally:
+                done.set()
+
+        monkeypatch.setattr(module, "build_index", counting)
+        icons = SystemIcons(search_dirs=[tmp_path], home=tmp_path / "h", configured_theme=lambda: "T")
+
+        icons.warm()
+        assert_that(done.wait(5)).is_true()
+        assert_that(icons.list_icons("decker.system.applications")).is_equal_to(["a"])
+
+        assert_that(builds).is_length(1)
+
+    def test_warm_never_raises(self, tmp_path: Path, monkeypatch) -> None:
+        import decker.asset.systemicons as module
+        from decker.asset.systemicons import SystemIcons
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(module, "build_index", boom)
+        icons = SystemIcons(search_dirs=[tmp_path], home=tmp_path / "h", configured_theme=lambda: "T")
+
+        icons.warm()
+        assert icons._warm_thread is not None  # pylint: disable=protected-access
+        icons._warm_thread.join(5)  # pylint: disable=protected-access
