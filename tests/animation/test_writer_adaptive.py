@@ -68,6 +68,7 @@ class _Factory:
         self.animations: dict[int, Animation] = {q: _animation(q, reports, delay_ms) for q in reports}
         self.ready: set[int] = set(ready)
         self.calls: list[int] = []
+        self.failed: bool = False
 
     def frames_for(self, spec: AnimationSpec, fmt: KeyFormat, quality: int) -> Animation | None:
         assert_that(fmt).is_equal_to(FMT)
@@ -77,6 +78,9 @@ class _Factory:
     def cached_frames(self, spec: AnimationSpec, fmt: KeyFormat, quality: int) -> Animation | None:
         assert_that(fmt).is_equal_to(FMT)
         return self.animations[quality] if quality in self.ready else None
+
+    def is_failed(self, spec: AnimationSpec) -> bool:
+        return self.failed
 
 
 SPEC = AnimationSpec(b"gif", {}, "", 1.0)
@@ -333,6 +337,23 @@ def test_play_spec_polls_a_pending_build_without_spinning() -> None:
     factory.ready.add(100)
     sim.run_until(START + 1.2)
     assert_that(sim.deck.frames_of(0)[0]).is_equal_to(b"7|q100f0")
+
+
+def test_a_failed_build_is_dropped_from_waiting_and_no_longer_polled() -> None:
+    factory = _Factory(REPORTS, ready=())
+    sim = _Sim(factory)
+    sim.writer.play_spec(0, SPEC)
+    sim.run_until(START + 0.5)
+    assert_that(factory.calls).is_not_empty()
+
+    factory.failed = True
+    sim.run_until(START + 1.0)
+    calls = len(factory.calls)
+    sim.run_until(START + 3.0)
+
+    assert_that(len(factory.calls)).is_equal_to(calls)
+    assert_that(sim.writer.animation_id(0)).is_none()
+    assert_that(sim.writer.step(sim.clock.now)).is_none()
 
 
 def test_animation_id_names_the_waiting_then_playing_spec_until_the_key_is_stopped() -> None:

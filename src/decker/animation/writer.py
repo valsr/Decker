@@ -82,6 +82,9 @@ class FrameSource(Protocol):
     def cached_frames(self, spec: AnimationSpec, fmt: KeyFormat, quality: int) -> Animation | None:
         """Return the animation only if it is already built; never starts a build."""
 
+    def is_failed(self, spec: AnimationSpec) -> bool:
+        """Return True once spec's GIF is known not to build, so waiting for its frames is pointless."""
+
 
 @dataclass(frozen=True)
 class AdaptiveConfig:
@@ -226,6 +229,9 @@ class _Adapter:
             return
         level_quality = self.level.quality
         for key_index, spec in list(self.waiting.items()):
+            if self.factory.is_failed(spec):
+                del self.waiting[key_index]  # the key keeps its poster; polling a failed build would never end
+                continue
             animation = self._any_cached(spec, level_quality) or self.factory.frames_for(spec, self.fmt, level_quality)
             if animation is not None:
                 del self.waiting[key_index]

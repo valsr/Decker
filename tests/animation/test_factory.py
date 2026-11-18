@@ -225,6 +225,45 @@ def test_corrupt_gif_logs_one_warning_and_returns_none_repeatedly(
     assert_that(warnings).is_length(1)
 
 
+def test_is_failed_turns_true_once_the_gif_failed_to_build(factory: AnimationFactory) -> None:
+    spec = _spec(gif=b"GIF89a this is not a gif")
+    assert_that(factory.is_failed(spec)).is_false()
+
+    factory.frames_for(spec, _FMT, 90)
+    assert_that(factory.wait_idle(10)).is_true()
+
+    assert_that(factory.is_failed(spec)).is_true()
+    assert_that(factory.is_failed(_spec())).is_false()
+
+
+def test_a_gif_over_the_pixel_budget_fails_from_its_header_with_one_warning(
+    factory: AnimationFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    buffer = io.BytesIO()
+    tiny = [Image.new("L", (2, 2), index) for index in range(300)]
+    tiny[0].save(buffer, format="GIF", save_all=True, append_images=tiny[1:], duration=100)
+    data = bytearray(buffer.getvalue())
+    data[6:10] = (4096).to_bytes(2, "little") * 2  # the logical screen claims 300 frames of 4096x4096
+    spec = _spec(gif=bytes(data))
+    caplog.set_level(logging.WARNING, logger="decker.animation.factory")
+
+    for _ in range(3):
+        factory.frames_for(spec, _FMT, 90)
+        assert_that(factory.wait_idle(10)).is_true()
+
+    assert_that(factory.is_failed(spec)).is_true()
+    assert_that([r for r in caplog.records if r.levelno == logging.WARNING]).is_length(1)
+
+
+def test_a_big_canvas_gif_is_composed_from_downscaled_frames(factory: AnimationFactory) -> None:
+    spec = _spec(gif=_make_gif(count=3, size=400))
+
+    animation = _built(factory, spec)
+
+    assert_that(animation.frames).is_length(3)
+    assert_that(Image.open(io.BytesIO(animation.poster_png)).size).is_equal_to((144, 144))
+
+
 def test_preview_webp_is_a_playable_animation_with_all_frames(factory: AnimationFactory) -> None:
     spec = _spec(gif=_make_gif(count=4))
 

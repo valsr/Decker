@@ -153,6 +153,11 @@ class AnimationFactory:
             cached: Animation | None = self._frames.get((spec.animation_id, fmt, quality))
             return cached
 
+    def is_failed(self, spec: AnimationSpec) -> bool:
+        """Return True once spec's GIF has failed to build (or preview)."""
+        with self._state:
+            return spec.gif_sha in self._failed
+
     def preview_webp(self, spec: AnimationSpec) -> bytes | None:
         """Return the composed animation at 144 px as animated WebP (GIF without WebP support), or None."""
         if spec.gif_sha in self._failed:
