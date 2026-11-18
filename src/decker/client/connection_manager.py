@@ -85,6 +85,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._reconnect_requested = threading.Event()
         self._device_refresh_requested = threading.Event()
         self._actions_refresh_requested = threading.Event()
+        self._devices_refresh_requested = threading.Event()
         self._thread: threading.Thread | None = None
         self.state: ServerState = ServerState.DISCONNECTED
         self._reported_plugin_failures: set[str] = set()
@@ -128,6 +129,11 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._device_refresh_requested.set()
         self._wake_event.set()
 
+    def request_devices_refresh(self) -> None:
+        """Re-fetch the device list (and so notice a device that went away or came back) on the worker thread."""
+        self._devices_refresh_requested.set()
+        self._wake_event.set()
+
     def request_actions_refresh(self) -> None:
         """Re-fetch the plugin action list on the worker thread."""
         self._actions_refresh_requested.set()
@@ -164,6 +170,9 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         if self._device_refresh_requested.is_set():
             self._device_refresh_requested.clear()
             self._refresh_active_device()
+        if self._devices_refresh_requested.is_set():
+            self._devices_refresh_requested.clear()
+            self._refresh_devices()
         if self._actions_refresh_requested.is_set():
             self._actions_refresh_requested.clear()
             self._refresh_actions()
@@ -367,8 +376,8 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             EventManager.get().push(
                 OpenUrlRequestedEvent(plugin_id=str(data.get("plugin_id", "")), url=str(data.get("url", "")))
             )
-        elif event_type in ("pages_changed", "profiles_changed"):
-            self._on_layout_changed(data)
+        elif event_type in ("pages_changed", "profiles_changed", "devices_changed"):
+            self._on_layout_changed(event_type, data)
         elif event_type == "plugin_install_progress":
             EventManager.get().push(
                 PluginInstallProgressEvent(job_id=str(data.get("job_id", "")), message=str(data.get("message", "")))
@@ -385,7 +394,9 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         else:
             logging.debug("Unknown server event type: %s", event_type)
 
-    def _on_layout_changed(self, data: dict[str, Any]) -> None:
+    def _on_layout_changed(self, event_type: str, data: dict[str, Any]) -> None:
+        if event_type == "devices_changed":
+            self.request_devices_refresh()  # a device went away or came back, whichever device it was
         if data.get("device_id") == _active_device_id():
             self.request_device_refresh()
 

@@ -11,6 +11,7 @@ from typing import Any
 from rpyc.utils.server import ThreadedServer
 
 import decker.common.logging
+from decker.common import config
 from decker.common import paths as decker_paths
 from decker.common.context import ServerAppContext
 from decker.common.manager import Manager
@@ -262,6 +263,7 @@ class ServerProcess:
             lambda event, payload: ctx.event_bus.push(event, json.dumps(payload)),
         )
         self._restore_devices(device_id_filter=matched_device_id)
+        ctx.device_manager.start_watching(float(config.get_or_default("server.device_watch_interval", 2.0)))
 
         server = NoDelayThreadedServer(
             DeckerService,

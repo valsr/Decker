@@ -716,3 +716,39 @@ class TestProfileRefresh:  # pylint: disable=protected-access
 
         pages = [e for e in EventManager.get().drain() if isinstance(e, PagesUpdatedEvent)][0].pages
         assert_that(pages.profile_id).is_equal_to(3)
+
+
+class TestDevicesChanged:  # pylint: disable=protected-access
+    def setup_method(self):
+        EventManager.reset()
+        AppContext.reset()
+        AppContext.get().active_device = DeviceHardwareInfo(
+            id="dev1", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15
+        )
+        self.manager = ConnectionManager()
+        self.conn = MagicMock()
+        self.conn.root.devices_list.return_value = json.dumps([])
+        self.conn.root.pages_list.return_value = str(_pages_payload(_DEVICE_PAGES))
+        self.conn.root.profiles_list.return_value = str(_profiles_payload(_DEVICE_PROFILES))
+        self.conn.root.key_get_states.return_value = json.dumps([])
+        self.manager._conn = self.conn
+
+    def teardown_method(self):
+        self.manager._conn = None
+        AppContext.reset()
+
+    def test_the_event_asks_for_a_device_list_and_active_device_refresh(self):
+        self.manager._on_server_event("devices_changed", json.dumps({"device_id": "dev1"}))
+
+        assert_that(self.manager._devices_refresh_requested.is_set()).is_true()
+        assert_that(self.manager._device_refresh_requested.is_set()).is_true()
+        self.conn.root.devices_list.assert_not_called()  # fetched later on the worker thread
+
+    def test_the_worker_lists_devices_and_refreshes_the_active_one(self):
+        self.manager._on_server_event("devices_changed", json.dumps({"device_id": "dev1"}))
+        with patch("decker.client.connection_manager._HEARTBEAT_INTERVAL_S", 3600):
+            self.manager._run_once(last_heartbeat=time.monotonic())
+
+        self.conn.root.devices_list.assert_called_once_with()
+        self.conn.root.pages_list.assert_called_once_with("dev1")
+        assert_that(self.manager._devices_refresh_requested.is_set()).is_false()

@@ -1,5 +1,6 @@
 """Stream Deck device lifecycle management."""
 
+import json
 import logging
 import threading
 import zlib
@@ -50,16 +51,125 @@ class DeviceManager(Manager):
         self._devices: dict[str, Device] = {}
         self._states: dict[str, DeviceState] = {}
         self._lock = threading.Lock()
+        self._context: "ServerContext | None" = None
+        self._watcher: threading.Thread | None = None
+        self._stop_watch = threading.Event()
+        self._unopenable: set[str] = set()  # device paths whose failure to open has been logged
         self._state_store: "DeviceStateStore | None" = None
         self._page_resolver: Callable[[str], str] = initial_page_id
 
     def create(self, context: "ServerContext") -> None:
         """Wire the state store and active-page lookup; devices are opened lazily by open_device()."""
+        self._context = context
         self._state_store = context.device_state_store
         self._page_resolver = context.page_controller.active_page_id
 
+    # ------------------------------------------------------------------
+    # Hot-plug and sleep/wake
+    # ------------------------------------------------------------------
+
+    def start_watching(self, interval_s: float = 2.0) -> None:
+        """Start a thread that notices devices that vanish (e.g. in PC sleep) or appear, and reopens them."""
+        if self._watcher is not None and self._watcher.is_alive():
+            return
+        self._stop_watch.clear()
+        self._watcher = threading.Thread(target=self._watch, args=(interval_s,), name="device-watch", daemon=True)
+        self._watcher.start()
+
+    def stop_watching(self) -> None:
+        """Stop the watcher thread."""
+        self._stop_watch.set()
+        watcher = self._watcher
+        if watcher is not None and watcher is not threading.current_thread():
+            watcher.join(timeout=5)
+        self._watcher = None
+
+    def _watch(self, interval_s: float) -> None:
+        while not self._stop_watch.wait(interval_s):
+            try:
+                self.check_devices()
+            except Exception:  # pylint: disable=broad-except
+                logging.exception("DeviceManager: device check failed")
+
+    def check_devices(self) -> None:
+        """One watcher pass: drop devices that stopped answering, open (or reopen) any that are present.
+
+        A device that was lost and is back is opened afresh, its page is redrawn and its actions reactivated
+        (`PageController.restore`), and clients are told with a `devices_changed` event.
+        """
+        lost = self._drop_lost_devices()
+        opened = self._open_present_devices()
+        for device_id in lost:
+            self._announce(device_id)
+        for device_id in opened:
+            self._restore(device_id)
+            self._announce(device_id)
+
+    def _drop_lost_devices(self) -> list[str]:
+        with self._lock:
+            known = list(self._devices.values())
+        lost: list[str] = []
+        for device in known:
+            if device.try_validate():  # a dead one also removes itself from _devices (see _on_device_closed)
+                continue
+            logging.warning(
+                "DeviceManager: device %s stopped answering; it will be reopened when it is back", device.id
+            )
+            lost.append(device.device_id)
+            with self._lock:
+                self._devices.pop(device.device_id, None)
+            device.close()  # releases the stale handle; errors are logged by Device.close
+        return lost
+
+    def _open_present_devices(self) -> list[str]:
+        try:
+            decks = _HardwareDeviceManager().enumerate()
+        except Exception:  # pylint: disable=broad-except
+            logging.debug("DeviceManager: could not enumerate devices", exc_info=True)
+            return []
+        with self._lock:
+            open_paths = {d.path for d in self._devices.values()}
+        opened: list[str] = []
+        for deck in decks:
+            try:
+                path = deck.id()
+                if path in open_paths:
+                    continue
+                opened.append(self._open_device(deck).device_id)
+                self._unopenable.discard(path)
+                logging.info("DeviceManager: opened device at %s", path)
+            except Exception as exc:  # pylint: disable=broad-except
+                self._log_unopenable(deck, exc)
+        return opened
+
+    def _log_unopenable(self, deck: StreamDeck, exc: Exception) -> None:
+        try:
+            path = deck.id()
+        except Exception:  # pylint: disable=broad-except
+            path = "?"
+        level = logging.DEBUG if path in self._unopenable else logging.WARNING
+        self._unopenable.add(path)
+        logging.log(level, "DeviceManager: could not open device at %s: %s", path, exc)
+
+    def _restore(self, device_id: str) -> None:
+        if self._context is None:
+            return
+        try:
+            self._context.page_controller.restore(device_id)
+        except Exception:  # pylint: disable=broad-except
+            logging.exception("DeviceManager: could not restore device %s after it was opened", device_id)
+
+    def _announce(self, device_id: str) -> None:
+        if self._context is None:
+            return
+        try:
+            self._context.event_bus.push("devices_changed", json.dumps({"device_id": device_id}))
+        except Exception:  # pylint: disable=broad-except
+            logging.debug("DeviceManager: could not announce the device change", exc_info=True)
+
     def destroy(self) -> None:
         """Reset and close all open devices."""
+        self.stop_watching()
         with self._lock:
             devices_to_close = list(self._devices.values())
             self._devices.clear()
