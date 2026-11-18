@@ -101,8 +101,8 @@ JSON with snake_case keys. Unknown keys are ignored. `format` must be the intege
 ### `icon_packs[]`
 
 `{id, name, path, description?}`. `id` starts with the plugin id. `path` is a folder inside the package holding
-image files (`svg`, `png`, `jpg`, `jpeg`), optionally ordered by an `icons.json` index. Icon packs
-need no `runtime`. Packs are served to clients over RPC; individual icons are limited in size.
+image files (`svg`, `png`, `jpg`, `jpeg`, `gif`; GIFs animate on keys), optionally ordered by an `icons.json` index. Icon packs
+need no `runtime`. Packs are served to clients over RPC; individual icons are limited to 4 MiB.
 
 ## Where plugins come from
 

@@ -13,7 +13,7 @@ from decker.common.icon_ref import DECKER_ICON_REF, parse_icon_ref
 from decker.plugin.icons import MAX_ICON_BYTES
 from decker.plugin.loader import InstalledPlugin
 
-_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".svg"})
+_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg"})
 _FailureCallback = Callable[[str, str], None]
 _DECKER_ICON = Path(__file__).parent.parent / "assets" / "decker.svg"
 
