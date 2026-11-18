@@ -677,6 +677,46 @@ class TestDeviceManagerAnimations:
         assert_that(factory.frames_for(make_spec(), MagicMock(), 90)).is_none()  # closed: never builds
 
 
+class TestAnimationSettingsAreClamped:
+    @staticmethod
+    def _created(monkeypatch, settings: dict[str, float]) -> DeviceManager:
+        real = config.get_as_or_default
+        monkeypatch.setattr(
+            "decker.server.devices.manager.config.get_as_or_default",
+            lambda path, kind, default: settings.get(path, real(path, kind, default)),
+        )
+        dm = _manager()
+        dm.create(MagicMock())
+        return dm
+
+    @pytest.mark.parametrize(
+        ("percent", "used"), [(30, 0.30), (-5, 0.10), (0, 0.10), (5, 0.10), (150, 0.90), (91, 0.90), (75, 0.75)]
+    )
+    def test_budget_percent_is_clamped_to_10_to_90_with_one_warning(self, monkeypatch, caplog, percent, used):
+        dm = self._created(monkeypatch, {"animation.budget_percent": percent})
+        try:
+            warned = [r for r in caplog.records if "animation.budget_percent" in r.getMessage()]
+            assert_that(dm._animation_budget).is_close_to(used, 1e-9)  # pylint: disable=protected-access
+            assert_that(warned).is_length(0 if 10 <= percent <= 90 else 1)
+            if warned:
+                assert_that(warned[0].getMessage()).contains(str(percent)).contains(f"using {used * 100}")
+        finally:
+            dm.destroy()
+
+    @pytest.mark.parametrize(("megabytes", "used"), [(0, 1), (-3, 1), (1, 1), (64, 64)])
+    def test_cache_mb_is_at_least_1_with_one_warning(self, monkeypatch, caplog, megabytes, used):
+        dm = self._created(monkeypatch, {"animation.cache_mb": megabytes})
+        try:
+            warned = [r for r in caplog.records if "animation.cache_mb" in r.getMessage()]
+            assert dm.animation_factory is not None
+            assert_that(dm.animation_factory._cache_bytes).is_equal_to(
+                used * 1024 * 1024
+            )  # pylint: disable=protected-access
+            assert_that(warned).is_length(1 if megabytes < 1 else 0)
+        finally:
+            dm.destroy()
+
+
 class TestLostAnimatingDevice:
     """A deck that vanishes (PC sleep) while animating must be dropped and fully closed, and never evict its successor."""
 

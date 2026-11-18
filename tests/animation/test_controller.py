@@ -152,3 +152,45 @@ def test_bmp_ladder_has_no_quality_change() -> None:
     assert_that({level.quality for level in ladder}).is_equal_to({100})
     assert_that([level.fps_cap for level in ladder]).is_equal_to([None, 30, 20, 15, 10, 5])
     assert_that(ladder_for(bmp=False)).is_equal_to(LADDER)
+
+
+def _at_second_rung(budget: float) -> LevelController:
+    controller = LevelController(LADDER, budget)
+    controller.replan(lambda level: 0.0 if level is L0 else 1e9, SECONDS_PER_REPORT)
+    controller.tick(LoadSample(0.0, 2.0, 2.0, 0.0), lambda _: 1.0, SECONDS_PER_REPORT)  # one step down
+    assert_that(controller.level).is_equal_to(L1)
+    return controller
+
+
+def _flat_demand(level: Level) -> float:
+    return 1.1 if level is L0 else 1.0  # the rung above costs 10 % more
+
+
+def test_the_default_budget_keeps_the_spec_thresholds() -> None:
+    assert_that(_at_second_rung(0.75).step_down_busy).is_equal_to(0.75)
+    assert_that(_at_second_rung(0.75).tick(LoadSample(500.0, 0.75, 0.7, 0.0), _flat_demand, 1.0)).is_equal_to(L1)
+    assert_that(_at_second_rung(0.75).tick(LoadSample(500.0, 0.76, 0.0, 0.0), _flat_demand, 1.0)).is_equal_to(L2)
+    assert_that(_at_second_rung(0.75).tick(LoadSample(500.0, 0.3, 0.4999, 0.0), _flat_demand, 1.0)).is_equal_to(L0)
+    assert_that(_at_second_rung(0.75).tick(LoadSample(500.0, 0.3, 0.50, 0.0), _flat_demand, 1.0)).is_equal_to(L1)
+    assert_that(
+        _at_second_rung(0.75).tick(LoadSample(500.0, 0.3, 0.60, 0.0), lambda x: 1.2 if x is L0 else 1.0, 1.0)
+    ).is_equal_to(L1)
+
+
+def test_a_low_budget_steps_down_above_it_and_never_steps_up_past_it() -> None:
+    assert_that(_at_second_rung(0.30).tick(LoadSample(500.0, 0.31, 0.0, 0.0), _flat_demand, 1.0)).is_equal_to(L2)
+    assert_that(_at_second_rung(0.30).tick(LoadSample(500.0, 0.25, 0.1999, 0.0), _flat_demand, 1.0)).is_equal_to(L0)
+    # 20 s busy of 0.20 is 2/3 of the budget: no step up, so the load can never be driven up to 0.65.
+    assert_that(_at_second_rung(0.30).tick(LoadSample(500.0, 0.25, 0.20, 0.0), _flat_demand, 1.0)).is_equal_to(L1)
+    # busy 0.15 projects to 0.30 > 0.87 x 0.30 = 0.26: stays.
+    assert_that(
+        _at_second_rung(0.30).tick(LoadSample(500.0, 0.2, 0.15, 0.0), lambda x: 2.0 if x is L0 else 1.0, 1.0)
+    ).is_equal_to(L1)
+
+
+def test_a_high_budget_does_not_shed_what_replan_planned() -> None:
+    controller = LevelController(LADDER, 0.90)
+    planned = controller.replan(lambda level: 0.85 if level is L0 else 0.5, 1.0)
+
+    assert_that(planned).is_equal_to(L0)
+    assert_that(controller.tick(LoadSample(10.0, 0.85, 0.85, 0.0), lambda _: 1.0, 1.0)).is_equal_to(L0)

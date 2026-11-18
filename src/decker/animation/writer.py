@@ -13,7 +13,6 @@ from typing import Protocol
 from decker.animation.controller import (
     LADDER,
     LAG_LIMIT_S,
-    STEP_DOWN_BUSY,
     Demand,
     Level,
     LevelController,
@@ -213,7 +212,7 @@ class _Adapter:
         old = self.controller.level
         new = self.controller.tick(sample, self.demand(slots), monitor.seconds_per_report)
         # Mirrors the controller's step-down rules; any other change is a step up.
-        if sample.busy_5s > STEP_DOWN_BUSY:
+        if sample.busy_5s > self.controller.step_down_busy:
             cause = "overloaded"
         elif sample.lag_s > LAG_LIMIT_S:
             cause = "frames lagging"
