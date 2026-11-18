@@ -33,28 +33,29 @@ Core functionality is expected at parity on every platform.
 | Server and monitor | Yes | Not verified | Not verified | Partial [1] | Partial [1] |
 | Hardware access (HID) | Yes | Not verified [2] | Not verified [2] | Not verified [3] | Not verified [3] |
 | GUI client | Yes | Not verified | Not verified | Not verified | Not verified |
-| System tray | Yes | Partial [4] | Not verified | Not verified | Not verified |
+| System tray | Yes | Not verified [4] | Not verified | Not verified | Not verified |
 | Plugin runtime (process isolation) | Yes | Not verified | Not verified | No [5] | Partial [5] |
 | Plugin install and repositories | Yes | Not verified | Not verified | Partial [5] | Partial [5] |
 | System Icons | Yes | Not verified | Not verified | No [6] | No [6] |
 | User icon import | Yes | Not verified | Not verified | Not verified | Not verified |
 | GIF animations | Yes | Not verified | Not verified | Not verified | Not verified |
 | CLI | Yes | Not verified | Not verified | Not verified | Not verified |
-| Daemon mode | Not verified [7] | Not verified [7] | Not verified [7] | Not verified [7] | Not verified [7] |
+| Daemon mode | No [7] | No [7] | No [7] | No [7] | No [7] |
 
 Footnotes:
 
 1. The monitor reads the server's memory from `/proc/<pid>/status` (`src/decker/server/monitor.py`), which exists only
-   on Linux. Memory limiting does not work elsewhere until the `psutil` path is the fallback (project 2).
+   on Linux. Memory limiting therefore needs `/proc`; a non-`/proc` implementation is planned in project 2.
 2. The README documents `libhidapi` setup only for Debian/Ubuntu, Fedora and Arch. Other distributions need their own
-   package name and udev rules.
+   package name, and the README does not cover device permissions.
 3. `libhidapi`, drivers and device permissions are not documented for Windows or macOS.
-4. GNOME has no system tray by default, so the tray icon needs an extension there. Not verified.
+4. GNOME has no system tray by default, and the behaviour there is untested.
 5. Plugin process control uses POSIX process groups (`os.killpg`, `src/decker/plugin/runtime/process.py` and
    `src/decker/plugin/environment.py`), which Windows does not have, and per-plugin memory is read from `/proc`. macOS
-   has process groups but no `/proc`, so plugin memory reporting is unavailable there.
+   has process groups but no `/proc`, so plugin memory reporting is unavailable there. In `environment.py`, `os.killpg` is used only while building a
+   plugin environment: it kills the install command's process group on timeout, and again after every command to
+   clean up leftover children.
 6. System Icons read the server's freedesktop icon theme; Windows and macOS have none.
-7. The `poe server --daemon` option is described in `CLAUDE.md`, but no daemon handling was found in the source, so
-   it is unconfirmed everywhere.
+7. Not implemented: the server has no `--daemon` option.
 
 Plugin support is declared per plugin, not here; see the plugins repository's table.
