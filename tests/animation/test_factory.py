@@ -192,6 +192,23 @@ def test_frames_for_returns_none_until_the_build_finishes_then_the_animation(
     assert_that(animation.animation_id).is_equal_to(spec.animation_id)
 
 
+def test_cached_frames_returns_only_built_animations_and_never_builds(factory: AnimationFactory) -> None:
+    spec = _spec()
+    assert_that(factory.cached_frames(spec, _FMT, 90)).is_none()
+    assert_that(factory.wait_idle(0.01)).is_true()
+    assert_that(factory.frames_for(spec, _FMT, 90)).is_none()
+
+    built = _built(factory, spec, 90)
+
+    assert_that(factory.cached_frames(spec, _FMT, 90)).is_same_as(built)
+    assert_that(factory.cached_frames(spec, _FMT, 75)).is_none()
+    assert_that(factory.wait_idle(0.01)).is_true()
+    broken = _spec(gif=b"GIF89a broken")
+    factory.frames_for(broken, _FMT, 90)
+    assert_that(factory.wait_idle(10)).is_true()
+    assert_that(factory.cached_frames(broken, _FMT, 90)).is_none()
+
+
 def test_corrupt_gif_logs_one_warning_and_returns_none_repeatedly(
     factory: AnimationFactory, caplog: pytest.LogCaptureFixture
 ) -> None:
