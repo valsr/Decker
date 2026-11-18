@@ -46,14 +46,22 @@ def _sub_blocks(data: bytes) -> bytes:
     return bytes(out) + b"\x00"
 
 
-def grown_gif(logical: tuple[int, int], frame_sizes: list[tuple[int, int]]) -> bytes:
-    """A GIF with the given logical screen and one uniform-colour frame per size, each drawn at the origin."""
+def grown_gif(
+    logical: tuple[int, int], frame_sizes: list[tuple[int, int]], junk: bytes = b"", disposal: int = 0
+) -> bytes:
+    """A GIF with the given logical screen and one uniform-colour frame per size, each drawn at the origin.
+
+    `junk` is written before the second frame (bytes that start no block, which Pillow skips) and `disposal` is
+    the disposal method of every frame.
+    """
     palette = bytes([0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255])
     out = bytearray(b"GIF89a")
     out += logical[0].to_bytes(2, "little") + logical[1].to_bytes(2, "little") + b"\x81\x00\x00" + palette
     out += b"\x21\xff\x0bNETSCAPE2.0\x03\x01\x00\x00\x00"
     for index, (width, height) in enumerate(frame_sizes):
-        out += b"\x21\xf9\x04\x00\x0a\x00\x00\x00"
+        if index == 1:
+            out += junk
+        out += bytes([0x21, 0xF9, 0x04, disposal << 2, 0x0A, 0x00, 0x00, 0x00])
         out += b"\x2c\x00\x00\x00\x00" + width.to_bytes(2, "little") + height.to_bytes(2, "little") + b"\x00"
         out += b"\x02" + _sub_blocks(_uniform_lzw(width * height, 1 + index % 3))
     return bytes(out + b"\x3b")
