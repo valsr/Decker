@@ -2,7 +2,6 @@
 
 import json
 import logging
-import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -24,6 +23,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListView,
+    QMessageBox,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -31,23 +31,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from decker.asset.paths import ensure_asset_dirs, user_icons_dir
 from decker.client.action_icons import decode_icon, placeholder_pixmap
 from decker.client.icon_cache import IconThumbnailCache, icon_cache
+from decker.client.icon_import_dialog import IconImportDialog
 from decker.common.icon_ref import icon_display_name
 
-_IMAGE_FILE_FILTER = "Images (*.svg *.png *.jpg *.jpeg *.gif *.webp)"
+_IMAGE_FILE_FILTER = "Images (*.svg *.png *.jpg *.jpeg *.gif)"
 _THUMB_SIZE = 64
 _FILTER_DELAY_MS = 150
 _DATA_ROLE = Qt.ItemDataRole.UserRole
-
-
-def copy_to_user_icons(source_path: Path) -> Path:
-    """Copy source_path into ~/.decker/assets/user-icons/, creating the directory if needed."""
-    ensure_asset_dirs()
-    dest_path = user_icons_dir() / source_path.name
-    shutil.copy2(source_path, dest_path)
-    return dest_path
 
 
 class RpcCaller(Protocol):  # pylint: disable=too-few-public-methods
@@ -359,11 +351,15 @@ class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
         layout.addWidget(from_pack_btn)
 
     def _choose_file(self) -> None:
+        if self.connection_manager is None or not self.connection_manager.call("plugin_install_allowed"):
+            QMessageBox.information(self, "Import icon", "Importing icons needs a local connection to the server.")
+            return
         path_str, _filter = QFileDialog.getOpenFileName(self, "Choose icon", "", _IMAGE_FILE_FILTER)
         if not path_str:
             return
-        dest = copy_to_user_icons(Path(path_str))
-        self.icon_selected.emit(str(dest))
+        dialog = IconImportDialog(self, self.connection_manager, Path(path_str))
+        dialog.imported.connect(lambda file: self.pack_icon_selected.emit("decker.user", file))
+        dialog.exec()
 
     def _browse_icon_packs(self) -> None:
         dialog = IconBrowserDialog(self, self.connection_manager)

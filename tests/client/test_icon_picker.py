@@ -10,43 +10,70 @@ from decker.client.icon_cache import IconThumbnailCache
 from decker.client.icon_picker import (
     IconBrowserDialog,
     IconPickerWidget,
-    copy_to_user_icons,
 )
 
 
-class TestCopyToUserIcons:
-    def test_copies_file_into_user_icons_dir(self, tmp_path, monkeypatch):
-        import decker.client.icon_picker as module  # pylint: disable=import-outside-toplevel
-
-        dest_dir = tmp_path / "user-icons"
-        monkeypatch.setattr(module, "user_icons_dir", lambda: dest_dir)
-        monkeypatch.setattr(module, "ensure_asset_dirs", lambda: dest_dir.mkdir(parents=True, exist_ok=True))
-
-        source = tmp_path / "icon.svg"
-        source.write_text("<svg/>")
-
-        result = copy_to_user_icons(source)
-
-        assert_that(result).is_equal_to(dest_dir / "icon.svg")
-        assert_that(result.read_text()).is_equal_to("<svg/>")
+class _Allowed:
+    def call(self, method, *_args):
+        return True if method == "plugin_install_allowed" else None
 
 
 class TestIconPickerWidget:
-    def test_choose_file_emits_icon_selected(self, qapp, tmp_path, monkeypatch):  # pylint: disable=unused-argument
+    def test_choose_file_opens_the_import_dialog_and_emits_the_pack_icon(
+        self, qapp, tmp_path, monkeypatch
+    ):  # pylint: disable=unused-argument
         import decker.client.icon_picker as module  # pylint: disable=import-outside-toplevel
 
         source = tmp_path / "icon.png"
         source.write_bytes(b"x")
         monkeypatch.setattr(module.QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(source), "")))
-        monkeypatch.setattr(module, "copy_to_user_icons", lambda path: tmp_path / "copied" / path.name)
+        opened: list[Path] = []
 
-        widget = IconPickerWidget()
-        received: list[str] = []
-        widget.icon_selected.connect(received.append)
+        class FakeImport(QObject):
+            imported = pyqtSignal(str)
+
+            def __init__(self, _parent, _cm, path):
+                super().__init__()
+                opened.append(path)
+
+            def exec(self):
+                self.imported.emit("icon.png")
+
+        class Allowed:
+            def call(self, method, *_args):
+                return True if method == "plugin_install_allowed" else None
+
+        monkeypatch.setattr(module, "IconImportDialog", FakeImport)
+        widget = IconPickerWidget(None, Allowed())
+        received: list[tuple[str, str]] = []
+        widget.pack_icon_selected.connect(lambda p, n: received.append((p, n)))
 
         widget._choose_file()  # pylint: disable=protected-access
 
-        assert_that(received).is_equal_to([str(tmp_path / "copied" / "icon.png")])
+        assert_that(opened).is_equal_to([source])
+        assert_that(received).is_equal_to([("decker.user", "icon.png")])
+
+    def test_choose_file_explains_when_import_is_not_allowed(
+        self, qapp, tmp_path, monkeypatch
+    ):  # pylint: disable=unused-argument
+        import decker.client.icon_picker as module  # pylint: disable=import-outside-toplevel
+
+        shown: list[str] = []
+        monkeypatch.setattr(module.QMessageBox, "information", staticmethod(lambda _p, _t, text: shown.append(text)))
+
+        def fail(*_a, **_k):
+            raise AssertionError("file dialog opened")
+
+        monkeypatch.setattr(module.QFileDialog, "getOpenFileName", staticmethod(fail))
+
+        class Remote:
+            def call(self, method, *_args):
+                return False if method == "plugin_install_allowed" else None
+
+        IconPickerWidget(None, Remote())._choose_file()  # pylint: disable=protected-access
+
+        assert_that(shown).is_length(1)
+        assert_that(shown[0]).contains("local connection")
 
     def test_choose_file_emits_nothing_when_dialog_cancelled(
         self, qapp, monkeypatch
@@ -54,7 +81,7 @@ class TestIconPickerWidget:
         import decker.client.icon_picker as module  # pylint: disable=import-outside-toplevel
 
         monkeypatch.setattr(module.QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", "")))
-        widget = IconPickerWidget()
+        widget = IconPickerWidget(None, _Allowed())
         received: list[str] = []
         widget.icon_selected.connect(received.append)
 
