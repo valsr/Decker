@@ -35,6 +35,7 @@ from decker.server.appearance import (
     resolve_appearance,
 )
 from decker.server.devices.state import DeviceState
+from decker.server.page_controller import PageController
 from decker.server.plugins import PluginManager
 from tests.server.animation_fixture import (
     WriteLog,
@@ -1818,6 +1819,27 @@ def _static_on(device_id: str, key: int) -> ActionTarget:
     return ActionTarget("com.t.static", _STATIC_ACTION, f"ctx-static-{key}", device_id, key)
 
 
+def _page_controller(env: Env, target: ActionTarget, appearance: dict[str, Any]) -> PageController:
+    """A real PageController over the deck_env device manager and plugin host, with one key assigned on page p1."""
+    controller = PageController()
+    store = MagicMock()
+    store.default_page_id.return_value = "p1"
+    keys = MagicMock()
+    keys.all_for_page.return_value = [
+        (target.key_index, SimpleNamespace(target=target, settings={}, appearance=appearance))
+    ]
+    controller.create(
+        SimpleNamespace(
+            page_store=store,
+            key_assignment_store=keys,
+            device_manager=env.dm,
+            plugin_manager=env.manager,
+            event_bus=env.bus,
+        )  # type: ignore[arg-type]
+    )
+    return controller
+
+
 def _animation(env: Env, device_id: str, key: int) -> Any:
     state = env.dm.get_device_state(device_id)
     assert state is not None
@@ -1998,20 +2020,53 @@ class TestAnimatedKeyFaces:
         assert_that(env.dm.playing_animation_id(device_id, 2)).is_equal_to(_animation(env, device_id, 2).animation_id)
         assert_that(wait_until(lambda: len({w[1] for w in log.for_key(2) if w[3] > mark}) >= 2)).is_true()
 
-    def test_a_recompose_after_the_device_reopens_restarts_the_animation(self, deck_env):
+    def test_restore_after_the_device_reopens_resumes_the_animation_over_the_cached_poster(self, deck_env, monkeypatch):
         env, device_id, _log = deck_env
-        target = _static_on(device_id, 2)
-        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        controller = _page_controller(env, _static_on(device_id, 2), _gif_ref("anim.gif"))
+        controller.restore(device_id)  # first show: draws the poster and starts the animation
+        assert_that(wait_until(lambda: env.dm.playing_animation_id(device_id, 2) is not None)).is_true()
+        env.dm.close_device(device_id)  # PC sleep / server restart: the new Device has no recorded animation
+        writes = _spy_device_writes(env, monkeypatch)
+        deck, log = stateful_deck(), WriteLog()
+        deck.set_key_image.side_effect = log
+
+        with patch("decker.server.devices.manager._HardwareDeviceManager") as hardware:
+            hardware.return_value.enumerate.return_value = [deck]
+            controller.restore(device_id)
+
+        assert_that(env.dm.playing_animation_id(device_id, 2)).is_not_none()
+        assert_that(_frames_written(log, 2)).is_true()
+        assert_that(writes).is_equal_to(["set_animation"])  # no second poster write
+        assert_that(_last_event(env, 2)["animation_id"]).is_equal_to(_animation(env, device_id, 2).animation_id)
+
+    def test_the_watcher_reopening_the_device_resumes_the_animation(self, deck_env):
+        env, device_id, _log = deck_env
+        controller = _page_controller(env, _static_on(device_id, 2), _gif_ref("anim.gif"))
+        env.dm._context.page_controller = controller  # pylint: disable=protected-access
+        controller.restore(device_id)
+        assert_that(wait_until(lambda: env.dm.playing_animation_id(device_id, 2) is not None)).is_true()
         env.dm.close_device(device_id)
         deck, log = stateful_deck(), WriteLog()
         deck.set_key_image.side_effect = log
 
         with patch("decker.server.devices.manager._HardwareDeviceManager") as hardware:
             hardware.return_value.enumerate.return_value = [deck]
-            env.manager.set_appearance(target, _gif_ref("anim.gif"))
+            env.dm.check_devices()
 
-        assert_that(env.dm.playing_animation_id(device_id, 2)).is_equal_to(_animation(env, device_id, 2).animation_id)
+        assert_that(env.dm.playing_animation_id(device_id, 2)).is_not_none()
         assert_that(_frames_written(log, 2)).is_true()
+
+    def test_restoring_a_still_key_with_a_cached_poster_writes_nothing(self, deck_env, monkeypatch):
+        env, device_id, _log = deck_env
+        controller = _page_controller(env, _static_on(device_id, 2), _gif_ref("red.png"))
+        controller.restore(device_id)
+        events = len(env.bus.of("key_state_changed"))
+        writes = _spy_device_writes(env, monkeypatch)
+
+        controller.restore(device_id)  # the poster is cached now: not redrawn, and there is nothing to animate
+
+        assert_that(writes).is_empty()
+        assert_that(env.bus.of("key_state_changed")).is_length(events)
 
     def test_a_key_cleared_while_its_page_is_hidden_does_not_replay_a_ghost_animation(self, deck_env):
         env, device_id, log = deck_env

@@ -7,7 +7,7 @@ import pytest
 from assertpy import assert_that
 from PIL import Image
 
-from decker.server.plugins import _StreamDeckHardwareSink
+from decker.server.hardware_sink import StreamDeckHardwareSink
 from tests.server.animation_fixture import (
     WRITER_THREAD,
     make_spec,
@@ -23,7 +23,7 @@ def _make_sink(device_manager=None):
     def _label_setter(device_id: str, key_index: int, label: str) -> None:
         labels[(device_id, key_index)] = label
 
-    sink = _StreamDeckHardwareSink(device_manager=device_manager, label_setter=_label_setter)
+    sink = StreamDeckHardwareSink(device_manager=device_manager, label_setter=_label_setter)
     return sink, labels
 
 

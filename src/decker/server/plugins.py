@@ -12,9 +12,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from decker.animation.model import AnimationSpec
 from decker.asset.iconpack import IconPackRegistry
-from decker.asset.renderer import AssetRenderer
 from decker.common import config
 from decker.common.manager import Manager
 from decker.common.template import expand_template
@@ -44,6 +42,7 @@ from decker.server.appearance import (
     resolve_appearance,
 )
 from decker.server.contributions import ContributionRegistry
+from decker.server.hardware_sink import StreamDeckHardwareSink, write_face
 from decker.server.page_vars import (
     DeviceLayout,
     deliver_settings,
@@ -81,69 +80,6 @@ class _ActionsHandler:
 
     def unregister(self, plugin_id: str) -> None:
         self._manager.unregister_actions(plugin_id)
-
-
-class _StreamDeckHardwareSink:
-    """Applies hardware effects via DeviceManager; falls back gracefully if no device is open.
-
-    set_title is deliberately lightweight — it stores the label in the shared label dict
-    for client polling instead of rendering text to hardware (the plugin renders its own
-    image via set_image).
-    """
-
-    def __init__(
-        self,
-        device_manager: Any,  # DeviceManager | None — avoid circular import at module level
-        label_setter: Callable[[str, int, str], None],
-    ) -> None:
-        self._device_manager = device_manager
-        self._label_setter = label_setter
-        self._renderer = AssetRenderer()
-
-    def set_image(self, device_id: str, key_index: int, image: bytes) -> None:
-        """Render image (SVG/PNG/JPEG bytes) on the given device's key."""
-        if self._device_manager is not None:
-            self._device_manager.set_image_bytes(device_id, key_index, image)
-        else:
-            logging.debug("set_image: no DeviceManager available")
-
-    def set_animation(self, device_id: str, key_index: int, spec: AnimationSpec) -> None:
-        """Animate the key (its poster already written by set_image) and register spec for the key_animation RPC."""
-        if self._device_manager is None:
-            return
-        if self._device_manager.set_animation(device_id, key_index, spec):
-            factory = self._device_manager.animation_factory
-            if factory is not None:
-                factory.register(spec)
-
-    def is_playing(self, device_id: str, key_index: int, animation_id: str) -> bool:
-        """Whether the key's open device already plays (or is about to play) the animation animation_id."""
-        manager = self._device_manager
-        return manager is not None and manager.playing_animation_id(device_id, key_index) == animation_id
-
-    def set_title(self, device_id: str, key_index: int, title: str) -> None:
-        """Store the display label for client polling (hardware text not rendered)."""
-        self._label_setter(device_id, key_index, title)
-
-    def clear_image(self, device_id: str, key_index: int) -> None:
-        """Blank the key and drop its stored image."""
-        if self._device_manager is not None:
-            device = self._device_manager.open_device(device_id)
-            if device is not None:
-                device.clear_key_image(key_index)
-            self._device_manager.clear_key_state(device_id, key_index)
-
-    def set_state(self, device_id: str, key_index: int, state: int) -> None:
-        """No-op: multi-state icon rendering is not implemented yet."""
-        logging.debug("set_state(%s, %d, %d): not implemented", device_id, key_index, state)
-
-    def show_alert(self, device_id: str, key_index: int) -> None:
-        """No-op: indicator rendering is not implemented yet."""
-        logging.debug("show_alert(%s, %d): not implemented", device_id, key_index)
-
-    def show_ok(self, device_id: str, key_index: int) -> None:
-        """No-op: indicator rendering is not implemented yet."""
-        logging.debug("show_ok(%s, %d): not implemented", device_id, key_index)
 
 
 @dataclass
@@ -199,7 +135,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._page_store: Any = None
         self._icon_cache: dict[tuple[Path, str | None], str] = {}
         self._hellos: dict[str, dict[str, Any]] = {}
-        self._sink: _StreamDeckHardwareSink = _StreamDeckHardwareSink(None, self._set_key_label)
+        self._sink: StreamDeckHardwareSink = StreamDeckHardwareSink(None, self._set_key_label)
         self._state_changed_cb: _StateChangedCallback | None = None
         self.settings_persister: Callable[[ActionTarget, dict[str, Any]], None] | None = None
         if policy is None:
@@ -215,7 +151,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._event_bus = context.event_bus
         self._page_controller = getattr(context, "page_controller", None)
         self._page_store = getattr(context, "page_store", None)
-        self._sink = _StreamDeckHardwareSink(self._device_manager, self._set_key_label)
+        self._sink = StreamDeckHardwareSink(self._device_manager, self._set_key_label)
         self._state_changed_cb = self._make_state_changed_cb(context)
         self.settings_persister = self._make_settings_persister(context)
         try:
@@ -443,7 +379,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
         ``draw=False`` skips the first, plugin-less draw of the key: the caller has just put the key's last image
         on the hardware, and drawing the bare background and title over it only makes the key flicker until the
-        plugin's own image arrives.
+        plugin's own image arrives. An animated face is still started (over that cached poster), because animations
+        live in memory only and a reopened device or restarted server has none.
         """
         spec = self._action_spec(target.plugin_uuid, target.action_uuid)
         with self._lock:
@@ -470,8 +407,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         )
         with self._lock:
             self._live[target.context_id] = live
-        if draw:
-            self._recompose(live)
+        self._recompose(live, poster=draw)
         if spec.static:
             return
         self._supervisor.acquire(target.plugin_uuid)
@@ -531,30 +467,26 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     # Server -> plugin helpers
     # ------------------------------------------------------------------
 
-    def _recompose(self, live: _Live) -> None:
-        """Compose the key image outside the lock, then write it if the instance is still active.
+    def _recompose(self, live: _Live, poster: bool = True) -> None:
+        """Compose the key face outside the lock, then write it if the instance is still active.
 
         Only the final sink write holds self._lock, so no hardware write can follow deactivate_action.
+        With poster=False only an animation is started and nothing is written for a still image.
         """
         target = live.target
         try:
-            composed = self._compose(live)
-            animation_id = composed.animation.animation_id if composed.animation is not None else None
+            composed = self._compose(live, poster)
             with self._lock:
                 if self._live.get(target.context_id) is not live:
                     return
-                # The id covers the whole PNG, so a key already playing it needs neither a poster nor a restart.
-                if animation_id is None or not self._sink.is_playing(target.device_id, target.key_index, animation_id):
-                    # Poster first: a static write ends the key's animation, so the animation must start after it.
-                    self._sink.set_image(target.device_id, target.key_index, composed.png)
-                    if composed.animation is not None:
-                        self._sink.set_animation(target.device_id, target.key_index, composed.animation)
+                written = write_face(self._sink, target, composed, poster)
         except Exception:  # pylint: disable=broad-except
             logging.warning("Could not compose key image for context %s", target.context_id, exc_info=True)
             return
-        self._notify_state(target.device_id, target.key_index)
+        if poster or written:
+            self._notify_state(target.device_id, target.key_index)
 
-    def _compose(self, live: _Live) -> Composed:
+    def _compose(self, live: _Live, poster: bool = True) -> Composed:
         with self._lock:
             plugin = self._plugins.get(live.target.plugin_uuid)
             spec = live.action
@@ -577,6 +509,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             title,
             image_color,
             PACK_ICON_SCALE if icon_ref is not None else 1.0,
+            poster=poster,
         )
 
     # ------------------------------------------------------------------
