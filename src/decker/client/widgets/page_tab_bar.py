@@ -3,12 +3,11 @@
 from typing import Any
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMenu,
     QScrollArea,
     QSizePolicy,
@@ -175,6 +174,9 @@ class PageTabBar(QWidget):  # pylint: disable=too-many-instance-attributes
         self._rename_edit = edit
         edit.show()
         edit.setFocus()
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)  # a click anywhere else commits the rename (not every click moves focus)
 
     def context_menu_for(self, index: int) -> QMenu | None:
         """Build the right-click menu for the tab at index, or None if there is no tab there."""
@@ -195,10 +197,18 @@ class PageTabBar(QWidget):  # pylint: disable=too-many-instance-attributes
         return menu
 
     def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:  # pylint: disable=invalid-name
-        """Re-evaluate the overflow arrows whenever the tab viewport is resized."""
+        """Re-evaluate the overflow arrows when the viewport resizes; commit a rename when something else is clicked."""
         if a0 is self._viewport and a1 is not None and a1.type() == QEvent.Type.Resize:
             self._update_scroll_buttons()
+        elif a1 is not None and a1.type() == QEvent.Type.MouseButtonPress and self._is_outside_editor(a0):
+            self._finish_rename(commit=True)
         return super().eventFilter(a0, a1)
+
+    def _is_outside_editor(self, receiver: QObject | None) -> bool:
+        edit = self._rename_edit
+        if edit is None or not isinstance(receiver, QWidget):
+            return False
+        return receiver is not edit and not edit.isAncestorOf(receiver)
 
     def resizeEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
         """Re-evaluate the overflow arrows when the strip itself is resized."""
@@ -225,6 +235,9 @@ class PageTabBar(QWidget):  # pylint: disable=too-many-instance-attributes
             return
         self._rename_edit = None
         self._rename_page_id = None
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
         name = edit.text().strip()
         edit.hide()
         edit.deleteLater()
