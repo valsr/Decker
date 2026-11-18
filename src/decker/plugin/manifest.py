@@ -9,6 +9,7 @@ from typing import Any, Literal
 from packaging.requirements import InvalidRequirement, Requirement
 
 from decker.common.appearance_schema import APPEARANCE_KEYS
+from decker.common.platforms import PlatformSpec, parse_platform_spec
 from decker.plugin.settings_schema import (
     SettingEntry,
     SettingField,
@@ -99,6 +100,7 @@ class PluginManifest:
     global_settings: tuple[SettingEntry, ...]
     actions: tuple[ActionSpec, ...]
     icon_packs: tuple[IconPackSpec, ...]
+    platforms: PlatformSpec | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PluginManifest":
@@ -151,6 +153,7 @@ class PluginManifest:
             global_settings=_parse_global_settings(data.get("global_settings", [])),
             actions=actions,
             icon_packs=packs,
+            platforms=_parse_platforms(data),
         )
 
     @classmethod
@@ -181,6 +184,13 @@ def _parse_contribution_id(value: Any, plugin_id: str, what: str) -> str:
     if not cid.startswith(plugin_id + "."):
         raise ManifestValidationError(f"{what} {cid!r} must start with the plugin id {plugin_id + '.'!r}")
     return cid
+
+
+def _parse_platforms(data: dict[str, Any]) -> PlatformSpec | None:
+    try:
+        return parse_platform_spec(data.get("platforms"), data.get("linux"))
+    except ValueError as exc:
+        raise ManifestValidationError(f"manifest {exc}") from exc
 
 
 def _as_list(value: Any, what: str) -> list[Any]:

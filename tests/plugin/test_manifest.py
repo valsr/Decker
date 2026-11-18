@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from assertpy import assert_that
 
+from decker.common.platforms import PlatformSpec
 from decker.plugin.manifest import (
     SUPPORTED_FORMAT,
     ManifestValidationError,
@@ -305,3 +306,35 @@ def test_profile_in_global_settings_is_rejected() -> None:
     data["global_settings"] = [{"key": "who", "type": "profile", "label": "Who"}]
     with pytest.raises(ManifestValidationError, match="who.*profile"):
         PluginManifest.from_dict(data)
+
+
+def test_manifest_without_platform_fields_has_no_spec() -> None:
+    assert_that(PluginManifest.from_dict(_counter()).platforms).is_none()
+
+
+def test_manifest_parses_platforms_and_linux_block() -> None:
+    manifest = PluginManifest.from_dict(
+        _counter(platforms=["linux", "windows"], linux={"desktops": ["kde"], "sessions": ["wayland"]})
+    )
+    assert_that(manifest.platforms).is_equal_to(PlatformSpec(("linux", "windows"), ("kde",), ("wayland",)))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"platforms": []},
+        {"platforms": "linux"},
+        {"platforms": ["linux", 3]},
+        {"platforms": ["windows"], "linux": {"desktops": ["kde"]}},
+        {"linux": {"desktops": []}},
+        {"linux": "kde"},
+    ],
+)
+def test_manifest_rejects_malformed_platform_values(overrides: dict[str, Any]) -> None:
+    with pytest.raises(ManifestValidationError, match="^manifest "):
+        PluginManifest.from_dict(_counter(**overrides))
+
+
+def test_manifest_keeps_unknown_os_names() -> None:
+    manifest = PluginManifest.from_dict(_counter(platforms=["Linux", "FreeBSD"]))
+    assert_that(manifest.platforms).is_equal_to(PlatformSpec(("linux", "freebsd")))

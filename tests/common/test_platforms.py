@@ -53,7 +53,8 @@ def test_detect_non_linux_has_unknown_desktop_and_session() -> None:
 
 def test_label_formats() -> None:
     assert_that(HostPlatform("linux", "kde", "wayland").label()).is_equal_to("Linux (KDE, Wayland)")
-    assert_that(HostPlatform("linux", "gnome").label()).is_equal_to("Linux (Gnome)")
+    assert_that(HostPlatform("linux", "gnome", "wayland").label()).is_equal_to("Linux (GNOME, Wayland)")
+    assert_that(HostPlatform("linux", "other").label()).is_equal_to("Linux (Other)")
     assert_that(HostPlatform("linux").label()).is_equal_to("Linux")
     assert_that(HostPlatform("windows").label()).is_equal_to("Windows")
     assert_that(HostPlatform("macos").label()).is_equal_to("macOS")
