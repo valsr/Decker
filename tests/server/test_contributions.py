@@ -26,6 +26,10 @@ class _Recorder:
         self.calls.append(("unregister", plugin_id))
 
 
+def _plugin_packs(registry):
+    return [pack for pack in registry.list_packs() if pack["id"] != "decker.user"]
+
+
 def _plugin(tmp_path: Path, contributes: dict, runtime: bool = False) -> InstalledPlugin:
     data: dict = {
         "format": 1,
@@ -98,7 +102,7 @@ def test_uninstall_removes_pack(tmp_path):
     try:
         manager.add_plugin(_plugin(tmp_path, _PACK))
         manager.remove_plugin("com.t.p")
-        assert_that(manager.icon_packs.list_packs()).is_empty()
+        assert_that(_plugin_packs(manager.icon_packs)).is_empty()
         assert_that(manager.plugins()).is_empty()
     finally:
         manager.destroy()
@@ -113,7 +117,7 @@ def test_bad_pack_path_is_a_load_failure_but_keeps_actions(tmp_path):
     )
     try:
         manager.add_plugin(plugin)
-        assert_that(manager.icon_packs.list_packs()).is_empty()
+        assert_that(_plugin_packs(manager.icon_packs)).is_empty()
         assert_that(manager.load_failures()).extracting("error").contains(
             "icon pack com.t.p.icons: path points outside the plugin folder"
         )
@@ -129,7 +133,7 @@ def test_fixture_contributes_example_pack(tmp_path):
 
     registry.register(counter)
 
-    assert_that(registry.list_packs()).extracting("id").is_equal_to(["com.decker.testfixture.icons"])
+    assert_that(_plugin_packs(registry)).extracting("id").is_equal_to(["com.decker.testfixture.icons"])
     icons = registry.list_icons("com.decker.testfixture.icons")
     assert_that(icons).is_not_empty()
     data = registry.read_icon("com.decker.testfixture.icons", icons[0])

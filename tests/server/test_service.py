@@ -1000,8 +1000,88 @@ class TestSystemIconRpcs:
         svc = DeckerService()
 
         packs = json.loads(svc.iconpacks_list())
-        assert_that([p["id"] for p in packs]).is_equal_to(["decker.system.actions"])
-        assert_that(packs[0]["plugin_name"]).is_equal_to("System Icons")
+        assert_that([p["id"] for p in packs]).is_equal_to(["decker.user", "decker.system.actions"])
+        assert_that(packs[1]["plugin_name"]).is_equal_to("System Icons")
         assert_that(json.loads(svc.iconpack_icons("decker.system.actions"))).is_equal_to(["edit-copy"])
         assert_that(base64.b64decode(svc.iconpack_icon("decker.system.actions", "edit-copy"))).is_equal_to(b"<svg/>")
         assert_that(svc.iconpack_icon("decker.system.actions", "../x")).is_equal_to("")
+
+
+class TestIconImportRpcs:
+    @pytest.fixture()
+    def icon_service(self, store, manager, tmp_path):
+        from decker.asset.iconpack import IconPackRegistry
+        from decker.asset.usericons import UserIcons
+
+        manager.icon_packs = IconPackRegistry(user_icons=UserIcons(tmp_path / "user"))
+        DeckerService.configure_context(_make_context(manager, store))
+        svc = DeckerService()
+        svc._peer_host = "127.0.0.1"  # pylint: disable=protected-access
+        return svc, tmp_path / "user"
+
+    @staticmethod
+    def _png() -> bytes:
+        out = io.BytesIO()
+        Image.new("RGB", (20, 10), (200, 10, 10)).save(out, format="PNG")
+        return out.getvalue()
+
+    def test_icon_import_stores_and_lists_the_icon_in_the_user_pack(self, icon_service):
+        svc, folder = icon_service
+        result = json.loads(svc.icon_import("My Cat", "cat.png", self._png(), ""))
+        assert_that(result["ok"]).is_true()
+        assert_that(result["id"]).is_equal_to("my-cat")
+        assert_that((folder / result["file"]).is_file()).is_true()
+        assert_that(json.loads(svc.iconpack_icons("decker.user"))).is_equal_to([result["file"]])
+        assert_that(svc.iconpack_icon("decker.user", result["file"])).is_not_empty()
+        packs = [p for p in json.loads(svc.iconpacks_list()) if p["id"] == "decker.user"]
+        assert_that(packs[0]["icon_count"]).is_equal_to(1)
+
+    def test_icon_import_prefills_the_name_from_the_filename(self, icon_service):
+        svc, _ = icon_service
+        result = json.loads(svc.icon_import("", "Happy Dog.png", self._png(), ""))
+        assert_that(result["id"]).is_equal_to("happy-dog")
+
+    def test_icon_import_is_refused_for_remote_clients(self, icon_service):
+        svc, folder = icon_service
+        svc._peer_host = "203.0.113.5"  # pylint: disable=protected-access
+        with patch("decker.server.service.config.get_as_or_default", return_value=False):
+            with pytest.raises(PermissionError):
+                svc.icon_import("x", "x.png", self._png(), "")
+        assert_that(folder.exists()).is_false()
+
+    def test_icon_import_reports_a_duplicate_with_a_suggestion(self, icon_service):
+        svc, _ = icon_service
+        svc.icon_import("cat", "cat.png", self._png(), "")
+        result = json.loads(svc.icon_import("cat", "cat.png", self._png(), ""))
+        assert_that(result["ok"]).is_false()
+        assert_that(result["suggestion"]).is_equal_to("cat-2")
+
+    def test_icon_import_rejects_bad_options(self, icon_service):
+        svc, _ = icon_service
+        result = json.loads(svc.icon_import("cat", "cat.png", self._png(), "{not json"))
+        assert_that(result["ok"]).is_false()
+        assert_that(result["error"]).is_not_empty()
+
+    def test_icon_import_suggest_returns_a_free_id(self, icon_service):
+        svc, _ = icon_service
+        svc.icon_import("cat", "cat.png", self._png(), "")
+        assert_that(svc.icon_import_suggest("Cat")).is_equal_to("cat-2")
+        assert_that(svc.icon_import_suggest("dog")).is_equal_to("dog")
+
+    def test_icon_import_preview_works_for_remote_clients_and_writes_nothing(self, icon_service):
+        svc, folder = icon_service
+        svc._peer_host = "203.0.113.5"  # pylint: disable=protected-access
+        with patch("decker.server.service.config.get_as_or_default", return_value=False):
+            preview = svc.icon_import_preview("cat.png", self._png(), "")
+            refused = svc.icon_import_preview("cat.png", b"not an image", "")
+        image = Image.open(io.BytesIO(base64.b64decode(preview)))
+        assert_that(image.size).is_equal_to((144, 144))
+        assert_that(refused).is_equal_to("")
+        assert_that(folder.exists()).is_false()
+
+    def test_icon_import_rpcs_without_context(self):
+        svc = DeckerService()
+        svc._peer_host = "127.0.0.1"  # pylint: disable=protected-access
+        assert_that(json.loads(svc.icon_import("a", "a.png", b"", ""))["ok"]).is_false()
+        assert_that(svc.icon_import_suggest("a")).is_equal_to("a")
+        assert_that(svc.icon_import_preview("a.png", b"", "")).is_equal_to("")
