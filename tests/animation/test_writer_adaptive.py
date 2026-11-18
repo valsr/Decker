@@ -11,7 +11,7 @@ from decker.animation.encode import KeyFormat
 from decker.animation.factory import AnimationFactory
 from decker.animation.load import LoadMonitor
 from decker.animation.model import Animation, AnimationSpec, Frame
-from decker.animation.writer import POLL_S, AdaptiveConfig, KeyWriter
+from decker.animation.writer import POLL_S, REPLAN_SETTLE_S, AdaptiveConfig, KeyWriter
 from decker.server.appearance import resolve_appearance
 
 SECONDS_PER_REPORT = 0.00025
@@ -53,6 +53,14 @@ def _animation(quality: int, reports: dict[int, int], delay_ms: int = 100, count
     return Animation("anim", quality, frames, b"poster", {q: float(r) for q, r in reports.items()})
 
 
+def _static(reports: int, label: str) -> bytes:
+    """Static image data as long as `reports` full reports, so the writer's size-based report count matches."""
+    return f"{reports}|{label}|".encode().ljust(reports * FMT.report_payload, b".")
+
+
+POSTER = _static(16, "poster")
+
+
 class _Factory:
     """Fake frame source: an animation per quality, returned only once that quality is marked ready."""
 
@@ -64,6 +72,10 @@ class _Factory:
     def frames_for(self, spec: AnimationSpec, fmt: KeyFormat, quality: int) -> Animation | None:
         assert_that(fmt).is_equal_to(FMT)
         self.calls.append(quality)
+        return self.animations[quality] if quality in self.ready else None
+
+    def cached_frames(self, spec: AnimationSpec, fmt: KeyFormat, quality: int) -> Animation | None:
+        assert_that(fmt).is_equal_to(FMT)
         return self.animations[quality] if quality in self.ready else None
 
 
@@ -85,7 +97,7 @@ class _Sim:
     def run_until(self, end: float) -> None:
         while self.clock.now < end:
             if self.static_period is not None and self.clock.now >= self._next_static:
-                self.writer.submit_static(99, b"8|plugin", timeout=0.0)
+                self.writer.submit_static(99, _static(8, "plugin"), timeout=0.0)
                 self._next_static = self.clock.now + self.static_period
             deadline = self.writer.step(self.clock.now)
             target = end if deadline is None else min(deadline, end)
@@ -155,13 +167,70 @@ def test_page_switch_burst_of_32_static_writes_does_not_change_the_level(caplog:
     caplog.set_level(logging.INFO, logger="decker.animation.writer")
 
     for key in range(32):
-        assert_that(sim.writer.submit_static(key, b"16|poster", timeout=0.0)).is_false()
+        assert_that(sim.writer.submit_static(key, POSTER, timeout=0.0)).is_false()
     _play(sim, range(32))
     sim.run_until(START + 40)
 
     assert_that(sim.levels).is_equal_to([(START, L0)])
-    assert_that(sim.deck.frames_of(0, since=START + 20)[0]).is_equal_to(b"16|poster")
+    assert_that(sim.deck.frames_of(0, since=START + 20)[0]).is_equal_to(POSTER)
     assert_that(caplog.records).is_empty()
+
+
+@pytest.mark.parametrize("worker_runs_between_calls", [False, True])
+def test_page_switch_on_an_overloaded_key_set_keeps_the_level_and_builds_nothing_unused(
+    worker_runs_between_calls: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 32 keys at 20 fps only fit at q90 (L1). Re-attaching the same animations must not swing L1 -> L0 -> L1.
+    factory = _Factory(REPORTS, delay_ms=50)
+    sim = _Sim(factory)
+    _play(sim, range(32))
+    sim.run_until(START + 25)
+    assert_that([level for _, level in sim.levels]).is_equal_to([L0, L1])
+    factory.calls.clear()
+    caplog.set_level(logging.INFO, logger="decker.animation.writer")
+
+    switch = sim.clock.now
+    for key in range(32):
+        sim.writer.submit_static(key, POSTER, timeout=0.0)
+        if worker_runs_between_calls:  # a real submit_static waits for its write
+            sim.run_until(sim.clock.now + 0.005)
+    for key in range(32):
+        sim.writer.play_spec(key, SPEC)
+        if worker_runs_between_calls:
+            sim.run_until(sim.clock.now + 0.001)
+    sim.run_until(switch + 5)
+
+    assert_that([level for _, level in sim.levels]).is_equal_to([L0, L1])
+    assert_that(caplog.records).is_empty()
+    assert_that(factory.calls).does_not_contain(100)
+    assert_that(sim.deck.frames_of(7, since=switch + 4)[-1].decode()).starts_with("3|q90")
+
+
+def test_waiting_spec_starts_with_a_cached_quality_when_the_levels_quality_is_not_built() -> None:
+    # q90 is cached, q100 never builds: the keys start at once and the plan settles on q90 without asking for q100.
+    factory = _Factory(REPORTS, delay_ms=50, ready=(90,))
+    sim = _Sim(factory)
+    _play(sim, range(32))
+    sim.run_until(START + 1)
+
+    assert_that(sim.writer.level).is_equal_to(L1)
+    assert_that(sim.deck.frames_of(0)[0]).is_equal_to(b"3|q90f0")
+    assert_that(sim.deck.frames_of(31)).is_not_empty()
+    assert_that(factory.calls).does_not_contain(100)
+
+
+def test_waiting_spec_started_at_another_quality_moves_to_the_levels_quality_once_built() -> None:
+    factory = _Factory(REPORTS, ready=(90,))
+    sim = _Sim(factory)
+    sim.writer.play_spec(0, SPEC)
+    sim.run_until(START + 0.5)
+    assert_that(sim.writer.level).is_equal_to(L0)
+    assert_that(sim.deck.frames_of(0)[0]).is_equal_to(b"3|q90f0")
+    assert_that(factory.calls).contains(100)
+
+    factory.ready.add(100)
+    sim.run_until(START + 1.0)
+    assert_that(sim.deck.frames_of(0)[-1].decode()).starts_with("7|q100")
 
 
 def test_adding_keys_replans_immediately() -> None:
@@ -176,8 +245,13 @@ def test_adding_keys_replans_immediately() -> None:
     sim.writer.step(sim.clock.now)
     assert_that(sim.writer.level).is_equal_to(L1)
 
+    # A cheaper key set is planned once it has been stable for REPLAN_SETTLE_S.
     for key in range(16, 32):
         sim.writer.stop(key)
+    stopped = sim.clock.now
+    sim.run_until(stopped + REPLAN_SETTLE_S / 2)
+    assert_that(sim.writer.level).is_equal_to(L1)
+    sim.run_until(stopped + REPLAN_SETTLE_S + 0.01)
     assert_that(sim.writer.level).is_equal_to(L0)
 
 
@@ -235,10 +309,13 @@ def test_demand_uses_measured_reports_without_an_estimate_and_ignores_still_imag
     still = Animation("still", 90, (Frame(b"900|still", 900, 100),), b"", {90: 900.0})
 
     sim.writer.play(1, still)
+    sim.writer.step(sim.clock.now)
     assert_that(sim.writer.level).is_equal_to(L0)
     sim.writer.play(0, heavy)
+    sim.writer.step(sim.clock.now)
     assert_that(sim.writer.level).is_equal_to(LADDER[-1])
     sim.writer.stop_all()
+    sim.run_until(sim.clock.now + REPLAN_SETTLE_S + 0.01)
     assert_that(sim.writer.level).is_equal_to(L0)
 
 

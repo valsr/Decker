@@ -145,6 +145,14 @@ class AnimationFactory:
         self._pool.submit(functools.partial(self._build_in_background, key, spec))
         return None
 
+    def cached_frames(self, spec: AnimationSpec, fmt: KeyFormat, quality: int) -> Animation | None:
+        """Return the animation if it is already cached, else None; never starts a build."""
+        with self._state:
+            if spec.gif_sha in self._failed:
+                return None
+            cached: Animation | None = self._frames.get((spec.animation_id, fmt, quality))
+            return cached
+
     def preview_webp(self, spec: AnimationSpec) -> bytes | None:
         """Return the composed animation at 144 px as animated WebP (GIF without WebP support), or None."""
         if spec.gif_sha in self._failed:

@@ -33,6 +33,8 @@ TICK_S: float = 1.0
 LAG_SUSTAIN_S: float = 1.0
 SHORT_WINDOW_S: float = 5.0
 LONG_WINDOW_S: float = 20.0
+# A key-set change that lowers the cost is planned once the set has been stable this long (page switches).
+REPLAN_SETTLE_S: float = 0.250
 
 # Floor for any returned deadline, so a caller never gets a deadline at or before "now" and never spins.
 _MIN_WAIT = 1e-6
@@ -71,11 +73,14 @@ class _FrameWrite:
 _Action = _StaticJob | _FrameWrite
 
 
-class FrameSource(Protocol):  # pylint: disable=too-few-public-methods
+class FrameSource(Protocol):
     """Non-blocking source of encoded animations, such as AnimationFactory."""
 
     def frames_for(self, spec: AnimationSpec, fmt: KeyFormat, quality: int) -> Animation | None:
-        """Return the animation for spec in fmt at quality, or None while it is not available."""
+        """Return the animation for spec in fmt at quality, or None while it is not available (starts a build)."""
+
+    def cached_frames(self, spec: AnimationSpec, fmt: KeyFormat, quality: int) -> Animation | None:
+        """Return the animation only if it is already built; never starts a build."""
 
 
 @dataclass(frozen=True)
@@ -123,6 +128,9 @@ class _Adapter:
         self.next_tick: float | None = None
         self.next_poll: float = -math.inf
         self.replanned_at: float | None = None
+        # Clock time of the latest key-set change not yet re-planned, and the cost the current plan was made for.
+        self.changed_at: float | None = None
+        self.planned_cost: float = 0.0
 
     @property
     def level(self) -> Level:
@@ -150,14 +158,33 @@ class _Adapter:
 
         return reports_per_second
 
-    def replan(self, slots: dict[int, _Slot], now: float, cause: str) -> None:
-        """Re-plan the level for a changed set of playing slots."""
-        if self.controller is None:
+    def changed(self, now: float) -> None:
+        """Note a key-set change; the worker re-plans on its next step (see replan_if_due)."""
+        self.changed_at = now
+
+    def poll_due(self, now: float) -> bool:
+        """True (and the next poll scheduled) when the factory may be polled now."""
+        if now < self.next_poll or self.factory is None or self.fmt is None:
+            return False
+        self.next_poll = now + POLL_S
+        return True
+
+    def replan_if_due(self, slots: dict[int, _Slot], now: float) -> None:
+        """Re-plan a pending key-set change: at once if it costs more, after REPLAN_SETTLE_S if it costs less."""
+        if self.changed_at is None or self.controller is None:
+            self.changed_at = None
             return
+        # A page switch empties keys one by one before refilling them; planning on the partial set would raise the
+        # level and drop it straight back. A costlier set is planned at once so it cannot overload the deck.
+        cost = self.demand(slots)(self.level)
+        if cost <= self.planned_cost * (1 + 1e-9) and now < self.changed_at + REPLAN_SETTLE_S:
+            return
+        self.changed_at = None
         self.replanned_at = now
         old = self.controller.level
         new = self.controller.replan(self.demand(slots), self.monitor.seconds_per_report)
-        self._changed(slots, (old, new), now, cause)
+        self.planned_cost = self.demand(slots)(new)
+        self._changed(slots, (old, new), now, "animated keys changed")
 
     def tick(self, slots: dict[int, _Slot], now: float) -> None:
         """Feed the measured load to the controller, at most once per TICK_S while anything is animated."""
@@ -189,35 +216,41 @@ class _Adapter:
             cause = "frames lagging"
         else:
             cause = "load dropped"
+        if new != old and self.changed_at is None:
+            self.planned_cost = self.demand(slots)(new)
         self._changed(slots, (old, new), now, cause)
 
-    def poll(self, slots: dict[int, _Slot], now: float) -> bool:
-        """Start ready waiting animations and switch slots to the level's quality; True if a slot started."""
-        if now < self.next_poll or self.factory is None or self.fmt is None:
-            return False
-        self.next_poll = now + POLL_S
-        quality = self.level.quality
-        started = False
+    def start_waiting(self, slots: dict[int, _Slot], now: float) -> None:
+        """Start each waiting animation with any quality already built; otherwise ask for the level's quality."""
+        if self.factory is None or self.fmt is None:
+            return
+        level_quality = self.level.quality
         for key_index, spec in list(self.waiting.items()):
-            animation = self.factory.frames_for(spec, self.fmt, quality)
+            animation = self._any_cached(spec, level_quality) or self.factory.frames_for(spec, self.fmt, level_quality)
             if animation is not None:
                 del self.waiting[key_index]
                 slots[key_index] = _new_slot(animation, now, self.cap_for(animation, None), spec)
-                started = True
+                self.changed(now)
+
+    def switch_qualities(self, slots: dict[int, _Slot], now: float) -> None:
+        """Move playing slots to the level's quality once the factory has it; until then they keep their frames."""
+        if self.factory is None or self.fmt is None:
+            return
+        quality = self.level.quality
         for slot in slots.values():
             if slot.spec is not None and slot.animation.quality != quality:
                 animation = self.factory.frames_for(slot.spec, self.fmt, quality)
                 if animation is not None:
                     self._switch(slot, animation, now)
-        return started
 
     def deadlines(self, slots: dict[int, _Slot]) -> list[float]:
-        """Clock times at which tick or poll has work to do."""
+        """Clock times at which tick, a pending re-plan or a poll has work to do."""
         wanted: list[float] = []
         if self.controller is not None and self.next_tick is not None and (slots or self.waiting):
             wanted.append(self.next_tick)
-        quality = self.level.quality
-        if self.waiting or any(s.spec is not None and s.animation.quality != quality for s in slots.values()):
+        if self.changed_at is not None:
+            wanted.append(self.changed_at + REPLAN_SETTLE_S)
+        if self.waiting or self._mismatched(slots):
             wanted.append(self.next_poll)
         return wanted
 
@@ -230,6 +263,19 @@ class _Adapter:
         elif action.data is not None and self.fmt is not None:
             reports = math.ceil(len(action.data) / self.fmt.report_payload)
         self.monitor.record_write(ended, max(0.0, ended - started), reports)
+
+    def _any_cached(self, spec: AnimationSpec, preferred: int) -> Animation | None:
+        if self.factory is None or self.fmt is None:
+            return None
+        for quality in sorted({level.quality for level in LADDER}, key=lambda q: (abs(q - preferred), -q)):
+            animation = self.factory.cached_frames(spec, self.fmt, quality)
+            if animation is not None:
+                return animation
+        return None
+
+    def _mismatched(self, slots: dict[int, _Slot]) -> bool:
+        quality = self.level.quality
+        return any(slot.spec is not None and slot.animation.quality != quality for slot in slots.values())
 
     def _switch(self, slot: _Slot, animation: Animation, now: float) -> None:
         # Same start time: the new quality continues at the same elapsed time; its next frame boundary writes it.
@@ -305,7 +351,7 @@ class KeyWriter:  # pylint: disable=too-many-instance-attributes
         with self._condition:
             self._adapter.waiting.pop(key_index, None)
             self._slots[key_index] = _new_slot(animation, now, self._adapter.cap_for(animation, fps_cap))
-            self._adapter.replan(self._slots, now, "animated keys changed")
+            self._adapter.changed(now)
             self._notify()
 
     def play_spec(self, key_index: int, spec: AnimationSpec, poster_written: bool = True) -> None:
@@ -343,7 +389,7 @@ class KeyWriter:  # pylint: disable=too-many-instance-attributes
             self._slots.clear()
             self._adapter.waiting.clear()
             if had_slots:
-                self._adapter.replan(self._slots, self._clock(), "animated keys changed")
+                self._adapter.changed(self._clock())
             self._notify()
 
     def step(self, now: float) -> float | None:
@@ -385,19 +431,25 @@ class KeyWriter:  # pylint: disable=too-many-instance-attributes
 
     def _remove(self, key_index: int) -> None:
         self._adapter.waiting.pop(key_index, None)
-        self._drop_slot(key_index, "animated keys changed")
+        self._drop_slot(key_index)
 
-    def _drop_slot(self, key_index: int, cause: str) -> None:
+    def _drop_slot(self, key_index: int) -> None:
         if self._slots.pop(key_index, None) is not None:
-            self._adapter.replan(self._slots, self._clock(), cause)
+            self._adapter.changed(self._clock())
 
     def _adapt(self, now: float) -> None:
         with self._condition:
             if self._closing:
                 return
-            if self._adapter.poll(self._slots, now):
-                self._adapter.replan(self._slots, now, "animation ready")
-            self._adapter.tick(self._slots, now)
+            adapter = self._adapter
+            polling = adapter.poll_due(now)
+            if polling and adapter.waiting:
+                adapter.start_waiting(self._slots, now)
+            # Re-plan before switching qualities, so a slot is never moved to a quality the new plan will not use.
+            adapter.replan_if_due(self._slots, now)
+            if polling:
+                adapter.switch_qualities(self._slots, now)
+            adapter.tick(self._slots, now)
 
     def _notify(self) -> None:
         self._wake = True
@@ -424,7 +476,7 @@ class KeyWriter:  # pylint: disable=too-many-instance-attributes
                 logger.exception("Key writer step failed; waiting for the next change")
                 return None
             logger.exception("Key %d animation failed; dropping it", key_index)
-            self._drop_slot(key_index, "animation failed")
+            self._drop_slot(key_index)
             return self._clock()
 
     def _next_action(self, now: float) -> _Action | None:
@@ -475,7 +527,7 @@ class KeyWriter:  # pylint: disable=too-many-instance-attributes
             if self._slots.get(action.key_index) is not slot:
                 return
             if not ok:
-                self._drop_slot(action.key_index, "animation failed")
+                self._drop_slot(action.key_index)
                 return
             slot.shown_index = action.index
             slot.shown_data = slot.animation.frames[action.index].data
