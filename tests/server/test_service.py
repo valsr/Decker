@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import tempfile
 from pathlib import Path
@@ -6,10 +7,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from assertpy import assert_that
+from PIL import Image
 
+from decker.animation.factory import AnimationFactory
+from decker.animation.model import AnimationSpec
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.repository_index import IndexPlugin, IndexVersion
 from decker.plugin.target import ActionTarget
+from decker.server.appearance import resolve_appearance
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.page_controller import PageController
 from decker.server.pages import PageStore, initial_page_id
@@ -290,6 +295,72 @@ class TestKeyPreview:
         manager.preview_image.side_effect = RuntimeError("boom")
 
         assert_that(service.key_preview("dev1", P1, 0, "{}")).is_equal_to("")
+
+
+def _gif_bytes(frames: int = 4) -> bytes:
+    images = [Image.new("RGB", (16, 16), (i * 40 % 256, 30, 90)) for i in range(frames)]
+    out = io.BytesIO()
+    images[0].save(out, format="GIF", save_all=True, append_images=images[1:], duration=50, loop=0)
+    return out.getvalue()
+
+
+class TestKeyAnimation:
+    @pytest.fixture()
+    def factory(self, service):
+        factory = AnimationFactory(cache_bytes=8 * 1024 * 1024)
+        service._context.device_manager.animation_factory = factory  # pylint: disable=protected-access
+        yield factory
+        factory.close()
+
+    @staticmethod
+    def _spec(gif: bytes) -> AnimationSpec:
+        return AnimationSpec(gif=gif, appearance=resolve_appearance({}, {"background": "#202020"}), title="", scale=1.0)
+
+    def test_returns_base64_animation_with_all_frames_for_a_registered_id(self, service, factory):
+        animation_id = factory.register(self._spec(_gif_bytes(4)))
+
+        result = service.key_animation(animation_id)
+
+        with Image.open(io.BytesIO(base64.b64decode(result))) as image:
+            assert_that(getattr(image, "n_frames", 1)).is_equal_to(4)
+
+    def test_unknown_id_returns_empty(self, service, factory):  # pylint: disable=unused-argument
+        assert_that(service.key_animation("nope")).is_equal_to("")
+
+    def test_undecodable_gif_returns_empty(self, service, factory):
+        gif = _gif_bytes(6)
+        animation_id = factory.register(self._spec(gif[: len(gif) // 2]))
+
+        assert_that(service.key_animation(animation_id)).is_equal_to("")
+
+    @pytest.mark.parametrize("argument", [None, 123, b"abc", ["x"]])
+    def test_non_string_argument_returns_empty(self, service, factory, argument):  # pylint: disable=unused-argument
+        assert_that(service.key_animation(argument)).is_equal_to("")
+
+    def test_repeated_calls_return_the_same_data(self, service, factory):
+        animation_id = factory.register(self._spec(_gif_bytes(3)))
+
+        assert_that(service.key_animation(animation_id)).is_equal_to(service.key_animation(animation_id))
+
+    def test_without_context_returns_empty(self):
+        assert_that(DeckerService().key_animation("x")).is_equal_to("")
+
+    def test_without_factory_returns_empty(self, service):
+        service._context.device_manager.animation_factory = None  # pylint: disable=protected-access
+
+        assert_that(service.key_animation("x")).is_equal_to("")
+
+    def test_factory_failure_returns_empty(self, service, factory):
+        animation_id = factory.register(self._spec(_gif_bytes(2)))
+
+        with patch.object(factory, "preview_webp", side_effect=RuntimeError("boom")):
+            assert_that(service.key_animation(animation_id)).is_equal_to("")
+
+    def test_is_listed_by_commands(self, service):
+        commands = json.loads(service.commands())
+
+        assert_that(commands).contains_key("key.animation")
+        assert_that(commands["key.animation"]["params"]).is_equal_to("animation_id")
 
 
 class TestKeyGetStates:
