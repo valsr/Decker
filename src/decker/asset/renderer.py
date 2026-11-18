@@ -32,8 +32,8 @@ def _looks_like_svg(data: bytes) -> bool:
 class AssetRenderer:
     """Converts SVG/PNG/JPEG/GIF/WEBP sources to a PIL Image at a target size.
 
-    GIF/WEBP inputs render their first frame only — Pillow's default Image.open()
-    behavior; there is no per-frame animation support yet.
+    This renderer is for static output: GIF/WEBP inputs render their first frame only (Pillow's default
+    Image.open() behavior). Animated key faces are decoded and played by decker.animation instead.
     """
 
     def render_path(self, path: Path, width: int, height: int) -> Image.Image:

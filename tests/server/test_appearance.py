@@ -448,17 +448,17 @@ def test_first_composed_frame_equals_static_composition() -> None:
     frame = Image.new("RGBA", (144, 144), "#ff0000")
     composed = compose_key_frames(appearance, [frame], "")[0]
     assert_that(composed.mode).is_equal_to("RGB")
-    assert_that(list(composed.getdata())).is_equal_to(list(static.getdata()))
+    assert_that(composed.tobytes()).is_equal_to(static.tobytes())
 
 
 def test_title_and_background_are_drawn_on_every_frame() -> None:
     appearance = _appearance(background="#0000ff", title="X")
     frames = [Image.new("RGBA", (144, 144), (0, 0, 0, 0)) for _ in range(2)]
     first, second = compose_key_frames(appearance, frames, "")
-    plain = list(Image.new("RGB", (144, 144), (0, 0, 255)).getdata())
+    plain = Image.new("RGB", (144, 144), (0, 0, 255)).tobytes()
     assert_that(first.getpixel((0, 0))).is_equal_to((0, 0, 255))
-    assert_that(list(first.getdata())).is_equal_to(list(second.getdata()))
-    assert_that(list(first.getdata())).is_not_equal_to(plain)
+    assert_that(first.tobytes()).is_equal_to(second.tobytes())
+    assert_that(first.tobytes()).is_not_equal_to(plain)
 
 
 def test_existing_compose_key_image_output_is_unchanged() -> None:
