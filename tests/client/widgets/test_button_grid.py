@@ -1,8 +1,20 @@
+import base64
+import io
 import json
 
 import pytest
 from assertpy import assert_that
-from PyQt6.QtCore import QByteArray, QEvent, QMimeData, QPoint, QPointF, Qt
+from PIL import Image
+from PyQt6.QtCore import (
+    QBuffer,
+    QByteArray,
+    QEvent,
+    QIODevice,
+    QMimeData,
+    QPoint,
+    QPointF,
+    Qt,
+)
 from PyQt6.QtGui import (
     QColor,
     QDragEnterEvent,
@@ -12,15 +24,19 @@ from PyQt6.QtGui import (
     QEnterEvent,
     QFocusEvent,
     QMouseEvent,
+    QMovie,
     QPalette,
 )
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 import decker.client.widgets.button_grid as button_grid_module
+from decker.animation.factory import AnimationFactory
+from decker.animation.model import AnimationSpec
 from decker.client.themes import BUNDLED, render_stylesheet
 from decker.client.widgets.button_grid import ButtonGridWidget, KeyButtonWidget
 from decker.common.model import KeyInfo
+from decker.server.appearance import resolve_appearance
 
 
 def _make_keys(count: int, rows: int = 3, cols: int = 5) -> list[KeyInfo]:
@@ -823,3 +839,131 @@ class TestDragEndsThePress:  # pylint: disable=protected-access,unused-argument
         QTest.mouseClick(button, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(10, 40))  # type: ignore[call-overload]
 
         assert_that(edits).is_equal_to([5])
+
+
+def _animation_bytes(delay: int = 40) -> bytes:
+    """A small animated GIF with two clearly different frames, for the Qt playback tests."""
+    frames = [Image.new("RGB", (16, 16), color) for color in ((255, 0, 0), (0, 0, 255))]
+    buffer = io.BytesIO()
+    frames[0].save(buffer, format="GIF", save_all=True, append_images=frames[1:], duration=delay, loop=0)
+    return buffer.getvalue()
+
+
+def _wait(ms: int) -> None:
+    QTest.qWait(ms)  # type: ignore[call-arg,arg-type]  # the PyQt6 stub types it as a method
+
+
+def _png_b64(color: tuple[int, int, int]) -> str:
+    buffer = io.BytesIO()
+    Image.new("RGB", (16, 16), color).save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+def _icon_rgb(button: KeyButtonWidget) -> tuple[int, int, int]:
+    pixel = button.icon().pixmap(16, 16).toImage().pixelColor(8, 8)
+    return pixel.red(), pixel.green(), pixel.blue()
+
+
+@pytest.fixture(name="key_button")
+def _key_button(qapp):  # pylint: disable=unused-argument
+    button = KeyButtonWidget(0, KeyInfo(row=0, col=0, pixel_width=72, pixel_height=72, type="key"))
+    yield button
+    button.set_animation(None)
+    button.deleteLater()
+
+
+def test_qt_can_play_the_server_produced_animation(qapp):  # pylint: disable=unused-argument
+    appearance = resolve_appearance({}, {"background": "#202020"})
+    spec = AnimationSpec(gif=_animation_bytes(), appearance=appearance, title="", scale=1.0)
+    factory = AnimationFactory(cache_bytes=8 * 1024 * 1024)
+    try:
+        produced = factory.preview_webp(spec)
+    finally:
+        factory.close()
+    assert produced is not None
+    buffer = QBuffer()
+    buffer.setData(QByteArray(produced))
+    buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+    movie = QMovie()
+    movie.setDevice(buffer)
+
+    assert_that(movie.isValid()).is_true()
+    assert_that(movie.frameCount()).is_greater_than(1)
+
+
+class TestKeyButtonAnimation:
+    def test_set_animation_advances_the_icon_between_frames(self, key_button):
+        key_button.show()
+        key_button.set_animation(_animation_bytes(delay=40))
+        seen: set[tuple[int, int, int]] = set()
+        for _ in range(40):
+            _wait(25)
+            seen.add(_icon_rgb(key_button))
+            if len(seen) > 1:
+                break
+
+        assert_that(len(seen)).is_greater_than(1)
+
+    def test_set_animation_none_stops_the_movie_and_restores_the_poster(self, key_button):
+        key_button.show()
+        key_button.set_image(_png_b64((0, 255, 0)))
+        key_button.set_animation(_animation_bytes())
+        _wait(100)
+        movie = key_button._movie  # pylint: disable=protected-access
+        assert movie is not None
+
+        key_button.set_animation(None)
+
+        assert_that(key_button._movie).is_none()  # pylint: disable=protected-access
+        assert_that(movie.state()).is_equal_to(QMovie.MovieState.NotRunning)
+        assert_that(_icon_rgb(key_button)).is_equal_to((0, 255, 0))
+        _wait(100)
+        assert_that(_icon_rgb(key_button)).is_equal_to((0, 255, 0))
+
+    def test_set_animation_none_without_a_poster_clears_the_icon(self, key_button):
+        key_button.show()
+        key_button.set_animation(_animation_bytes())
+        _wait(100)
+
+        key_button.set_animation(None)
+
+        assert_that(key_button.icon().isNull()).is_true()
+
+    def test_hidden_button_pauses_its_movie_and_showing_resumes_it(self, key_button):
+        key_button.show()
+        key_button.set_animation(_animation_bytes())
+        movie = key_button._movie  # pylint: disable=protected-access
+        assert movie is not None
+        assert_that(movie.state()).is_equal_to(QMovie.MovieState.Running)
+
+        key_button.hide()
+        assert_that(movie.state()).is_equal_to(QMovie.MovieState.Paused)
+        key_button.show()
+        assert_that(movie.state()).is_equal_to(QMovie.MovieState.Running)
+
+    def test_animation_set_on_a_hidden_button_starts_paused(self, key_button):
+        key_button.set_animation(_animation_bytes())
+
+        movie = key_button._movie  # pylint: disable=protected-access
+        assert movie is not None
+        assert_that(movie.state()).is_equal_to(QMovie.MovieState.Paused)
+
+    def test_invalid_animation_data_falls_back_to_the_poster(self, key_button):
+        key_button.set_image(_png_b64((0, 255, 0)))
+
+        key_button.set_animation(b"not an image")
+
+        assert_that(key_button._movie).is_none()  # pylint: disable=protected-access
+        assert_that(_icon_rgb(key_button)).is_equal_to((0, 255, 0))
+
+    def test_grid_set_key_animation_decodes_and_clears(self, qapp):  # pylint: disable=unused-argument
+        grid = ButtonGridWidget()
+        grid.build(_make_keys(2))
+        button = grid._buttons[1]  # pylint: disable=protected-access
+
+        grid.set_key_animation(1, base64.b64encode(_animation_bytes()).decode())
+        assert_that(button._movie).is_not_none()  # pylint: disable=protected-access
+        grid.set_key_animation(1, "")
+        assert_that(button._movie).is_none()  # pylint: disable=protected-access
+        grid.set_key_animation(9, None)  # unknown keys are ignored
+        grid.deleteLater()

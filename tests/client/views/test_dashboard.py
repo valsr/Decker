@@ -3,7 +3,7 @@
 import dataclasses
 import json
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from assertpy import assert_that
@@ -1294,3 +1294,139 @@ class TestDragScopeFollowsThePage:  # pylint: disable=protected-access
 
         view.handle_event(PagesUpdatedEvent(pages=dataclasses.replace(_PAGES, active_page_id="p2")))
         assert_that(view._grid._scope).is_equal_to("dev1/p2")
+
+
+class TestKeyAnimations:  # pylint: disable=protected-access
+    @pytest.fixture(autouse=True)
+    def _qt(self, qapp):  # pylint: disable=unused-argument
+        AppContext._instance = None  # pylint: disable=protected-access
+
+    def _view(self, tmp_path):
+        """A view on dev1 whose animation fetches wait in ``jobs`` until the test runs them."""
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        cm = MagicMock()
+        cm.call.return_value = "QU5JTQ=="
+        AppContext.get().connection_manager = cm
+        jobs: list[Any] = []
+        view._bridge.submit = lambda work, done: jobs.append((work, done))  # type: ignore[method-assign]
+        view._grid.set_key_animation = MagicMock()  # type: ignore[method-assign]
+        return view, cm, jobs
+
+    @staticmethod
+    def _state(index: int, animation_id: str | None) -> dict[str, Any]:
+        return {"key_index": index, "image_b64": "UE9TVEVS", "label": "", "animation_id": animation_id}
+
+    @staticmethod
+    def _run(jobs: list[Any]) -> None:
+        while jobs:
+            work, done = jobs.pop(0)
+            done(work())
+
+    def test_fetches_an_animation_once_per_animation_id(self, tmp_path):
+        view, cm, jobs = self._view(tmp_path)
+
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+        self._run(jobs)
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+        self._run(jobs)
+        assert_that(cm.call.call_args_list).is_equal_to([call("key_animation", "a1")])
+
+        view._on_display_states_updated("dev1", [self._state(2, "a2")])
+        self._run(jobs)
+        assert_that(cm.call.call_args_list).is_equal_to([call("key_animation", "a1"), call("key_animation", "a2")])
+        view._grid.set_key_animation.assert_called_with(2, "QU5JTQ==")
+
+    def test_fetch_does_not_block_the_caller(self, tmp_path):
+        view, cm, jobs = self._view(tmp_path)
+
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+
+        cm.call.assert_not_called()
+        assert_that(jobs).is_length(1)
+
+    def test_a_cached_animation_is_not_refetched_after_a_page_switch(self, tmp_path):
+        view, cm, jobs = self._view(tmp_path)
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+        self._run(jobs)
+
+        view.handle_event(PagesUpdatedEvent(pages=dataclasses.replace(_PAGES, device_id="dev1", active_page_id="p2")))
+        view._grid.set_key_animation.assert_called_with(2, None)
+        view.handle_event(PagesUpdatedEvent(pages=_PAGES))
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+
+        assert_that(cm.call.call_count).is_equal_to(1)
+        assert_that(jobs).is_empty()
+        view._grid.set_key_animation.assert_called_with(2, "QU5JTQ==")
+
+    def test_state_without_animation_id_clears_the_animation(self, tmp_path):
+        view, _cm, jobs = self._view(tmp_path)
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+        self._run(jobs)
+
+        view._on_display_states_updated("dev1", [self._state(2, None)])
+
+        view._grid.set_key_animation.assert_called_with(2, None)
+
+    def test_an_empty_result_is_remembered_and_not_requested_again(self, tmp_path):
+        view, cm, jobs = self._view(tmp_path)
+        cm.call.return_value = ""
+
+        view._on_display_states_updated("dev1", [self._state(2, "bad")])
+        self._run(jobs)
+        view._on_display_states_updated("dev1", [self._state(2, "bad")])
+        view._on_display_states_updated("dev1", [self._state(2, None)])
+        view._on_display_states_updated("dev1", [self._state(2, "bad")])
+
+        assert_that(cm.call.call_count).is_equal_to(1)
+        assert_that(jobs).is_empty()
+        view._grid.set_key_animation.assert_called_with(2, "")
+
+    def test_a_failed_call_is_retried_on_the_next_state_event(self, tmp_path):
+        view, cm, jobs = self._view(tmp_path)
+        cm.call.return_value = None
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+        self._run(jobs)
+        cm.call.return_value = "QU5JTQ=="
+
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+        self._run(jobs)
+
+        assert_that(cm.call.call_count).is_equal_to(2)
+        view._grid.set_key_animation.assert_called_with(2, "QU5JTQ==")
+
+    def test_a_stale_result_for_an_id_the_key_no_longer_has_is_dropped(self, tmp_path):
+        view, cm, jobs = self._view(tmp_path)
+        cm.call.side_effect = lambda _method, animation_id: f"{animation_id}-b64"
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+        view._on_display_states_updated("dev1", [self._state(2, "a2")])
+
+        self._run(jobs)  # a1's reply arrives after the key moved on to a2
+
+        applied = [c.args for c in view._grid.set_key_animation.call_args_list]
+        assert_that(applied).is_equal_to([(2, "a2-b64")])
+
+    def test_a_result_for_a_key_that_left_the_page_is_dropped(self, tmp_path):
+        view, _cm, jobs = self._view(tmp_path)
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+
+        view.handle_event(PagesUpdatedEvent(pages=dataclasses.replace(_PAGES, active_page_id="p2")))
+        view._grid.set_key_animation.reset_mock()
+        self._run(jobs)
+
+        view._grid.set_key_animation.assert_not_called()
+
+    def test_states_for_another_device_fetch_nothing(self, tmp_path):
+        view, _cm, jobs = self._view(tmp_path)
+
+        view._on_display_states_updated("other", [self._state(2, "a1")])
+
+        assert_that(jobs).is_empty()
+
+    def test_without_a_connection_nothing_is_fetched(self, tmp_path):
+        view, _cm, jobs = self._view(tmp_path)
+        AppContext.get().connection_manager = None
+
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+
+        assert_that(jobs).is_empty()

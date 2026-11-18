@@ -365,6 +365,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
                     "key_index": data["key_index"],
                     "image_b64": data.get("image_b64"),
                     "label": data.get("label", ""),
+                    "animation_id": data.get("animation_id"),
                 }
             ]
             EventManager.get().push(KeyDisplayStatesUpdatedEvent(device_id=device_id, states=states))

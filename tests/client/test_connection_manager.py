@@ -451,6 +451,13 @@ class TestOnServerEvent:
         assert_that(events[0].device_id).is_equal_to("abc")
         assert_that(events[0].states[0]["key_index"]).is_equal_to(2)
         assert_that(events[0].states[0]["label"]).is_equal_to("Hi")
+        assert_that(events[0].states[0]["animation_id"]).is_none()
+
+    def test_key_state_changed_passes_the_animation_id_through(self):
+        payload = json.dumps({"device_id": "abc", "key_index": 2, "image_b64": "x", "label": "", "animation_id": "a1"})
+        self.manager._on_server_event("key_state_changed", payload)  # pylint: disable=protected-access
+        events = [e for e in EventManager.get().drain() if isinstance(e, KeyDisplayStatesUpdatedEvent)]
+        assert_that(events[0].states[0]["animation_id"]).is_equal_to("a1")
 
     def test_plugin_failed_dispatches_plugin_load_failed_event(self):
         payload = json.dumps({"plugin_id": "com.decker.x", "error": "crashed"})

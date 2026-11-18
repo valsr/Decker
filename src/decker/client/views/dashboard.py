@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from decker.client.call_bridge import CallBridge
 from decker.client.context import AppContext
 from decker.client.events import (
     ActionListUpdatedEvent,
@@ -63,6 +64,14 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._select_after_refresh: int | None = None  # the key to open once its data arrives after a move or copy
         self._active_device_id: str | None = None
         self._actions: list[dict[str, Any]] = []  # action list from the server (with settings schemas)
+        self._bridge = CallBridge(self)  # runs the animation fetches off the GUI thread
+        self._key_animation_ids: dict[int, str] = (
+            {}
+        )  # key_index → the animation id applied to (or being fetched for) it
+        self._animation_cache: dict[str, str] = (
+            {}
+        )  # animation id → base64 image; "" = the server had none (not retried)
+        self._animations_pending: set[str] = set()  # animation ids with a fetch in flight
 
         # UI sub-components
         self._sidebar = SidebarWidget()  # Panel with plugins and other menu items
@@ -205,6 +214,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             return
         self._active_device_id = device_id
         self._reset_key_selection()
+        self._clear_animations()
         self._grid.build(device.keys if device is not None else [])
         self._pages = None
         self._profiles = None
@@ -227,9 +237,51 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             return
         if pages.active_page_id != self._active_page_id:
             self._reset_key_selection()
+            self._clear_animations()
         self._pages = pages
         self._sync_draggable()
         self._render_page_tabs()
+
+    def _clear_animations(self) -> None:
+        """Stop every key's movie (its key left the page); fetched animations stay cached."""
+        for key_index in self._key_animation_ids:
+            self._grid.set_key_animation(key_index, None)
+        self._key_animation_ids.clear()
+
+    def _sync_animation(self, key_index: int, animation_id: str | None) -> None:
+        """Start, keep or stop the animation of a key of the visible page, fetching it only the first time."""
+        if not animation_id:
+            if self._key_animation_ids.pop(key_index, None) is not None:
+                self._grid.set_key_animation(key_index, None)
+            return
+        if self._key_animation_ids.get(key_index) == animation_id:
+            return
+        self._key_animation_ids[key_index] = animation_id
+        if animation_id in self._animation_cache:
+            self._grid.set_key_animation(key_index, self._animation_cache[animation_id])
+        else:
+            self._fetch_animation(animation_id)
+
+    def _fetch_animation(self, animation_id: str) -> None:
+        cm = AppContext.get().connection_manager
+        if cm is None or animation_id in self._animations_pending:
+            return
+        self._animations_pending.add(animation_id)
+        self._bridge.submit(
+            lambda: cm.call("key_animation", animation_id),
+            lambda result: self._on_animation_fetched(animation_id, result),
+        )
+
+    def _on_animation_fetched(self, animation_id: str, result: Any) -> None:
+        self._animations_pending.discard(animation_id)
+        keys = [index for index, applied in self._key_animation_ids.items() if applied == animation_id]
+        if not isinstance(result, str):  # the call failed: forget it so the next state event asks again
+            for index in keys:
+                del self._key_animation_ids[index]
+            return
+        self._animation_cache[animation_id] = result
+        for index in keys:  # a key that changed or left the page since the request no longer has this id
+            self._grid.set_key_animation(index, result)
 
     def _render_page_tabs(self) -> None:
         if self._pages is None:
@@ -469,6 +521,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             if not image_b64:
                 self._grid.set_key_label(key_index, str(state.get("label", "")))
             self._sync_slot(key_index, state)
+            self._sync_animation(key_index, state.get("animation_id"))
         pending = self._select_after_refresh
         if pending is not None and pending in self._key_slots:
             self._select_after_refresh = None
