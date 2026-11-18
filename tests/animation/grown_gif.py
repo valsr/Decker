@@ -65,3 +65,33 @@ def grown_gif(
         out += b"\x2c\x00\x00\x00\x00" + width.to_bytes(2, "little") + height.to_bytes(2, "little") + b"\x00"
         out += b"\x02" + _sub_blocks(_uniform_lzw(width * height, 1 + index % 3))
     return bytes(out + b"\x3b")
+
+
+def _frame(width: int, height: int, colour: int, disposal: int = 0) -> bytes:
+    out = bytes([0x21, 0xF9, 0x04, disposal << 2, 0x0A, 0x00, 0x00, 0x00])
+    out += b"\x2c\x00\x00\x00\x00" + width.to_bytes(2, "little") + height.to_bytes(2, "little") + b"\x00"
+    return out + b"\x02" + _sub_blocks(_uniform_lzw(width * height, colour))
+
+
+def _hide(big: bytes) -> bytes:
+    """Bytes that hide `big` from a walk that reads one chain after `21 01 00` while Pillow reads two."""
+    return b"\x21\x01\x00" + bytes([0x21, 0x01, 51]) + b"\x01" * 31 + b"\x00" + big
+
+
+def _fake() -> bytes:
+    """Bytes a one-chain walk reads as a 1x1 frame and Pillow swallows as sub-block data."""
+    return b"\x21\x01\x00" + bytes([0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 0]) + b"\x01" * 33 + b"\x00"
+
+
+def desynced_gif(big: tuple[int, int], balanced: bool, disposal: int = 0, hidden: int = 1) -> bytes:
+    """A GIF where empty extension blocks make a naive walk and Pillow read different frames.
+
+    `hidden` big frames are invisible to a one-chain walk; `balanced` adds fake frames the walk sees and Pillow
+    does not (keeping the frame counts equal) and the trailer, otherwise the trailer is left out.
+    """
+    palette = bytes([0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255])
+    out = bytearray(b"GIF89a\x02\x00\x02\x00\x81\x00\x00" + palette)
+    out += b"\x21\xff\x0bNETSCAPE2.0\x03\x01\x00\x00\x00" + _frame(2, 2, 1)
+    for _ in range(hidden):
+        out += _hide(_frame(big[0], big[1], 2, disposal)) + (_fake() if balanced else b"")
+    return bytes(out) + (b";" if balanced else _frame(2, 2, 1))
