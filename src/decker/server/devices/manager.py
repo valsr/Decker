@@ -261,6 +261,10 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
         device.play_animation(key_index, spec)
 
     def _on_hw_key_event(self, device: Device, key_index: int, pressed: bool) -> None:
+        with self._lock:
+            current = self._devices.get(device.device_id) is device
+        if not current:
+            return  # a stale handle of a dropped Device must not deliver presses for its reopened successor
         device.on_key_event(key_index, pressed)
         self._on_key_event_cb(device.device_id, key_index, pressed)
 

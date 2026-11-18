@@ -4,6 +4,7 @@ import io
 import threading
 import time
 from collections.abc import Callable
+from unittest.mock import MagicMock
 
 from PIL import Image
 
@@ -45,3 +46,33 @@ class WriteLog:
 
     def for_key(self, key_index: int) -> list[tuple[int, bytes | None, str, float]]:
         return [write for write in self.writes if write[0] == key_index]
+
+
+LIFECYCLE = ("open", "close", "reset")
+
+
+def stateful_deck(serial: str = "ABC123", path: str = "/dev/hidraw0") -> MagicMock:
+    """A fake deck whose is_open follows open()/close(); set get_serial_number.side_effect to make it fail."""
+    deck = MagicMock()
+    opened = [False]
+    deck.is_open.side_effect = lambda: opened[0]
+    deck.open.side_effect = lambda: opened.__setitem__(0, True)
+    deck.close.side_effect = lambda: opened.__setitem__(0, False)
+    deck.get_serial_number.return_value = serial
+    deck.id.return_value = path
+    deck.KEY_PIXEL_WIDTH = 72
+    deck.KEY_PIXEL_HEIGHT = 72
+    deck.IMAGE_REPORT_PAYLOAD_LENGTH = 1016
+    deck.key_count.return_value = 15
+    deck.key_layout.return_value = (3, 5)
+    deck.key_image_format.return_value = {"size": (72, 72), "format": "JPEG", "flip": (False, False), "rotation": 0}
+    deck.get_firmware_version.return_value = "1.0"
+    deck.deck_type.return_value = "Stream Deck"
+    deck.vendor_id.return_value = 1
+    deck.product_id.return_value = 2
+    return deck
+
+
+def lifecycle(deck: MagicMock) -> list[str]:
+    """The deck's open/close/reset calls in order."""
+    return [call[0] for call in deck.mock_calls if call[0] in LIFECYCLE]
