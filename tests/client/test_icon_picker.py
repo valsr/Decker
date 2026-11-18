@@ -8,6 +8,7 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal
 
 from decker.client.icon_cache import IconThumbnailCache
 from decker.client.icon_picker import (
+    MAX_IMPORT_BYTES,
     IconBrowserDialog,
     IconPickerWidget,
 )
@@ -78,7 +79,7 @@ class TestIconPickerWidget:
         self, qapp, tmp_path, monkeypatch
     ):  # pylint: disable=unused-argument
         source = tmp_path / "big.png"
-        source.write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+        source.write_bytes(b"x" * (MAX_IMPORT_BYTES + 1))
         widget, warnings, opened = self._picker_with_dialog(monkeypatch, source)
 
         widget._choose_file()  # pylint: disable=protected-access
@@ -86,6 +87,29 @@ class TestIconPickerWidget:
         assert_that(warnings).is_length(1)
         assert_that(warnings[0]).contains("4 MiB")
         assert_that(opened).is_empty()
+
+    def test_choose_file_opens_the_dialog_for_a_file_of_exactly_the_limit(
+        self, qapp, tmp_path, monkeypatch
+    ):  # pylint: disable=unused-argument
+        source = tmp_path / "edge.png"
+        source.write_bytes(b"x" * MAX_IMPORT_BYTES)
+        widget, warnings, opened = self._picker_with_dialog(monkeypatch, source)
+
+        widget._choose_file()  # pylint: disable=protected-access
+
+        assert_that(warnings).is_empty()
+        assert_that(opened).is_length(1)
+
+    def test_choose_file_refuses_a_non_regular_file(
+        self, qapp, tmp_path, monkeypatch
+    ):  # pylint: disable=unused-argument
+        for target in (Path("/dev/null"), tmp_path):
+            widget, warnings, opened = self._picker_with_dialog(monkeypatch, target)
+
+            widget._choose_file()  # pylint: disable=protected-access
+
+            assert_that(warnings).is_length(1)
+            assert_that(opened).is_empty()
 
     def test_choose_file_warns_instead_of_raising_for_an_unreadable_file(
         self, qapp, tmp_path, monkeypatch
