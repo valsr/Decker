@@ -43,7 +43,7 @@ Let users bring their own icons (GIF, JPG, PNG, SVG) into Decker. Imports appear
 
 **Ids.** Normalised to lowercase `[a-z0-9_-]`, 1–64 chars; anything else is replaced by `-`, runs collapsed, edges trimmed; empty after normalising is refused. Uniqueness is across all extensions (so `cat.gif` blocks `cat.png`). On collision the result is a refusal carrying a suggestion: the first free `id-2`, `id-3`, …
 
-**Resize.** Output is 144x144 RGBA. `center`: scale by one factor to fit inside the square, pad with transparency, centre. `stretch`: independent x/y scales. JPEG imports are saved as PNG. GIF: every frame is composed to full canvas first (honouring disposal), resized with the same rule, re-saved with original per-frame durations and loop count, `disposal=2`, transparency kept. Single-frame GIFs are saved as PNG.
+**Resize.** Output is 144x144 RGBA. `center`: scale by one factor to fit inside the square, pad with transparency, centre. `stretch`: independent x/y scales. JPEG imports are saved as PNG (the stored format never reaches the hardware, which gets the device's native format from `PILHelper`; PNG keeps alpha for centre padding and avoids double JPEG compression). GIF: every frame is composed to full canvas first (honouring disposal), resized with the same rule, re-saved with original per-frame durations and loop count, `disposal=2`, transparency kept. Single-frame GIFs are saved as PNG.
 
 **SVG.** Must parse as XML with an `svg` root; rejected if it contains `<script>`, `<foreignObject>`, `on*=` event attributes, or external `href`/`xlink:href` references (anything not starting with `#` or `data:image/`). Copied byte for byte.
 
