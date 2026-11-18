@@ -1,13 +1,23 @@
 """Drawing on the hardware: no firmware reads for layout, and no write for a key that already shows the image."""
 
 import io
+import threading
+import time
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
 from assertpy import assert_that
 from PIL import Image
 
+from decker.animation.factory import AnimationFactory
 from decker.server.devices import Device
+from tests.server.animation_fixture import (
+    WRITER_THREAD,
+    WriteLog,
+    make_spec,
+    wait_until,
+)
 
 
 def _png(color: str) -> bytes:
@@ -23,12 +33,15 @@ def deck_fixture() -> MagicMock:
     deck.key_count.return_value = 15
     deck.key_image_format.return_value = {"size": (72, 72), "format": "JPEG", "flip": (False, False), "rotation": 0}
     deck.is_open.return_value = True
+    deck.IMAGE_REPORT_PAYLOAD_LENGTH = 1016
     return deck
 
 
 @pytest.fixture(name="device")
-def device_fixture(deck: MagicMock) -> Device:
-    return Device("dev", "serial", deck)
+def device_fixture(deck: MagicMock) -> Iterator[Device]:
+    device = Device("dev", "serial", deck)
+    yield device
+    device.close()
 
 
 class TestLayout:
@@ -112,3 +125,145 @@ class TestBlanking:
         device.clear_key_image(4)
 
         assert_that(deck.set_key_image.call_count).is_equal_to(2)
+
+
+@pytest.fixture(name="factory")
+def factory_fixture() -> Iterator[AnimationFactory]:
+    factory = AnimationFactory(cache_bytes=8 * 1024 * 1024)
+    yield factory
+    factory.close()
+
+
+@pytest.fixture(name="log")
+def log_fixture(deck: MagicMock) -> WriteLog:
+    log = WriteLog()
+    deck.set_key_image.side_effect = log
+    return log
+
+
+@pytest.fixture(name="animated")
+def animated_fixture(deck: MagicMock, factory: AnimationFactory) -> Iterator[Device]:
+    device = Device("dev", "serial", deck)
+    device.set_animation_support(factory, True, 0.75)
+    yield device
+    device.close()
+
+
+class TestAnimatedDevice:
+    def test_set_image_bytes_writes_through_the_writer_and_still_skips_an_unchanged_image(
+        self, animated: Device, log: WriteLog
+    ) -> None:
+        animated.set_image_bytes(3, _png("red"))
+        animated.set_image_bytes(3, _png("red"))
+
+        assert_that(len(log.writes)).is_equal_to(1)
+        assert_that(log.writes[0][2]).is_equal_to(WRITER_THREAD)
+        assert_that(animated.get_key_image(3)).is_not_none()
+
+    def test_the_writer_starts_with_the_first_write(self, animated: Device, log: WriteLog) -> None:
+        assert_that([t for t in threading.enumerate() if t.name == WRITER_THREAD]).is_empty()
+
+        animated.clear_key_image(1)
+
+        assert_that(log.writes[0][:3]).is_equal_to((1, None, WRITER_THREAD))
+
+    def test_animation_support_given_after_the_first_write_still_animates(
+        self, device: Device, factory: AnimationFactory, log: WriteLog
+    ) -> None:
+        device.set_image_bytes(3, _png("red"))
+        device.set_animation_support(factory, True, 0.75)
+
+        device.play_animation(3, make_spec())
+
+        assert_that(wait_until(lambda: len(log.for_key(3)) >= 3)).is_true()
+        assert_that(log.writes[0][2]).is_not_equal_to(WRITER_THREAD)  # direct write, as before
+        assert_that(log.for_key(3)[-1][2]).is_equal_to(WRITER_THREAD)
+
+    def test_without_animation_support_play_animation_keeps_the_static_image(
+        self, device: Device, log: WriteLog
+    ) -> None:
+        device.set_image_bytes(3, _png("red"))
+
+        device.play_animation(3, make_spec())
+        time.sleep(0.3)
+
+        assert_that(len(log.writes)).is_equal_to(1)
+
+    def test_a_write_that_fails_in_the_writer_is_retried(self, animated: Device, deck: MagicMock) -> None:
+        deck.set_key_image.side_effect = [OSError("usb"), None]
+
+        animated.set_image_bytes(3, _png("red"))
+        animated.set_image_bytes(3, _png("red"))
+
+        assert_that(deck.set_key_image.call_count).is_equal_to(2)
+
+    def test_static_write_stops_that_keys_animation(self, animated: Device, log: WriteLog) -> None:
+        animated.set_image_bytes(3, _png("red"))
+        animated.play_animation(3, make_spec())
+        assert_that(wait_until(lambda: len(log.for_key(3)) >= 3)).is_true()
+
+        animated.set_image_bytes(3, _png("red"))  # the poster again: must still be written, ending the animation
+        static_data = log.for_key(3)[-1][1]
+        written = len(log.for_key(3))
+        time.sleep(0.4)  # four frame periods
+
+        assert_that(len(log.for_key(3))).is_equal_to(written)
+        assert_that(log.for_key(3)[-1][1] == static_data).is_true()
+        assert_that(log.for_key(3)[0][1] == static_data).is_true()
+
+    def test_stop_animations_leaves_no_frame_writes_after_it_returns(
+        self, animated: Device, deck: MagicMock, log: WriteLog
+    ) -> None:
+        animated.play_animation(1, make_spec())
+        assert_that(wait_until(lambda: len(log.for_key(1)) >= 2)).is_true()
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_write(key_index: int, data: bytes | None) -> None:
+            entered.set()
+            release.wait(5)
+            log(key_index, data)
+
+        deck.set_key_image.side_effect = slow_write
+        assert_that(entered.wait(2)).is_true()  # a frame write is under way
+        stopper = threading.Thread(target=animated.stop_animations)
+        stopper.start()
+        stopper.join(0.2)
+        waited_for_the_write = stopper.is_alive()
+        release.set()
+        stopper.join(2)
+        stopped_at = time.monotonic()
+        time.sleep(0.3)
+
+        assert_that(waited_for_the_write).is_true()
+        assert_that(len([write for write in log.writes if write[3] > stopped_at])).is_zero()
+
+    def test_device_close_returns_promptly_with_animations_running(
+        self, deck: MagicMock, factory: AnimationFactory, log: WriteLog
+    ) -> None:
+        device = Device("dev", "serial", deck)
+        device.set_animation_support(factory, True, 0.75)
+        for key_index in range(4):
+            device.play_animation(key_index, make_spec())
+        assert_that(wait_until(lambda: all(len(log.for_key(k)) >= 2 for k in range(4)))).is_true()
+        release = threading.Event()
+        deck.set_key_image.side_effect = lambda *_: release.wait(10)  # the deck went away mid-write
+        assert_that(wait_until(lambda: deck.set_key_image.call_count > len(log.writes))).is_true()
+
+        started = time.monotonic()
+        device.close()
+        elapsed = time.monotonic() - started
+        release.set()
+
+        assert_that(elapsed).is_less_than(1.5)
+        deck.reset.assert_called_once()
+        deck.close.assert_called_once()
+        assert_that(wait_until(lambda: not [t for t in threading.enumerate() if t.name == WRITER_THREAD])).is_true()
+
+    def test_a_closed_device_does_not_start_a_writer(self, deck: MagicMock, factory: AnimationFactory) -> None:
+        device = Device("dev", "serial", deck)
+        device.set_animation_support(factory, True, 0.75)
+        device.close()
+
+        device.play_animation(1, make_spec())
+
+        assert_that([t for t in threading.enumerate() if t.name == WRITER_THREAD]).is_empty()

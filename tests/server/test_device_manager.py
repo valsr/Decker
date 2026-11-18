@@ -1,14 +1,24 @@
 """Tests for DeviceManager."""
 
+import io
 import json
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 from assertpy import assert_that
+from PIL import Image
 
+from decker.common import config
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices import Device
 from decker.server.devices.manager import DeviceManager, device_id_for_serial
+from tests.server.animation_fixture import (
+    WRITER_THREAD,
+    WriteLog,
+    make_spec,
+    wait_until,
+)
 
 
 def _make_deck(serial: str = "ABC123") -> MagicMock:
@@ -20,6 +30,7 @@ def _make_deck(serial: str = "ABC123") -> MagicMock:
     deck.close.side_effect = lambda: opened.__setitem__(0, False)
     deck.KEY_PIXEL_WIDTH = 72
     deck.KEY_PIXEL_HEIGHT = 72
+    deck.IMAGE_REPORT_PAYLOAD_LENGTH = 1016
     deck.key_count.return_value = 15
     deck.key_layout.return_value = (3, 5)
     deck.key_image_format.return_value = {"size": (72, 72), "format": "JPEG", "flip": (False, False), "rotation": 0}
@@ -188,6 +199,7 @@ class TestDeviceManagerPages:
 
         assert state is not None
         assert_that(state.page_id).is_equal_to("p-active")
+        dm.destroy()
         store.destroy()
 
     def test_show_page_draws_cached_images_and_blanks_the_rest(self, tmp_path):
@@ -209,6 +221,7 @@ class TestDeviceManagerPages:
         assert state is not None
         assert_that(state.page_id).is_equal_to("p2")
         assert_that(state.get_key_state(4).label).is_equal_to("Four")
+        dm.destroy()
         store.destroy()
 
     def test_show_page_returns_false_for_unavailable_device(self):
@@ -226,6 +239,7 @@ class TestDeviceManagerPages:
 
         assert_that(store.get_key_label("dev1", "p-active", 0)).is_none()
         assert_that(store.get_key_label("dev1", "other", 0)).is_equal_to("y")
+        dm.destroy()
         store.destroy()
 
 
@@ -245,6 +259,7 @@ class TestBlankKey:
 
         clear_image.assert_called_once_with(2)
         assert_that(store.get_key_label(device.device_id, "p1", 2)).is_none()
+        dm.destroy()
         store.destroy()
 
     def test_unavailable_device_is_a_no_op(self):
@@ -472,3 +487,139 @@ class TestDeviceWatcher:
         dm.destroy()
 
         assert_that([t for t in threading.enumerate() if t.name == "device-watch"]).is_empty()
+
+
+def _png(color: str) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (72, 72), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestDeviceManagerAnimations:
+    """Animations play through each device's writer; page switches stop the old page's and restart the new one's."""
+
+    @pytest.fixture(name="store")
+    def store_fixture(self, tmp_path):
+        store = DeviceStateStore(data_dir=tmp_path)
+        store.create(MagicMock())
+        store.save_device = MagicMock()  # type: ignore[method-assign]  # mocked deck info is not storable
+        yield store
+        store.destroy()
+
+    @staticmethod
+    def _open(store: DeviceStateStore, log: WriteLog) -> tuple[DeviceManager, str]:
+        context = MagicMock()
+        context.device_state_store = store
+        context.page_controller.active_page_id.return_value = "p1"
+        dm = _manager()
+        dm.create(context)
+        deck = _make_deck("ABC123")
+        deck.set_key_image.side_effect = log
+        with patch("decker.server.devices.manager._HardwareDeviceManager") as mock_dm:
+            mock_dm.return_value.enumerate.return_value = [deck]
+            device = dm.open_device(device_id_for_serial("ABC123"))
+        assert device is not None
+        return dm, device.device_id
+
+    @pytest.fixture(name="opened")
+    def opened_fixture(self, store):
+        log = WriteLog()
+        dm, device_id = self._open(store, log)
+        yield dm, device_id, log
+        dm.destroy()
+
+    @staticmethod
+    def _animate(dm: DeviceManager, device_id: str, key_index: int, log: WriteLog) -> None:
+        dm.set_image_bytes(device_id, key_index, _png("red"))  # the poster
+        dm.set_animation(device_id, key_index, make_spec())
+        assert_that(wait_until(lambda: len(log.for_key(key_index)) >= 3)).is_true()
+
+    def test_set_animation_plays_on_the_writer_and_records_the_spec(self, opened):
+        dm, device_id, log = opened
+
+        self._animate(dm, device_id, 2, log)
+
+        assert_that({write[2] for write in log.for_key(2)}).is_equal_to({WRITER_THREAD})
+        state = dm.get_device_state(device_id)
+        assert state is not None
+        assert_that(state.get_key_animation(2)).is_not_none()
+
+    def test_show_page_leaves_no_writes_to_previous_page_keys_after_it_returns(self, opened, store):
+        dm, device_id, log = opened
+        store.save_key_image(device_id, "p2", 2, _png("red"))  # same image as the poster: the redraw skips it
+        self._animate(dm, device_id, 2, log)
+        self._animate(dm, device_id, 5, log)
+
+        assert_that(dm.show_page(device_id, "p2")).is_true()
+        returned_at = time.monotonic()
+        time.sleep(0.4)  # four frame periods
+
+        stale = [write[0] for write in log.writes if write[3] > returned_at]
+        assert_that(stale).is_empty()
+
+    def test_show_page_restarts_animations_recorded_for_the_new_page(self, opened):
+        dm, device_id, log = opened
+        self._animate(dm, device_id, 2, log)
+        dm.show_page(device_id, "p2")
+
+        assert_that(dm.show_page(device_id, "p1")).is_true()
+        returned_at = time.monotonic()
+
+        assert_that(wait_until(lambda: len([w for w in log.for_key(2) if w[3] > returned_at]) >= 2)).is_true()
+        frames = {write[1] for write in log.for_key(2) if write[3] > returned_at}
+        assert_that(len(frames)).is_greater_than_or_equal_to(2)
+
+    def test_a_static_image_forgets_the_recorded_animation(self, opened):
+        dm, device_id, log = opened
+        self._animate(dm, device_id, 2, log)
+
+        dm.set_image_bytes(device_id, 2, _png("blue"))
+
+        state = dm.get_device_state(device_id)
+        assert state is not None
+        assert_that(state.get_key_animation(2)).is_none()
+
+    def test_clear_key_state_forgets_the_animation(self, opened):
+        dm, device_id, log = opened
+        self._animate(dm, device_id, 2, log)
+
+        dm.clear_key_state(device_id, 2)
+
+        state = dm.get_device_state(device_id)
+        assert state is not None
+        assert_that(state.get_key_animation(2)).is_none()
+        assert_that(state.get_all_animations()).is_empty()
+
+    def test_animation_disabled_in_config_keeps_the_static_poster_only(self, store, monkeypatch):
+        real = config.get_as_or_default
+        monkeypatch.setattr(
+            "decker.server.devices.manager.config.get_as_or_default",
+            lambda path, kind, default: False if path == "animation.enabled" else real(path, kind, default),
+        )
+        log = WriteLog()
+        dm, device_id = self._open(store, log)
+        try:
+            dm.set_image_bytes(device_id, 2, _png("red"))
+            dm.set_animation(device_id, 2, make_spec())
+            time.sleep(0.4)
+        finally:
+            dm.destroy()
+
+        assert_that(len(log.for_key(2))).is_equal_to(1)
+
+    def test_set_animation_for_an_unavailable_device_is_a_no_op(self):
+        dm = _manager()
+        with patch("decker.server.devices.manager._HardwareDeviceManager") as mock_dm:
+            mock_dm.return_value.enumerate.return_value = []
+            dm.set_animation("nope", 0, make_spec())
+
+    def test_create_builds_one_shared_factory_and_destroy_closes_it(self, store):
+        log = WriteLog()
+        dm, _device_id = self._open(store, log)
+        factory = dm.animation_factory
+        assert factory is not None
+
+        dm.destroy()
+
+        assert_that(dm.animation_factory).is_none()
+        assert_that(factory.frames_for(make_spec(), MagicMock(), 90)).is_none()  # closed: never builds

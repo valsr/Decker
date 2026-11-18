@@ -306,3 +306,51 @@ def test_close_returns_promptly_while_a_write_is_pending() -> None:
         writer.close()
 
     assert_that(_writer_threads()).is_empty()
+
+
+def test_stop_all_with_wait_returns_only_after_a_frame_write_under_way() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    finished: list[float] = []
+
+    def write(_key_index: int, _data: bytes | None) -> None:
+        entered.set()
+        release.wait(5)
+        finished.append(time.monotonic())
+
+    writer = KeyWriter(write)
+    writer.play(0, _animation(_frames(3)))
+    writer.start()
+    assert_that(entered.wait(2)).is_true()
+    releaser = threading.Timer(0.2, release.set)
+    releaser.start()
+
+    writer.stop_all(wait=2.0)
+    returned = time.monotonic()
+    writer.close()
+    releaser.join()
+
+    assert_that(finished).is_length(1)
+    assert_that(returned).is_greater_than_or_equal_to(finished[0])
+
+
+def test_stop_all_wait_gives_up_after_its_timeout() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    def write(_key_index: int, _data: bytes | None) -> None:
+        entered.set()
+        release.wait(5)
+
+    writer = KeyWriter(write)
+    writer.play(0, _animation(_frames(3)))
+    writer.start()
+    assert_that(entered.wait(2)).is_true()
+
+    started = time.monotonic()
+    writer.stop_all(wait=0.1)
+    elapsed = time.monotonic() - started
+    release.set()
+    writer.close()
+
+    assert_that(elapsed).is_between(0.05, 1.0)

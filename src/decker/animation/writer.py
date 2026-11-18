@@ -321,6 +321,8 @@ class KeyWriter:  # pylint: disable=too-many-instance-attributes
         self._thread: threading.Thread | None = None
         # Key whose slot step is evaluating; the worker drops that slot if step raises.
         self._processing_key: int | None = None
+        # True while an animation frame is being written (outside the lock); stop_all can wait for it.
+        self._frame_in_flight: bool = False
 
     def submit_static(self, key_index: int, data: bytes | None, timeout: float = 5.0) -> bool:
         """Write data (None blanks) to the key ahead of animations; True once written, False on timeout or error.
@@ -382,8 +384,8 @@ class KeyWriter:  # pylint: disable=too-many-instance-attributes
             self._remove(key_index)
             self._notify()
 
-    def stop_all(self) -> None:
-        """Stop every animation."""
+    def stop_all(self, wait: float = 0.0) -> None:
+        """Stop every animation; with wait > 0 also wait up to wait seconds for a frame write already under way."""
         with self._condition:
             had_slots = bool(self._slots)
             self._slots.clear()
@@ -391,15 +393,22 @@ class KeyWriter:  # pylint: disable=too-many-instance-attributes
             if had_slots:
                 self._adapter.changed(self._clock())
             self._notify()
+            if wait > 0 and threading.current_thread() is not self._thread:
+                self._condition.wait_for(lambda: not self._frame_in_flight or self._closing, wait)
 
     def step(self, now: float) -> float | None:
         """Perform at most one due write and return the clock time of the next deadline, or None when idle."""
         self._adapt(now)
         action = self._next_action(now)
         if action is not None:
-            started = self._clock()
-            ok = self._perform(action)
-            self._complete(action, ok, now, (started, self._clock()))
+            try:
+                started = self._clock()
+                ok = self._perform(action)
+                self._complete(action, ok, now, (started, self._clock()))
+            finally:
+                with self._condition:
+                    self._frame_in_flight = False
+                    self._condition.notify_all()
         with self._condition:
             self._processing_key = None
             return self._next_deadline(now)
@@ -496,6 +505,7 @@ class KeyWriter:  # pylint: disable=too-many-instance-attributes
                 slot = self._slots[key_index]
                 index = slot.animation.frame_index_at(self._elapsed_ms(slot, now)) if slot.ends_ms[-1] > 0 else 0
                 if index != slot.shown_index and slot.animation.frames[index].data != slot.shown_data:
+                    self._frame_in_flight = True
                     return _FrameWrite(key_index, slot, index, now if slot.deadline is None else slot.deadline)
                 slot.shown_index = index
                 slot.deadline = self._deadline_after(slot, now, None)

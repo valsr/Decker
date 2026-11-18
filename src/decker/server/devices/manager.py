@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING
 from StreamDeck.DeviceManager import DeviceManager as _HardwareDeviceManager
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
+from decker.animation.factory import AnimationFactory
+from decker.animation.model import AnimationSpec
+from decker.common import config
 from decker.common.manager import Manager
 from decker.common.model import DeviceHardwareInfo
 from decker.server import devices
@@ -22,6 +25,10 @@ if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
 
 _KeyEventCallback = Callable[[str, int, bool], None]  # (device_id, key_index, pressed)
+
+ANIMATION_ENABLED_DEFAULT: bool = True
+ANIMATION_BUDGET_PERCENT_DEFAULT: float = 75.0
+ANIMATION_CACHE_MB_DEFAULT: int = 64
 
 
 def device_id_for_serial(serial: str) -> str:
@@ -43,7 +50,7 @@ class DeviceNotOpened(Exception):
         super().__init__(f"Unable to open device at {path}")
 
 
-class DeviceManager(Manager):
+class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
     """Opens Stream Deck devices on first request and caches one Device instance per device ID."""
 
     def __init__(self, on_key_event: _KeyEventCallback) -> None:
@@ -57,12 +64,26 @@ class DeviceManager(Manager):
         self._unopenable: set[str] = set()  # device paths whose failure to open has been logged
         self._state_store: "DeviceStateStore | None" = None
         self._page_resolver: Callable[[str], str] = initial_page_id
+        self._factory: AnimationFactory | None = None
+        self._animation_enabled: bool = ANIMATION_ENABLED_DEFAULT
+        self._animation_budget: float = ANIMATION_BUDGET_PERCENT_DEFAULT / 100
 
     def create(self, context: "ServerContext") -> None:
-        """Wire the state store and active-page lookup; devices are opened lazily by open_device()."""
+        """Wire the state store, active-page lookup and animation settings; devices are opened by open_device()."""
         self._context = context
         self._state_store = context.device_state_store
         self._page_resolver = context.page_controller.active_page_id
+        self._animation_enabled = bool(config.get_as_or_default("animation.enabled", bool, ANIMATION_ENABLED_DEFAULT))
+        budget_percent = config.get_as_or_default("animation.budget_percent", float, ANIMATION_BUDGET_PERCENT_DEFAULT)
+        self._animation_budget = float(budget_percent) / 100
+        if self._factory is None:
+            cache_mb = config.get_as_or_default("animation.cache_mb", int, ANIMATION_CACHE_MB_DEFAULT)
+            self._factory = AnimationFactory(cache_bytes=int(cache_mb) * 1024 * 1024)
+
+    @property
+    def animation_factory(self) -> AnimationFactory | None:
+        """The animation factory shared by all devices, or None before create()."""
+        return self._factory
 
     # ------------------------------------------------------------------
     # Hot-plug and sleep/wake
@@ -168,7 +189,7 @@ class DeviceManager(Manager):
             logging.debug("DeviceManager: could not announce the device change", exc_info=True)
 
     def destroy(self) -> None:
-        """Reset and close all open devices."""
+        """Reset and close all open devices, then stop the animation factory."""
         self.stop_watching()
         with self._lock:
             devices_to_close = list(self._devices.values())
@@ -176,6 +197,9 @@ class DeviceManager(Manager):
             self._states.clear()
         for device in devices_to_close:
             device.close()
+        if self._factory is not None:
+            self._factory.close()
+            self._factory = None
         logging.info("DeviceManager: closed all devices")
 
     def get_device_state(self, device_id: str) -> DeviceState | None:
@@ -199,14 +223,15 @@ class DeviceManager(Manager):
         device.clear_key_image(key_index)
 
     def show_page(self, device_id: str, page_id: str) -> bool:
-        """Load page_id's cached key state and redraw every key; keys with no cached image are blanked.
+        """Stop the old page's animations, redraw every key from page_id's cached state and restart its animations.
 
-        Returns False if the device cannot be opened.
+        Keys with no cached image are blanked. Returns False if the device cannot be opened.
         """
         device = self.open_device(device_id)
         state = self._states.get(device_id)
         if device is None or state is None:
             return False
+        device.stop_animations()
         state.switch_page(page_id)
         images = dict(state.get_all_images())
         for key_index in range(device.key_count):
@@ -215,7 +240,20 @@ class DeviceManager(Manager):
                 device.set_image_bytes(key_index, image)
             else:
                 device.clear_key_image(key_index)
+        for key_index, spec in state.get_all_animations().items():
+            device.play_animation(key_index, spec)
         return True
+
+    def set_animation(self, device_id: str, key_index: int, spec: AnimationSpec) -> None:
+        """Animate a key of the open device (its poster already drawn) and remember the animation for its page."""
+        device = self.open_device(device_id)
+        if device is None:
+            logging.debug("DeviceManager.set_animation: device %s not open", device_id)
+            return
+        state = self._states.get(device_id)
+        if state is not None:
+            state.set_key_animation(key_index, spec)
+        device.play_animation(key_index, spec)
 
     def _on_hw_key_event(self, device: Device, key_index: int, pressed: bool) -> None:
         device.on_key_event(key_index, pressed)
@@ -297,6 +335,8 @@ class DeviceManager(Manager):
             serial = deck.get_serial_number()
             id = device_id_for_serial(serial)
             device = Device(id, serial, deck, self._on_device_closed)
+            if self._factory is not None:
+                device.set_animation_support(self._factory, self._animation_enabled, self._animation_budget)
             deck.set_key_callback(
                 lambda _, key_index, pressed, dev=device: self._on_hw_key_event(dev, key_index, pressed)
             )
@@ -335,15 +375,17 @@ class DeviceManager(Manager):
         return None
 
     def set_image_bytes(self, device_id: str, key_index: int, image: bytes) -> None:
-        """Push image bytes to the given device's key and persist the rendered result."""
+        """Push image bytes to the given device's key (ending its animation) and persist the rendered result."""
         device = self.open_device(device_id)
         if device is None:
             logging.debug("DeviceManager.set_image_bytes: device %s not open", device_id)
             return
+        state = self._states.get(device_id)
+        if state is not None:
+            state.set_key_animation(key_index, None)
         device.set_image_bytes(key_index, image)
         rendered = device.get_key_image(key_index)
         if rendered is not None:
-            state = self._states.get(device_id)
             if state is not None:
                 state.update_key_image(key_index, rendered)
             elif self._state_store is not None:

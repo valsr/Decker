@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from assertpy import assert_that
 
+from decker.animation.model import AnimationSpec
 from decker.common.model import KeyPressState
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices.state import DeviceState, PerKeyState
@@ -235,3 +236,50 @@ class TestUnchangedImages:
 
         assert_that(state.has_image(2)).is_true()
         assert_that(state.has_image(3)).is_false()
+
+
+class TestDeviceStateAnimations:
+    def test_animations_are_per_page_and_in_memory_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _make_store(tmpdir)
+            state = _make_state(store)
+            on_p1 = AnimationSpec(b"gif1", {}, "", 1.0)
+            on_p2 = AnimationSpec(b"gif2", {}, "", 1.0)
+            state.set_key_animation(1, on_p1)
+
+            state.switch_page("p2")
+            assert_that(state.get_all_animations()).is_empty()
+            state.set_key_animation(3, on_p2)
+            state.switch_page("p1")
+
+            assert_that(state.get_all_animations()).is_equal_to({1: on_p1})
+            assert_that(state.get_key_animation(1)).is_same_as(on_p1)
+            assert_that(state.get_key_animation(3)).is_none()
+            reopened = _make_state(store)
+            reopened.restore_from_store()
+            assert_that(reopened.get_all_animations()).is_empty()
+            store.destroy()
+
+    def test_setting_none_forgets_the_animation(self):
+        state = _make_state()
+        state.set_key_animation(1, AnimationSpec(b"gif", {}, "", 1.0))
+
+        state.set_key_animation(1, None)
+
+        assert_that(state.get_key_animation(1)).is_none()
+
+    def test_clear_key_drops_the_animation(self):
+        state = _make_state()
+        state.set_key_animation(1, AnimationSpec(b"gif", {}, "", 1.0))
+
+        state.clear_key(1)
+
+        assert_that(state.get_all_animations()).is_empty()
+
+    def test_get_all_animations_is_a_copy(self):
+        state = _make_state()
+        state.set_key_animation(1, AnimationSpec(b"gif", {}, "", 1.0))
+
+        state.get_all_animations().clear()
+
+        assert_that(state.get_all_animations()).is_length(1)

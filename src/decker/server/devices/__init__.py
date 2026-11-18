@@ -9,6 +9,12 @@ from collections.abc import Callable
 from StreamDeck.Devices.StreamDeck import StreamDeck
 from StreamDeck.ImageHelpers import PILHelper
 
+from decker.animation.controller import LevelController, ladder_for
+from decker.animation.encode import KeyFormat
+from decker.animation.factory import AnimationFactory
+from decker.animation.load import LoadMonitor
+from decker.animation.model import AnimationSpec
+from decker.animation.writer import AdaptiveConfig, KeyWriter
 from decker.asset.renderer import AssetRenderer
 from decker.common.error import DeckNotOpenedError
 from decker.common.model import DeviceHardwareInfo, KeyInfo, KeyPressState
@@ -20,6 +26,12 @@ _MULTI_TAP_WINDOW_S: float = 0.35
 
 
 _UNKNOWN: object = object()  # what a key shows before Decker has drawn on it
+
+_DEFAULT_REPORT_PAYLOAD: int = 1016  # HID image report payload of current decks, for a deck that does not say
+# Device.close waits at most this long for a write already under way (a lost deck can block one).
+_WRITER_CLOSE_TIMEOUT_S: float = 0.5
+# Device.stop_animations waits at most this long for a frame write already under way.
+_STOP_WAIT_S: float = 1.0
 
 
 class _KeyTracker:
@@ -101,7 +113,7 @@ def try_open_device(device: StreamDeck) -> bool:
     return device.is_open()
 
 
-class Device:
+class Device:  # pylint: disable=too-many-instance-attributes
     """Maintains an open connection to a single Stream Deck and routes image pushes."""
 
     def __init__(
@@ -114,6 +126,10 @@ class Device:
         self._notify_on_closed = notify_on_closed
         self._key_trackers: dict[int, _KeyTracker] = {}
         self._layout: tuple[int, int] | None = None
+        self._writer_lock = threading.Lock()
+        self._writer: KeyWriter | None = None
+        self._adaptive: AdaptiveConfig | None = None  # set when animation is enabled; writes then use the writer
+        self._closed: bool = False
 
     @property
     def key_count(self) -> int:
@@ -211,6 +227,54 @@ class Device:
             self._notify_on_closed(self.device_id)
         return is_open
 
+    def set_animation_support(self, factory: AnimationFactory, enabled: bool, budget: float) -> None:
+        """Let this device animate keys from factory within budget (busy fraction); disabled keeps posters only."""
+        if not enabled:
+            return
+        fmt = self._device.key_image_format()
+        payload = getattr(self._device, "IMAGE_REPORT_PAYLOAD_LENGTH", _DEFAULT_REPORT_PAYLOAD)
+        key_format = KeyFormat.from_deck(fmt, int(payload))
+        controller = LevelController(ladder_for(key_format.image_format.upper() == "BMP"), budget)
+        with self._writer_lock:
+            if self._writer is None:
+                self._adaptive = AdaptiveConfig(controller, LoadMonitor(), factory, key_format)
+
+    def play_animation(self, key_index: int, spec: AnimationSpec) -> None:
+        """Animate the key with spec once its frames are built; the poster already on the key stays until then."""
+        writer = self._key_writer()
+        if writer is None:
+            return
+        self._key_trackers.setdefault(key_index, _KeyTracker()).shown = _UNKNOWN  # frames will replace the poster
+        writer.play_spec(key_index, spec, poster_written=True)
+
+    def stop_animations(self) -> None:
+        """Stop every key's animation; no frame is written after this returns (each key keeps its last frame)."""
+        with self._writer_lock:
+            writer = self._writer
+        if writer is not None:
+            writer.stop_all(wait=_STOP_WAIT_S)
+
+    def _key_writer(self) -> KeyWriter | None:
+        with self._writer_lock:
+            if self._adaptive is None or self._closed:
+                return None
+            if self._writer is None:
+                self._writer = KeyWriter(self._write_key, adaptive=self._adaptive)
+                self._writer.start()
+            return self._writer
+
+    def _write_key(self, key_index: int, native: bytes | None) -> None:
+        self._try_open()
+        self._device.set_key_image(key_index, native)
+
+    def _write_static(self, key_index: int, native: bytes | None) -> bool:
+        writer = self._key_writer()
+        if writer is None:
+            self._write_key(key_index, native)
+            return True
+        # False: not confirmed in time; the write may still land, so the caller must not trust what the key shows.
+        return writer.submit_static(key_index, native)
+
     def set_image_bytes(self, key_index: int, image: bytes) -> None:
         """Render image bytes (SVG/PNG/JPEG) and push to the hardware key."""
         try:
@@ -227,10 +291,9 @@ class Device:
                 native = PILHelper.to_native_key_format(self._device, scaled)
             else:
                 native = image
-            self._try_open()
             tracker.shown = _UNKNOWN
-            self._device.set_key_image(key_index, native)
-            tracker.shown = shown
+            if self._write_static(key_index, native):
+                tracker.shown = shown
         except Exception as exc:  # pylint: disable=broad-except
             logging.error("Device.set_image_bytes failed for %s[%d]: %s", self.id, key_index, exc)
 
@@ -241,15 +304,19 @@ class Device:
             tracker.image = None
             if tracker.shown is None:
                 return  # already blank
-            self._try_open()
             tracker.shown = _UNKNOWN
-            self._device.set_key_image(key_index, None)
-            tracker.shown = None
+            if self._write_static(key_index, None):
+                tracker.shown = None
         except Exception as exc:  # pylint: disable=broad-except
             logging.error("Device.clear_key_image failed for %s[%d]: %s", self.id, key_index, exc)
 
     def close(self) -> None:
-        """Reset and close the underlying hardware connection."""
+        """Stop the key writer, then reset and close the underlying hardware connection."""
+        with self._writer_lock:
+            self._closed = True
+            writer, self._writer = self._writer, None
+        if writer is not None:
+            writer.close(timeout=_WRITER_CLOSE_TIMEOUT_S)
         try:
             logging.debug("Closing device %s", self.id)
             self._device.reset()
