@@ -1,9 +1,12 @@
 import io
+import time
 
+import pytest
 from assertpy import assert_that
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from decker.asset.renderer import AssetRenderer
+from tests.animation.grown_gif import comment_flood_gif
 
 _SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>'
 
@@ -82,3 +85,26 @@ class TestLimitsAndSniffing:
         image = AssetRenderer().render_bytes(data, 8, 8)
         assert image is not None
         assert_that(image.size).is_equal_to((8, 8))
+
+
+class TestGifStructureGuard:
+    def test_a_comment_flood_gif_is_treated_as_unreadable_without_stalling(self):
+        data = comment_flood_gif(350_000)
+        started = time.perf_counter()
+
+        assert AssetRenderer().render_bytes(data, 4, 4) is None
+        assert time.perf_counter() - started < 1.0
+
+    def test_a_flood_gif_on_disk_is_refused_like_any_unreadable_file(self, tmp_path):
+        path = tmp_path / "flood.gif"
+        path.write_bytes(comment_flood_gif(350_000))
+
+        with pytest.raises(UnidentifiedImageError):
+            AssetRenderer().render_path(path, 4, 4)
+
+    def test_normal_gifs_still_render_their_first_frame(self, tmp_path):
+        path = tmp_path / "ok.gif"
+        path.write_bytes(_gif_bytes())
+
+        assert AssetRenderer().render_bytes(_gif_bytes(), 4, 4) is not None
+        assert AssetRenderer().render_path(path, 4, 4).size == (4, 4)
