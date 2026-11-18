@@ -113,3 +113,48 @@ def test_total_duration_is_never_zero() -> None:
     frames = decode_gif(data)
 
     assert_that(sum(f.delay_ms for f in frames)).is_greater_than(0)
+
+
+def _header_only_gif(width: int, height: int, frames: int) -> bytes:
+    # Tiny GIF whose logical screen claims a huge canvas: cheap to build, never decoded.
+    small = [Image.new("L", (2, 2), index % 256) for index in range(frames)]
+    data = bytearray(_make_gif(small, duration=100))
+    data[6:10] = width.to_bytes(2, "little") + height.to_bytes(2, "little")
+    return bytes(data)
+
+
+@pytest.mark.parametrize("width, height, frames", [(4096, 4096, 300), (1024, 1024, 100)])
+def test_a_gif_over_the_total_pixel_budget_is_rejected_from_its_header(width: int, height: int, frames: int) -> None:
+    data = _header_only_gif(width, height, frames)
+
+    assert_that(is_animated_gif(data)).is_false()
+    with pytest.raises(GifError, match="too many pixels"):
+        decode_gif(data)
+
+
+def test_300_frames_of_480_square_stay_within_the_budget() -> None:
+    assert_that(gif.MAX_GIF_FRAMES * 480 * 480).is_less_than_or_equal_to(gif.MAX_GIF_PIXELS)
+    assert_that(is_animated_gif(_header_only_gif(480, 480, gif.MAX_GIF_FRAMES))).is_true()
+
+
+def test_frames_are_shrunk_to_the_largest_key_size_while_decoding() -> None:
+    big = [Image.new("RGB", (600, 300), (index * 40, 0, 0)) for index in range(3)]
+
+    frames = decode_gif(_make_gif(big, duration=100))
+
+    assert_that([frame.image.size for frame in frames]).is_equal_to([(144, 72)] * 3)
+
+
+def test_a_small_gif_keeps_its_canvas_size() -> None:
+    frames = decode_gif(_make_gif([_solid((255, 0, 0), 100), _solid((0, 255, 0), 100)], duration=100))
+
+    assert_that(frames[0].image.size).is_equal_to((100, 100))
+
+
+def test_gif_bytes_over_the_icon_size_cap_are_not_animated(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _make_gif([_solid((255, 0, 0)), _solid((0, 255, 0))], duration=100)
+    monkeypatch.setattr(gif, "MAX_ICON_BYTES", len(data) - 1)
+
+    assert_that(is_animated_gif(data)).is_false()
+    with pytest.raises(GifError, match="larger than"):
+        decode_gif(data)
