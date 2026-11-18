@@ -80,6 +80,9 @@ class FakeDeviceManager:
     def clear_key_state(self, *_args) -> None:
         pass
 
+    def delete_stored_key_state(self, *_args) -> None:
+        pass
+
 
 def _wait_for(predicate, timeout=8.0):
     deadline = time.monotonic() + timeout
@@ -134,6 +137,7 @@ class Env:
         self.bus = FakeBus()
         self.dm = FakeDeviceManager()
         self.dm.clear_key_state = MagicMock()  # type: ignore[method-assign]
+        self.dm.delete_stored_key_state = MagicMock()  # type: ignore[method-assign]
         db = tmp_path / "decker.db"
         self.key_store = KeyAssignmentStore(db)
         self.page_store = PageStore(db)
@@ -351,7 +355,7 @@ def test_uninstall_clears_keys_on_all_pages_and_removes_folder(env, tmp_path):
     assert_that((env.plugins_dir / "com.example.tool").exists()).is_false()
     assert_that(env.manager.plugins()).extracting("manifest").extracting("id").does_not_contain("com.example.tool")
     env.dm.clear_key_state.assert_called_once_with(DEVICE, 0)
-    env.state_store.delete_key_state.assert_called_once_with(DEVICE, other_page, 1)
+    env.dm.delete_stored_key_state.assert_called_once_with(DEVICE, other_page, 1)
     assert_that(env.bus.of("plugins_changed")).is_length(1)
     assert_that(env.bus.of("pages_changed")).is_equal_to([{"device_id": DEVICE}])
     store = env.manager._settings_store  # pylint: disable=protected-access

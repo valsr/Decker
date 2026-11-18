@@ -447,7 +447,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             self._context.plugin_manager.deactivate_action(assignment.target)
             self._context.device_manager.clear_key_state(device_id, key_index)
         else:
-            self._context.device_state_store.delete_key_state(device_id, page_id, key_index)
+            self._context.device_manager.delete_stored_key_state(device_id, page_id, key_index)
         return True
 
     @exposed
@@ -477,8 +477,8 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             ctx.device_manager.clear_key_state(device_id, to_index)
             self._activate_slot(device_id, page_id, to_index)
         else:
-            ctx.device_state_store.delete_key_state(device_id, page_id, from_index)
-            ctx.device_state_store.delete_key_state(device_id, page_id, to_index)
+            ctx.device_manager.delete_stored_key_state(device_id, page_id, from_index)
+            ctx.device_manager.delete_stored_key_state(device_id, page_id, to_index)
         return True
 
     @exposed
@@ -503,7 +503,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             ctx.device_manager.clear_key_state(device_id, to_index)
             self._activate_slot(device_id, page_id, to_index)
         else:
-            ctx.device_state_store.delete_key_state(device_id, page_id, to_index)
+            ctx.device_manager.delete_stored_key_state(device_id, page_id, to_index)
         return True
 
     def _movable_source(self, device_id: str, page_id: str, from_index: int, to_index: int) -> KeyAssignment | None:

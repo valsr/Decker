@@ -111,10 +111,10 @@ class _StreamDeckHardwareSink:
         """Animate the key (its poster already written by set_image) and register spec for the key_animation RPC."""
         if self._device_manager is None:
             return
-        factory = self._device_manager.animation_factory
-        if factory is not None:
-            factory.register(spec)
-        self._device_manager.set_animation(device_id, key_index, spec)
+        if self._device_manager.set_animation(device_id, key_index, spec):
+            factory = self._device_manager.animation_factory
+            if factory is not None:
+                factory.register(spec)
 
     def is_playing(self, device_id: str, key_index: int, animation_id: str) -> bool:
         """Whether the key's open device already plays (or is about to play) the animation animation_id."""

@@ -80,6 +80,11 @@ class DeviceState:
             else:
                 page[key_index] = spec
 
+    def forget_animation(self, page_id: str, key_index: int) -> None:
+        """Drop the animation recorded for a key of any page (the page's stored state is deleted separately)."""
+        with self._lock:
+            self._animations.get(page_id, {}).pop(key_index, None)
+
     def clear_key(self, key_index: int) -> None:
         """Remove in-memory image, label and animation for a key and delete the image and label from the store."""
         with self._lock:
@@ -111,14 +116,14 @@ class DeviceState:
         )
 
     def get_key_animation(self, key_index: int) -> AnimationSpec | None:
-        """Return the animation recorded for a key on the current page, or None."""
+        """Return the animation recorded for a key on the current page, or None; a key without an image has none."""
         with self._lock:
-            return self._animations.get(self._page_id, {}).get(key_index)
+            return self._animations.get(self._page_id, {}).get(key_index) if key_index in self._images else None
 
     def get_all_animations(self) -> dict[int, AnimationSpec]:
-        """Return a copy of the current page's recorded animations by key index."""
+        """Return a copy of the current page's recorded animations by key index, for keys that hold an image."""
         with self._lock:
-            return dict(self._animations.get(self._page_id, {}))
+            return {k: spec for k, spec in self._animations.get(self._page_id, {}).items() if k in self._images}
 
     def get_all_images(self) -> list[tuple[int, bytes]]:
         """Return all (key_index, image) pairs currently held in memory."""

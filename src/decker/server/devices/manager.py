@@ -219,6 +219,14 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
         if device is not None:
             device.stop_animation(key_index)
 
+    def delete_stored_key_state(self, device_id: str, page_id: str, key_index: int) -> None:
+        """Delete a key's persisted state on a page that is not shown, and forget its in-memory animation."""
+        state = self._states.get(device_id)
+        if state is not None:
+            state.forget_animation(page_id, key_index)
+        if self._state_store is not None:
+            self._state_store.delete_key_state(device_id, page_id, key_index)
+
     def blank_key(self, device_id: str, key_index: int) -> None:
         """Forget a slot's cached state and blank its hardware key (no-op if the device cannot be opened)."""
         device = self.open_device(device_id)
@@ -245,20 +253,23 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
                 device.set_image_bytes(key_index, image)
             else:
                 device.clear_key_image(key_index)
-        for key_index, spec in state.get_all_animations().items():
+        for key_index, spec in state.get_all_animations().items():  # only keys that hold a poster
             device.play_animation(key_index, spec)
         return True
 
-    def set_animation(self, device_id: str, key_index: int, spec: AnimationSpec) -> None:
-        """Animate a key of the open device (its poster already drawn) and remember the animation for its page."""
+    def set_animation(self, device_id: str, key_index: int, spec: AnimationSpec) -> bool:
+        """Animate a key of the open device (its poster drawn) and remember it for its page; False if not animated."""
         device = self.open_device(device_id)
         if device is None:
             logging.debug("DeviceManager.set_animation: device %s not open", device_id)
-            return
+            return False
+        if not device.animation_supported:
+            return False
         state = self._states.get(device_id)
         if state is not None:
             state.set_key_animation(key_index, spec)
         device.play_animation(key_index, spec)
+        return True
 
     def playing_animation_id(self, device_id: str, key_index: int) -> str | None:
         """Id of the animation a key of an already open device plays or waits to play, or None; opens nothing."""
