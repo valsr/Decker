@@ -11,11 +11,14 @@ from assertpy import assert_that
 from PIL import Image
 
 from decker.animation.factory import AnimationFactory
+from decker.common.error import DeckNotOpenedError
 from decker.server.devices import Device
 from tests.server.animation_fixture import (
     WRITER_THREAD,
     WriteLog,
+    lifecycle,
     make_spec,
+    stateful_deck,
     wait_until,
 )
 
@@ -327,3 +330,45 @@ class TestAnimatedDevice:
         assert_that(reported).is_length(1)
         assert_that(reported[0]).is_same_as(device)
         device.close()
+
+
+class TestClosedDevice:
+    """A Device that has been closed, or closed itself while reporting, never opens its deck again."""
+
+    def test_a_device_closed_by_its_own_report_ends_closed_without_reopening(self) -> None:
+        deck = stateful_deck()
+        deck.open()
+        device = Device("dev", "serial", deck, lambda lost: lost.close())
+        deck.get_serial_number.side_effect = OSError("gone")
+
+        device.set_image_bytes(3, _png("red"))
+
+        assert_that(lifecycle(deck)).is_equal_to(["open", "reset", "close"])
+        assert_that(deck.is_open()).is_false()
+        deck.set_key_image.assert_not_called()
+
+    def test_a_closed_device_does_not_touch_the_deck(self) -> None:
+        deck = stateful_deck()
+        device = Device("dev", "serial", deck, MagicMock())
+        device.close()
+        deck.reset_mock()
+
+        device.set_image_bytes(3, _png("red"))
+        device.clear_key_image(4)
+        assert_that(device.try_validate()).is_false()
+        assert_that(device.validate).raises(DeckNotOpenedError).when_called_with()
+
+        deck.open.assert_not_called()
+        deck.get_serial_number.assert_not_called()
+        deck.set_key_image.assert_not_called()
+
+    def test_a_closed_device_reports_nothing(self) -> None:
+        reported: list[Device] = []
+        deck = stateful_deck()
+        device = Device("dev", "serial", deck, reported.append)
+        device.close()
+
+        device.try_validate()
+        device.set_image_bytes(3, _png("red"))
+
+        assert_that(reported).is_empty()

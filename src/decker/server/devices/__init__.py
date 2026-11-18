@@ -156,7 +156,9 @@ class Device:  # pylint: disable=too-many-instance-attributes
             raise DeckNotOpenedError(self.path) from exc
 
     def try_validate(self) -> bool:
-        """Return True if the device is reachable, False otherwise."""
+        """Return True if the device is reachable, False otherwise (always False, untouched, once closed)."""
+        if self._closed:
+            return False
         try:
             self._device.get_serial_number()
             return True
@@ -217,7 +219,13 @@ class Device:  # pylint: disable=too-many-instance-attributes
         return self.id
 
     def _try_open(self) -> bool:
+        # A closed Device (also one closed by the report inside try_validate) must never open its deck again:
+        # nothing would release that handle, and its key callback would still be wired.
+        if self._closed:
+            return False
         if not self._device.is_open() or not self.try_validate():
+            if self._closed:
+                return False
             try_open_device(self._device)
 
         is_open = self._device.is_open() and self.try_validate()
@@ -226,7 +234,7 @@ class Device:  # pylint: disable=too-many-instance-attributes
         return is_open
 
     def _report_closed(self) -> None:
-        if self._notify_on_closed:
+        if self._notify_on_closed and not self._closed:
             self._notify_on_closed(self)
 
     def set_animation_support(self, factory: AnimationFactory, enabled: bool, budget: float) -> None:
@@ -278,6 +286,8 @@ class Device:  # pylint: disable=too-many-instance-attributes
 
     def _write_key(self, key_index: int, native: bytes | None) -> None:
         self._try_open()
+        if self._closed:
+            raise DeckNotOpenedError(self.path)
         self._device.set_key_image(key_index, native)
 
     def _write_static(self, key_index: int, native: bytes | None) -> bool:

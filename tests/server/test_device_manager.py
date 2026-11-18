@@ -11,13 +11,16 @@ from assertpy import assert_that
 from PIL import Image
 
 from decker.common import config
+from decker.common.error import DeckNotOpenedError
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices import Device
 from decker.server.devices.manager import DeviceManager, device_id_for_serial
 from tests.server.animation_fixture import (
     WRITER_THREAD,
     WriteLog,
+    lifecycle,
     make_spec,
+    stateful_deck,
     wait_until,
 )
 
@@ -667,7 +670,7 @@ class TestLostAnimatingDevice:
         return [t.name for t in threading.enumerate() if t.name == WRITER_THREAD and t.is_alive()]
 
     def _animating(self, dm: DeviceManager, path: str) -> tuple[MagicMock, Device, WriteLog]:
-        deck = TestDeviceWatcher._deck(path=path)  # pylint: disable=protected-access
+        deck = stateful_deck(path=path)
         log = WriteLog()
         deck.set_key_image.side_effect = log
         self._check(dm, deck)
@@ -711,7 +714,7 @@ class TestLostAnimatingDevice:
         dm = watched
         old_deck, stale, _log = self._animating(dm, "/dev/hidraw3")
         self._go_away(old_deck)
-        new_deck = TestDeviceWatcher._deck(path="/dev/hidraw7")  # pylint: disable=protected-access
+        new_deck = stateful_deck(path="/dev/hidraw7")
 
         self._check(dm, new_deck)
         reopened = dm._devices[device_id_for_serial("ABC123")]  # pylint: disable=protected-access
@@ -725,3 +728,54 @@ class TestLostAnimatingDevice:
         )  # pylint: disable=protected-access
         old_deck.reset.assert_called_once()
         new_deck.close.assert_not_called()
+
+    @staticmethod
+    def _assert_closed_for_good(deck: MagicMock) -> None:
+        calls = lifecycle(deck)
+        assert_that(calls[-1]).is_equal_to("close")
+        assert_that(calls[calls.index("reset") :]).is_equal_to(["reset", "close"])
+        assert_that(deck.is_open()).is_false()
+
+    def test_a_lost_deck_ends_closed_with_no_open_after_close(self, watched):
+        dm = watched
+        deck, _device, _log = self._animating(dm, "/dev/hidraw3")
+        self._go_away(deck)
+
+        dm.set_image_bytes(device_id_for_serial("ABC123"), 4, _png("blue"))
+
+        self._assert_closed_for_good(deck)
+
+    def test_the_watcher_leaves_a_lost_deck_closed_with_no_open_after_close(self, watched):
+        dm = watched
+        deck, _device, _log = self._animating(dm, "/dev/hidraw3")
+        self._go_away(deck)
+
+        self._check(dm)
+
+        self._assert_closed_for_good(deck)
+
+    def test_a_stale_device_never_reopens_its_deck_and_the_reopened_one_keeps_working(self, watched):
+        events: list[tuple[str, int, bool]] = []
+        dm = watched
+        dm._on_key_event_cb = lambda *event: events.append(event)  # pylint: disable=protected-access
+        old_deck, stale, _log = self._animating(dm, "/dev/hidraw3")
+        stale_callback = old_deck.set_key_callback.call_args[0][0]
+        self._go_away(old_deck)
+        new_deck = stateful_deck(path="/dev/hidraw7")
+        new_log = WriteLog()
+        new_deck.set_key_image.side_effect = new_log
+        self._check(dm, new_deck)
+        old_deck.reset_mock()
+
+        stale.set_image_bytes(4, _png("blue"))
+        stale.clear_key_image(5)
+        assert_that(stale.validate).raises(DeckNotOpenedError).when_called_with()
+        stale_callback(old_deck, 1, True)  # a press arriving on the old handle
+        device_id = device_id_for_serial("ABC123")
+        dm.set_image_bytes(device_id, 4, _png("green"))
+        new_deck.set_key_callback.call_args[0][0](new_deck, 2, True)
+
+        old_deck.open.assert_not_called()
+        assert_that(old_deck.is_open()).is_false()
+        assert_that(new_log.for_key(4)).is_length(1)
+        assert_that(events).is_equal_to([(device_id, 2, True)])
