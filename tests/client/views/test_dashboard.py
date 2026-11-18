@@ -7,8 +7,10 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 from assertpy import assert_that
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QMessageBox
 
+from decker.client.call_bridge import CallBridge
 from decker.client.context import AppContext
 from decker.client.events import (
     ActionListUpdatedEvent,
@@ -1430,3 +1432,72 @@ class TestKeyAnimations:  # pylint: disable=protected-access
         view._on_display_states_updated("dev1", [self._state(2, "a1")])
 
         assert_that(jobs).is_empty()
+
+    def _show(self, view, jobs, key_index: int, animation_id: str) -> None:
+        view._on_display_states_updated("dev1", [self._state(key_index, animation_id)])
+        self._run(jobs)
+
+    def test_cache_evicts_least_recently_used_and_keeps_a_cache_hit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("decker.client.views.dashboard._ANIMATION_CACHE_BYTES", 12)
+        view, cm, jobs = self._view(tmp_path)
+        cm.call.side_effect = lambda _method, animation_id: f"{animation_id}----"  # 6 bytes each
+        for animation_id in ("a1", "a2", "a1", "a3"):  # the third step is a cache hit that refreshes a1
+            self._show(view, jobs, 2, animation_id)
+
+        assert_that(list(view._animation_cache)).is_equal_to(["a1", "a3"])
+        assert_that(cm.call.call_count).is_equal_to(3)
+
+    def test_an_evicted_id_is_refetched_once_and_ids_in_use_are_not_refetched(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("decker.client.views.dashboard._ANIMATION_CACHE_BYTES", 10)
+        view, cm, jobs = self._view(tmp_path)
+        cm.call.side_effect = lambda _method, animation_id: f"{animation_id}----"
+        self._show(view, jobs, 2, "a1")
+        self._show(view, jobs, 3, "a2")  # over the cap, but both are on keys: nothing may be evicted
+        assert_that(list(view._animation_cache)).is_equal_to(["a1", "a2"])
+        self._show(view, jobs, 2, "a3")  # a1 is no longer in use and goes
+        assert_that(list(view._animation_cache)).is_equal_to(["a2", "a3"])
+
+        view._on_display_states_updated("dev1", [self._state(3, "a2")])  # still in use: no refetch
+        assert_that(cm.call.call_count).is_equal_to(3)
+        self._show(view, jobs, 2, "a1")  # evicted: fetched again, exactly once
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+        assert_that(cm.call.call_count).is_equal_to(4)
+
+    def test_empty_results_survive_eviction_pressure_from_big_entries(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("decker.client.views.dashboard._ANIMATION_CACHE_BYTES", 5)
+        view, cm, jobs = self._view(tmp_path)
+        cm.call.side_effect = lambda _method, animation_id: "" if animation_id == "bad" else f"{animation_id}----"
+        for animation_id in ("bad", "a1", "a2", "a3"):
+            self._show(view, jobs, 2, animation_id)
+        calls = cm.call.call_count
+
+        self._show(view, jobs, 2, "bad")
+
+        assert_that(cm.call.call_count).is_equal_to(calls)
+
+    def test_empty_results_are_bounded_by_count(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("decker.client.views.dashboard._EMPTY_CACHE_LIMIT", 2)
+        view, cm, jobs = self._view(tmp_path)
+        cm.call.return_value = ""
+        for animation_id in ("e1", "e2", "e3"):
+            self._show(view, jobs, 2, animation_id)
+
+        assert_that(list(view._empty_animations)).is_equal_to(["e2", "e3"])
+
+    def test_a_raising_call_still_completes_and_unsticks_the_id(self, tmp_path):
+        view, cm, _jobs = self._view(tmp_path)
+        view._bridge = CallBridge(view)  # the real bridge: it must deliver an exception to the done callback
+        cm.call.side_effect = RuntimeError("rpc down")
+
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])
+        view._bridge.join()
+        QTest.qWait(50)  # type: ignore[call-arg,arg-type]
+
+        assert_that(view._animations_pending).is_empty()
+        assert_that(view._key_animation_ids).is_empty()
+        cm.call.side_effect = None
+        cm.call.return_value = "QU5JTQ=="
+        view._on_display_states_updated("dev1", [self._state(2, "a1")])  # retried on the next event
+        view._bridge.join()
+        QTest.qWait(50)  # type: ignore[call-arg,arg-type]
+        view._grid.set_key_animation.assert_called_with(2, "QU5JTQ==")

@@ -3,6 +3,7 @@
 import json
 import logging
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
 
@@ -42,6 +43,10 @@ _DEFAULT_SIDEBAR_WIDTH = 240
 _SPLITTER_MAIN_KEY = "splitter_main"
 _SPLITTER_CONTENT_KEY = "splitter_content"
 _SIDEBAR_COLLAPSED_KEY = "sidebar_collapsed"
+# Fetched animations are base64 blobs of up to a few MiB each; 32 MiB holds the animations of several pages of keys
+# while keeping a long-lived view (e.g. a clock key with a new id every cycle) from growing without limit.
+_ANIMATION_CACHE_BYTES = 32 * 1024 * 1024
+_EMPTY_CACHE_LIMIT = 256  # animation ids the server had no image for; tiny, so bounded by count only
 
 
 class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
@@ -65,12 +70,9 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._active_device_id: str | None = None
         self._actions: list[dict[str, Any]] = []  # action list from the server (with settings schemas)
         self._bridge = CallBridge(self)  # runs the animation fetches off the GUI thread
-        self._key_animation_ids: dict[int, str] = (
-            {}
-        )  # key_index → the animation id applied to (or being fetched for) it
-        self._animation_cache: dict[str, str] = (
-            {}
-        )  # animation id → base64 image; "" = the server had none (not retried)
+        self._key_animation_ids: dict[int, str] = {}  # key index → its applied (or being fetched) animation id
+        self._animation_cache: OrderedDict[str, str] = OrderedDict()  # id → base64 image, least recently used first
+        self._empty_animations: OrderedDict[str, None] = OrderedDict()  # ids the server had no image for
         self._animations_pending: set[str] = set()  # animation ids with a fetch in flight
 
         # UI sub-components
@@ -257,10 +259,37 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if self._key_animation_ids.get(key_index) == animation_id:
             return
         self._key_animation_ids[key_index] = animation_id
-        if animation_id in self._animation_cache:
-            self._grid.set_key_animation(key_index, self._animation_cache[animation_id])
-        else:
+        cached = self._cached_animation(animation_id)
+        if cached is None:
             self._fetch_animation(animation_id)
+        else:
+            self._grid.set_key_animation(key_index, cached)
+
+    def _cached_animation(self, animation_id: str) -> str | None:
+        """The cached image for an id ("" when the server had none), refreshing its recency; None if unknown."""
+        if animation_id in self._empty_animations:
+            self._empty_animations.move_to_end(animation_id)
+            return ""
+        if animation_id in self._animation_cache:
+            self._animation_cache.move_to_end(animation_id)
+            return self._animation_cache[animation_id]
+        return None
+
+    def _remember_animation(self, animation_id: str, image_b64: str) -> None:
+        if not image_b64:
+            self._empty_animations[animation_id] = None
+            self._empty_animations.move_to_end(animation_id)
+            while len(self._empty_animations) > _EMPTY_CACHE_LIMIT:
+                self._empty_animations.popitem(last=False)
+            return
+        self._animation_cache[animation_id] = image_b64
+        self._animation_cache.move_to_end(animation_id)
+        in_use = set(self._key_animation_ids.values())
+        while sum(len(blob) for blob in self._animation_cache.values()) > _ANIMATION_CACHE_BYTES:
+            victim = next((cached for cached in self._animation_cache if cached not in in_use), None)
+            if victim is None:
+                break
+            del self._animation_cache[victim]
 
     def _fetch_animation(self, animation_id: str) -> None:
         cm = AppContext.get().connection_manager
@@ -279,7 +308,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             for index in keys:
                 del self._key_animation_ids[index]
             return
-        self._animation_cache[animation_id] = result
+        self._remember_animation(animation_id, result)
         for index in keys:  # a key that changed or left the page since the request no longer has this id
             self._grid.set_key_animation(index, result)
 
