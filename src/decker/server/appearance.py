@@ -5,7 +5,7 @@ import io
 import logging
 import re
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -148,6 +148,29 @@ def _single_line(text: str) -> str:
     return _LINE_BREAKS.sub(" ", text)
 
 
+def _background_layer(appearance: Mapping[str, Any], size: int) -> Image.Image:
+    """Opaque black with the appearance background composited on top (the hardware has no transparency)."""
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 255))
+    if ImageColor.getcolor(appearance["background"], "RGBA")[3]:  # type: ignore[index]
+        img.alpha_composite(Image.new("RGBA", (size, size), appearance["background"]))
+    return img
+
+
+def _inner_size(size: int, plugin_image_scale: float) -> int:
+    return max(1, round(size * min(1.0, max(_MIN_IMAGE_SCALE, plugin_image_scale))))
+
+
+def _title_layer(appearance: Mapping[str, Any], plugin_title: str, size: int) -> Image.Image | None:
+    """The transparent title layer, or None when no title is shown."""
+    style = appearance["title"]
+    text = _single_line(style["text"] or plugin_title)
+    if not (style["visible"] and text.strip()):
+        return None
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    _draw_title(ImageDraw.Draw(layer), text, style, size)
+    return layer
+
+
 def compose_key_image(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     appearance: Mapping[str, Any],
     plugin_image: bytes | None,
@@ -157,24 +180,42 @@ def compose_key_image(  # pylint: disable=too-many-arguments,too-many-positional
     plugin_image_scale: float = 1.0,
 ) -> bytes:
     """Compose background, plugin image and title into a size x size PNG."""
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 255))  # the hardware has no transparency: black underneath
-    if ImageColor.getcolor(appearance["background"], "RGBA")[3]:  # type: ignore[index]
-        img.alpha_composite(Image.new("RGBA", (size, size), appearance["background"]))
+    img = _background_layer(appearance, size)
     if plugin_image:
         try:
-            inner = max(1, round(size * min(1.0, max(_MIN_IMAGE_SCALE, plugin_image_scale))))
+            inner = _inner_size(size, plugin_image_scale)
             layer = _RENDERER.render_bytes(plugin_image, inner, inner, plugin_image_color)
             if layer is not None:
                 offset = (size - inner) // 2
                 img.alpha_composite(layer, dest=(offset, offset))
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logging.debug("skipping unreadable plugin image: %s", exc)
-    style = appearance["title"]
-    text = _single_line(style["text"] or plugin_title)
-    if style["visible"] and text.strip():
-        layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        _draw_title(ImageDraw.Draw(layer), text, style, size)
-        img.alpha_composite(layer)
+    title = _title_layer(appearance, plugin_title, size)
+    if title is not None:
+        img.alpha_composite(title)
     buf = io.BytesIO()
     img.convert("RGB").save(buf, format="PNG")
     return buf.getvalue()
+
+
+def compose_key_frames(
+    appearance: Mapping[str, Any],
+    frames: Sequence[Image.Image],
+    plugin_title: str,
+    size: int = 144,
+    plugin_image_scale: float = 1.0,
+) -> list[Image.Image]:
+    """Compose background, each animation frame and the title into size x size RGB images."""
+    inner = _inner_size(size, plugin_image_scale)
+    offset = (size - inner) // 2
+    background = _background_layer(appearance, size)
+    title = _title_layer(appearance, plugin_title, size)
+    composed = []
+    for frame in frames:
+        img = background.copy()
+        layer = frame.convert("RGBA").resize((inner, inner), Image.Resampling.LANCZOS)
+        img.alpha_composite(layer, dest=(offset, offset))
+        if title is not None:
+            img.alpha_composite(title)
+        composed.append(img.convert("RGB"))
+    return composed
