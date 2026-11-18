@@ -204,3 +204,18 @@ def test_preview_refuses_bad_data(tmp_path: Path) -> None:
         UserIcons(tmp_path).preview(b"junk", _OPTIONS)
     with pytest.raises(ValueError):
         UserIcons(tmp_path).preview(b"<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>", _OPTIONS)
+
+
+_UTF16_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'.encode("utf-16-le")
+
+
+def test_import_refuses_utf16_svg_and_writes_nothing(tmp_path: Path) -> None:
+    result = UserIcons(tmp_path).import_icon("cat", _UTF16_SVG, _OPTIONS)
+    assert_that(result.ok).is_false()
+    assert_that(list(tmp_path.iterdir())).is_empty()
+
+
+def test_preview_refuses_utf16_svg(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        UserIcons(tmp_path).preview(_UTF16_SVG, _OPTIONS)
+    assert_that(list(tmp_path.iterdir())).is_empty()
