@@ -7,6 +7,7 @@ import pytest
 from assertpy import assert_that
 from PIL import Image
 
+from decker.animation.gif import MAX_GIF_FRAMES
 from decker.animation.model import AnimationSpec
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
 from decker.plugin.manifest import ManifestValidationError, PluginManifest
@@ -485,8 +486,8 @@ def test_compose_key_face_of_an_animated_gif_carries_the_spec_that_produced_the_
 
 @pytest.mark.parametrize(
     "image",
-    [None, _png("#00ff00"), make_gif(1), b"GIF89a" + b"\x00\xff" * 40, b"GIF89a"],
-    ids=["none", "png", "single-frame-gif", "corrupt-gif", "header-only-gif"],
+    [None, _png("#00ff00"), make_gif(1), b"GIF89a" + b"\x00\xff" * 40, b"GIF89a", make_gif(MAX_GIF_FRAMES + 1)],
+    ids=["none", "png", "single-frame-gif", "corrupt-gif", "header-only-gif", "over-frame-cap-gif"],
 )
 def test_compose_key_face_of_anything_but_an_animated_gif_is_static(image: bytes | None) -> None:
     appearance = _appearance(background="#112233")

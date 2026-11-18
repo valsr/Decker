@@ -105,6 +105,19 @@ class TestSinkAnimations:
         assert state is not None
         assert_that(state.get_key_animation(2)).is_none()
 
+    def test_sink_is_playing_only_the_animation_the_key_plays(self, opened):
+        dm, device_id, _log = opened
+        sink, _ = _make_sink(dm)
+        spec = make_spec()
+        assert_that(sink.is_playing(device_id, 2, spec.animation_id)).is_false()
+
+        self._animate(sink, device_id, 2, spec)
+
+        assert_that(sink.is_playing(device_id, 2, spec.animation_id)).is_true()
+        assert_that(sink.is_playing(device_id, 2, "other")).is_false()
+        assert_that(sink.is_playing(device_id, 3, spec.animation_id)).is_false()
+        assert_that(_make_sink(None)[0].is_playing(device_id, 2, spec.animation_id)).is_false()
+
     def test_sink_set_animation_without_a_factory_still_plays(self):
         dm = MagicMock()
         dm.animation_factory = None

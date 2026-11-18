@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from assertpy import assert_that
@@ -36,8 +36,10 @@ from decker.server.appearance import (
 from decker.server.devices.state import DeviceState
 from decker.server.plugins import PluginManager
 from tests.server.animation_fixture import (
+    WriteLog,
     make_gif,
     opened_deck_manager,
+    stateful_deck,
     truncated_gif,
     wait_until,
 )
@@ -1815,6 +1817,19 @@ def _writes_stopped(log, key: int) -> bool:
     return len(log.for_key(key)) == written
 
 
+def _spy_device_writes(env: Env, monkeypatch) -> list[str]:
+    """Record the names of the DeviceManager's poster and animation calls from now on (they still run)."""
+    calls: list[str] = []
+    for name in ("set_image_bytes", "set_animation"):
+
+        def spy(*args, _real=getattr(env.dm, name), _name=name):
+            calls.append(_name)
+            return _real(*args)
+
+        monkeypatch.setattr(env.dm, name, spy)
+    return calls
+
+
 def _last_event(env: Env, key: int) -> dict:
     return [e for e in env.bus.of("key_state_changed") if e["key_index"] == key][-1]
 
@@ -1921,6 +1936,64 @@ class TestAnimatedKeyFaces:
         assert spec is not None
         assert_that(_last_event(env, 2)["animation_id"]).is_equal_to(spec.animation_id)
         assert_that(_last_event(env, 3)).contains_entry({"animation_id": None})
+
+    def test_recomposing_an_unchanged_animated_key_keeps_it_playing_without_a_poster_write(self, deck_env, monkeypatch):
+        env, device_id, log = deck_env
+        target = _static_on(device_id, 2)
+        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        assert_that(_frames_written(log, 2)).is_true()
+        writes = _spy_device_writes(env, monkeypatch)
+        events = len(env.bus.of("key_state_changed"))
+
+        env.manager.set_appearance(target, _gif_ref("anim.gif"))
+        env.manager.set_appearance(target, _gif_ref("anim.gif"))
+        mark = time.monotonic()
+
+        assert_that(writes).is_empty()  # no poster write, no restart
+        assert_that(env.bus.of("key_state_changed")).is_length(events + 2)
+        assert_that(wait_until(lambda: len({w[1] for w in log.for_key(2) if w[3] > mark}) >= 2)).is_true()
+
+    def test_plugin_images_under_an_animated_override_do_not_restart_it(self, deck_env, monkeypatch):
+        env, device_id, log = deck_env
+        target = ActionTarget("com.decker.rec", _REC_ACTION, "ctx-rec", device_id, 3)
+        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        assert _wait_for(lambda: env.received("will_appear"))
+        assert_that(_frames_written(log, 3)).is_true()
+        writes = _spy_device_writes(env, monkeypatch)
+
+        for _ in range(2):  # a clock plugin sending its image again and again
+            env.manager._on_plugin_message(  # pylint: disable=protected-access
+                "com.decker.rec", Message("set_image", "ctx-rec", {"image": base64.b64encode(_RED_PNG).decode()})
+            )
+
+        assert_that(writes).is_empty()
+
+    def test_a_recompose_after_a_page_switch_restarts_the_animation(self, deck_env):
+        env, device_id, log = deck_env
+        target = _static_on(device_id, 2)
+        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        env.dm.show_page(device_id, "p2")  # stops p1's animations; p2 has none recorded
+
+        env.manager.set_appearance(target, _gif_ref("anim.gif"))
+        mark = time.monotonic()
+
+        assert_that(env.dm.playing_animation_id(device_id, 2)).is_equal_to(_animation(env, device_id, 2).animation_id)
+        assert_that(wait_until(lambda: len({w[1] for w in log.for_key(2) if w[3] > mark}) >= 2)).is_true()
+
+    def test_a_recompose_after_the_device_reopens_restarts_the_animation(self, deck_env):
+        env, device_id, _log = deck_env
+        target = _static_on(device_id, 2)
+        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        env.dm.close_device(device_id)
+        deck, log = stateful_deck(), WriteLog()
+        deck.set_key_image.side_effect = log
+
+        with patch("decker.server.devices.manager._HardwareDeviceManager") as hardware:
+            hardware.return_value.enumerate.return_value = [deck]
+            env.manager.set_appearance(target, _gif_ref("anim.gif"))
+
+        assert_that(env.dm.playing_animation_id(device_id, 2)).is_equal_to(_animation(env, device_id, 2).animation_id)
+        assert_that(_frames_written(log, 2)).is_true()
 
     def test_key_display_states_carry_animation_id(self, deck_env):
         env, device_id, _log = deck_env

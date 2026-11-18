@@ -378,6 +378,15 @@ class KeyWriter:  # pylint: disable=too-many-instance-attributes
         with self._condition:
             return self._adapter.level
 
+    def animation_id(self, key_index: int) -> str | None:
+        """Id of the animation the key plays or waits to play, or None if it has none."""
+        with self._condition:
+            slot = self._slots.get(key_index)
+            spec = self._adapter.waiting.get(key_index) if slot is None else slot.spec
+            if spec is None and slot is not None:
+                return slot.animation.animation_id
+            return spec.animation_id if spec is not None else None
+
     def stop(self, key_index: int) -> None:
         """Stop the key's animation, leaving its last written frame on the key."""
         with self._condition:

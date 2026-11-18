@@ -335,6 +335,26 @@ def test_play_spec_polls_a_pending_build_without_spinning() -> None:
     assert_that(sim.deck.frames_of(0)[0]).is_equal_to(b"7|q100f0")
 
 
+def test_animation_id_names_the_waiting_then_playing_spec_until_the_key_is_stopped() -> None:
+    factory = _Factory(REPORTS, ready=())
+    sim = _Sim(factory)
+    assert_that(sim.writer.animation_id(0)).is_none()
+
+    sim.writer.play_spec(0, SPEC)
+    assert_that(sim.writer.animation_id(0)).is_equal_to(SPEC.animation_id)  # waiting for its frames
+    factory.ready.add(100)
+    sim.run_until(START + 0.5)
+    assert_that(sim.deck.frames_of(0)).is_not_empty()
+    assert_that(sim.writer.animation_id(0)).is_equal_to(SPEC.animation_id)  # playing
+
+    sim.writer.stop(0)
+    assert_that(sim.writer.animation_id(0)).is_none()
+    sim.writer.play(1, factory.animations[100])
+    assert_that(sim.writer.animation_id(1)).is_equal_to("anim")  # a fixed animation without a spec
+    sim.writer.submit_static(1, _static(1, "still"), timeout=0.0)
+    assert_that(sim.writer.animation_id(1)).is_none()
+
+
 def test_play_spec_without_poster_keeps_the_old_animation_until_the_new_one_is_ready() -> None:
     old = _Factory(REPORTS)
     sim = _Sim(_Factory(REPORTS, ready=()))
