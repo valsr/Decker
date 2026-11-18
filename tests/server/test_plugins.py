@@ -28,9 +28,19 @@ from decker.plugin.runtime.supervisor import SupervisorPolicy
 from decker.plugin.settings_schema import parse_settings_schema
 from decker.plugin.settings_store import PluginSettingsStore
 from decker.plugin.target import ActionTarget
-from decker.server.appearance import compose_key_image, resolve_appearance
+from decker.server.appearance import (
+    PACK_ICON_SCALE,
+    compose_key_image,
+    resolve_appearance,
+)
 from decker.server.devices.state import DeviceState
 from decker.server.plugins import PluginManager
+from tests.server.animation_fixture import (
+    make_gif,
+    opened_deck_manager,
+    truncated_gif,
+    wait_until,
+)
 
 _RECORDER = f"""#!{sys.executable}
 import json, os, sys
@@ -253,7 +263,7 @@ class FakePages:
 class Env:
     """A running PluginManager over a fake device, with the recorder plugin installed."""
 
-    def __init__(self, tmp_path, policy: SupervisorPolicy = _FAST) -> None:
+    def __init__(self, tmp_path, policy: SupervisorPolicy = _FAST, device_manager: Any = None) -> None:
         self.plugins_dir = tmp_path / "plugins"
         self.rec_dir = self.plugins_dir / "com.decker.rec"
         self.rec_dir.mkdir(parents=True)
@@ -268,7 +278,7 @@ class Env:
         shutil.copytree(self.rec_dir, self.mixed_dir)
         (self.mixed_dir / "manifest.json").write_text(json.dumps(_MIXED_MANIFEST))
         self.pages = FakePages()
-        self.dm = FakeDeviceManager()
+        self.dm = device_manager if device_manager is not None else FakeDeviceManager()
         self.bus = FakeBus()
         self.persisted: list[tuple[ActionTarget, dict]] = []
         self.manager = PluginManager(self.plugins_dir, policy, PluginSettingsStore(tmp_path / "plugins.db"))
@@ -1213,13 +1223,13 @@ class TestLockDiscipline:
         import decker.server.plugins as plugins_module
 
         held: list[bool] = []
-        real = plugins_module.compose_key_image
+        real = plugins_module.compose_key_face
 
         def watching(*args, **kwargs):
             held.append(env.manager._lock._is_owned())  # pylint: disable=protected-access
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(plugins_module, "compose_key_image", watching)
+        monkeypatch.setattr(plugins_module, "compose_key_face", watching)
         pushes: list[bool] = []
         original = env.manager._state_changed_cb  # pylint: disable=protected-access
 
@@ -1504,7 +1514,7 @@ class TestPageRefresh:
     def test_keys_without_templates_are_not_recomposed(self, env, monkeypatch):
         env.manager.activate_action(STATIC_TARGET, {"title": {"text": "plain"}})
         calls = MagicMock()
-        monkeypatch.setattr("decker.server.plugins.compose_key_image", calls)
+        monkeypatch.setattr("decker.server.plugins.compose_key_face", calls)
 
         env.manager.refresh_page_dependent("dev-1")
 
@@ -1736,3 +1746,189 @@ class TestActivationWithoutRedraw:
         env.manager.activate_action(STATIC_TARGET, {"title": {"text": "x"}})
 
         assert_that(env.dm.hardware_images).is_not_empty()
+
+
+_GIF_PACK_ID = "com.t.gifs.icons"
+_ANIMATED_GIF = make_gif(3)
+_GIF_FILES = {
+    "anim.gif": _ANIMATED_GIF,
+    "still.gif": make_gif(1),
+    "truncated.gif": truncated_gif(),
+    "corrupt.gif": b"GIF89a" + b"\x00\xff" * 40,
+    "red.png": _png("#ff0000"),
+}
+_STATIC_LOOK = {"background": "#336699", "title": {"text": "Hi", "position": "middle"}}
+
+
+def _gif_ref(name: str) -> dict[str, Any]:
+    return {"icon": {"ref": f"pack:{_GIF_PACK_ID}/{name}"}}
+
+
+def _install_gif_pack(env: Env, root: Path) -> None:
+    (root / "pack").mkdir(parents=True)
+    for name, data in _GIF_FILES.items():
+        (root / "pack" / name).write_bytes(data)
+    manifest = PluginManifest.from_dict(
+        {
+            "format": 1,
+            "id": "com.t.gifs",
+            "name": "GIFs",
+            "version": "1.0.0",
+            "author": "a",
+            "description": "d",
+            "contributes": {"icon_packs": [{"id": _GIF_PACK_ID, "name": "GIFs", "path": "pack"}]},
+        }
+    )
+    env.manager.icon_packs.register(InstalledPlugin(manifest, root))
+
+
+@pytest.fixture(name="deck_env")
+def deck_env_fixture(tmp_path):
+    """The plugin host over a real DeviceManager with one fake deck open, and a pack of GIF icons installed."""
+    with opened_deck_manager(tmp_path / "state") as (dm, device_id, log):
+        environment = Env(tmp_path, device_manager=dm)
+        try:
+            _install_gif_pack(environment, tmp_path / "gifs")
+            yield environment, device_id, log
+        finally:
+            environment.manager.destroy()
+
+
+def _static_on(device_id: str, key: int) -> ActionTarget:
+    return ActionTarget("com.t.static", _STATIC_ACTION, f"ctx-static-{key}", device_id, key)
+
+
+def _animation(env: Env, device_id: str, key: int) -> Any:
+    state = env.dm.get_device_state(device_id)
+    assert state is not None
+    return state.get_key_animation(key)
+
+
+def _frames_written(log, key: int, count: int = 3) -> bool:
+    return wait_until(lambda: len({write[1] for write in log.for_key(key)}) >= count)
+
+
+def _writes_stopped(log, key: int) -> bool:
+    time.sleep(0.15)  # a frame already under way may still land
+    written = len(log.for_key(key))
+    time.sleep(0.35)
+    return len(log.for_key(key)) == written
+
+
+def _last_event(env: Env, key: int) -> dict:
+    return [e for e in env.bus.of("key_state_changed") if e["key_index"] == key][-1]
+
+
+class TestAnimatedKeyFaces:
+    def test_animated_gif_icon_ref_writes_poster_then_starts_animation(self, deck_env):
+        env, device_id, log = deck_env
+
+        env.manager.activate_action(_static_on(device_id, 2), _gif_ref("anim.gif"))
+
+        spec = _animation(env, device_id, 2)  # recorded only if the poster went first: a static write forgets it
+        assert spec is not None
+        assert_that(spec.gif).is_equal_to(_ANIMATED_GIF)
+        assert_that(spec.scale).is_equal_to(PACK_ICON_SCALE)
+        assert_that(spec.title).is_equal_to("")
+        assert_that(dict(spec.appearance)).is_equal_to(resolve_appearance(_STATIC_LOOK, _gif_ref("anim.gif")))
+        assert_that(env.dm.animation_factory.spec_for(spec.animation_id)).is_equal_to(spec)
+        assert_that(_frames_written(log, 2)).is_true()
+
+    def test_preview_of_an_animated_key_is_the_poster_png(self, deck_env):
+        env, device_id, _log = deck_env
+        target = _static_on(device_id, 2)
+        env.manager.activate_action(target, {})
+
+        preview = env.manager.preview_image(target, _gif_ref("anim.gif"))
+
+        appearance = resolve_appearance(_STATIC_LOOK, _gif_ref("anim.gif"))
+        expected = compose_key_image(appearance, _ANIMATED_GIF, "", plugin_image_scale=PACK_ICON_SCALE)
+        assert_that(preview).is_equal_to(expected)
+        assert_that(_pixel(preview, 40, 30)).is_equal_to((255, 0, 0))  # the GIF's first frame
+
+    def test_single_frame_gif_is_written_as_a_plain_static_image(self, deck_env):
+        env, device_id, log = deck_env
+
+        env.manager.activate_action(_static_on(device_id, 2), _gif_ref("still.gif"))
+
+        assert_that(_animation(env, device_id, 2)).is_none()
+        assert_that(_last_event(env, 2)["animation_id"]).is_none()
+        assert_that(_writes_stopped(log, 2)).is_true()
+        assert_that(log.for_key(2)).is_length(1)
+
+    def test_plugin_set_image_with_gif_bytes_starts_animation(self, deck_env):
+        env, device_id, log = deck_env
+        target = ActionTarget("com.decker.rec", _REC_ACTION, "ctx-rec", device_id, 3)
+        env.manager.activate_action(target)
+        assert _wait_for(lambda: env.received("will_appear"))
+
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            "com.decker.rec", Message("set_image", "ctx-rec", {"image": base64.b64encode(_ANIMATED_GIF).decode()})
+        )
+
+        spec = _animation(env, device_id, 3)
+        assert spec is not None
+        assert_that(spec.gif).is_equal_to(_ANIMATED_GIF)
+        assert_that(spec.scale).is_equal_to(1.0)
+        assert_that(_last_event(env, 3)["animation_id"]).is_equal_to(spec.animation_id)
+        assert_that(_frames_written(log, 3)).is_true()
+
+    @pytest.mark.parametrize("name", ["corrupt.gif", "truncated.gif"])
+    def test_corrupt_gif_bytes_keep_a_static_image_and_do_not_raise(self, deck_env, caplog, name):
+        env, device_id, log = deck_env
+        env.manager.activate_action(_static_on(device_id, 4), _gif_ref("anim.gif"))
+
+        env.manager.activate_action(_static_on(device_id, 2), _gif_ref(name))
+        assert_that(env.dm.animation_factory.wait_idle(5.0)).is_true()
+
+        state = env.dm.get_device_state(device_id)
+        assert state is not None
+        assert_that(state.get_key_state(2).image).is_not_none()
+        assert_that(_writes_stopped(log, 2)).is_true()
+        assert_that(log.for_key(2)).is_length(1)  # the static image only
+        assert_that(_frames_written(log, 4)).is_true()  # the other key keeps animating
+        gif_warnings = [r for r in caplog.records if r.levelname == "WARNING" and "GIF" in r.getMessage()]
+        assert_that(gif_warnings).is_length(0 if name == "corrupt.gif" else 1)
+
+    def test_truncated_gif_shows_its_first_frame(self, deck_env):
+        env, device_id, _log = deck_env
+        target = _static_on(device_id, 2)
+        env.manager.activate_action(target, {})
+
+        preview = env.manager.preview_image(target, _gif_ref("truncated.gif"))
+
+        assert_that(_pixel(preview, 40, 30)).is_equal_to((255, 0, 0))
+
+    def test_replacing_a_gif_with_a_png_stops_the_animation_and_clears_animation_id(self, deck_env):
+        env, device_id, log = deck_env
+        target = _static_on(device_id, 2)
+        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        assert_that(_frames_written(log, 2)).is_true()
+
+        env.manager.set_appearance(target, _gif_ref("red.png"))
+
+        assert_that(_animation(env, device_id, 2)).is_none()
+        assert_that(_last_event(env, 2)["animation_id"]).is_none()
+        assert_that(_writes_stopped(log, 2)).is_true()
+
+    def test_key_state_changed_event_includes_animation_id_for_animated_keys_and_null_otherwise(self, deck_env):
+        env, device_id, _log = deck_env
+
+        env.manager.activate_action(_static_on(device_id, 2), _gif_ref("anim.gif"))
+        env.manager.activate_action(_static_on(device_id, 3), _gif_ref("red.png"))
+
+        spec = _animation(env, device_id, 2)
+        assert spec is not None
+        assert_that(_last_event(env, 2)["animation_id"]).is_equal_to(spec.animation_id)
+        assert_that(_last_event(env, 3)).contains_entry({"animation_id": None})
+
+    def test_key_display_states_carry_animation_id(self, deck_env):
+        env, device_id, _log = deck_env
+        env.manager.activate_action(_static_on(device_id, 2), _gif_ref("anim.gif"))
+        state = env.dm.get_device_state(device_id)
+        state.update_key_label(3, "plain")
+
+        entries = {e["key_index"]: e for e in env.manager.get_key_display_states(device_id)}
+
+        assert_that(entries[2]["animation_id"]).is_equal_to(_animation(env, device_id, 2).animation_id)
+        assert_that(entries[3]).is_equal_to({"key_index": 3, "label": "plain", "animation_id": None})

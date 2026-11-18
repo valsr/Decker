@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from decker.animation.model import AnimationSpec
 from decker.asset.iconpack import IconPackRegistry
 from decker.asset.renderer import AssetRenderer
 from decker.common import config
@@ -38,7 +39,8 @@ from decker.plugin.settings_store import PluginSettingsStore
 from decker.plugin.target import ActionTarget
 from decker.server.appearance import (
     PACK_ICON_SCALE,
-    compose_key_image,
+    Composed,
+    compose_key_face,
     resolve_appearance,
 )
 from decker.server.contributions import ContributionRegistry
@@ -104,6 +106,16 @@ class _StreamDeckHardwareSink:
             self._device_manager.set_image_bytes(device_id, key_index, image)
         else:
             logging.debug("set_image: no DeviceManager available")
+
+    def set_animation(self, device_id: str, key_index: int, spec: AnimationSpec) -> None:
+        """Animate the key (its poster already written by set_image) and register spec for the key_animation RPC."""
+        if self._device_manager is None:
+            logging.debug("set_animation: no DeviceManager available")
+            return
+        factory = self._device_manager.animation_factory
+        if factory is not None:
+            factory.register(spec)
+        self._device_manager.set_animation(device_id, key_index, spec)
 
     def set_title(self, device_id: str, key_index: int, title: str) -> None:
         """Store the display label for client polling (hardware text not rendered)."""
@@ -374,11 +386,14 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         return actions
 
     def get_key_display_states(self, device_id: str) -> list[dict[str, Any]]:
-        """Return current display labels for all keys on this device."""
+        """Return the display label and animation id (None when static) of every labelled or animated key."""
         state = self._device_manager.get_device_state(device_id) if self._device_manager is not None else None
         if state is None:
             return []
-        return [{"key_index": k, "label": v} for k, v in state.get_all_labels()]
+        labels = dict(state.get_all_labels())
+        animation_ids = {k: spec.animation_id for k, spec in state.get_all_animations().items()}
+        keys = list(labels) + [k for k in animation_ids if k not in labels]
+        return [{"key_index": k, "label": labels.get(k, ""), "animation_id": animation_ids.get(k)} for k in keys]
 
     def store_settings(self, target: ActionTarget, settings: dict[str, Any]) -> None:
         """Persist settings for an action instance so its plugin receives them on activation."""
@@ -412,7 +427,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                 return None
             draft = replace(live, appearance=dict(stored))
         try:
-            return self._compose(draft)
+            return self._compose(draft).png
         except Exception:  # pylint: disable=broad-except
             logging.warning("Could not compose preview for context %s", target.context_id, exc_info=True)
             return None
@@ -519,17 +534,20 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """
         target = live.target
         try:
-            image = self._compose(live)
+            composed = self._compose(live)
             with self._lock:
                 if self._live.get(target.context_id) is not live:
                     return
-                self._sink.set_image(target.device_id, target.key_index, image)
+                # Poster first: a static write ends the key's animation, so the animation must start after it.
+                self._sink.set_image(target.device_id, target.key_index, composed.png)
+                if composed.animation is not None:
+                    self._sink.set_animation(target.device_id, target.key_index, composed.animation)
         except Exception:  # pylint: disable=broad-except
             logging.warning("Could not compose key image for context %s", target.context_id, exc_info=True)
             return
         self._notify_state(target.device_id, target.key_index)
 
-    def _compose(self, live: _Live) -> bytes:
+    def _compose(self, live: _Live) -> Composed:
         with self._lock:
             plugin = self._plugins.get(live.target.plugin_uuid)
             spec = live.action
@@ -546,12 +564,12 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if image is None and state is not None and state.image:
             image = read_icon(plugin.plugin_dir, state.image) if plugin is not None else None
         title = plugin_title or (state.title if state is not None and state.title else "")
-        return compose_key_image(
+        return compose_key_face(
             self._expanded_appearance(live.target.device_id, appearance),
             image,
             title,
-            plugin_image_color=image_color,
-            plugin_image_scale=PACK_ICON_SCALE if icon_ref is not None else 1.0,
+            image_color,
+            PACK_ICON_SCALE if icon_ref is not None else 1.0,
         )
 
     # ------------------------------------------------------------------
@@ -926,6 +944,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                 return
             per_key = device_state.get_key_state(key_index)
             image_b64 = base64.b64encode(per_key.image).decode("ascii") if per_key.image else None
+            animation = device_state.get_key_animation(key_index)
             appearance, defaults = self._key_appearance(device_id, key_index)
             context.event_bus.push(
                 "key_state_changed",
@@ -934,6 +953,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                         "device_id": device_id,
                         "key_index": key_index,
                         "image_b64": image_b64,
+                        "animation_id": animation.animation_id if animation is not None else None,
                         "label": per_key.label,
                         "appearance": appearance,
                         "appearance_defaults": defaults,

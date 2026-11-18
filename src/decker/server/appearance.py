@@ -11,6 +11,8 @@ from typing import Any
 
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
+from decker.animation.gif import is_animated_gif
+from decker.animation.model import AnimationSpec
 from decker.asset.renderer import AssetRenderer
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
 from decker.common.text_style import fold_legacy_title
@@ -196,6 +198,30 @@ def compose_key_image(  # pylint: disable=too-many-arguments,too-many-positional
     buf = io.BytesIO()
     img.convert("RGB").save(buf, format="PNG")
     return buf.getvalue()
+
+
+@dataclass(frozen=True)
+class Composed:
+    """A composed key face: the PNG (the poster when animated) and its animation, if the image is an animated GIF."""
+
+    png: bytes
+    animation: AnimationSpec | None
+
+
+def compose_key_face(
+    appearance: Mapping[str, Any],
+    image: bytes | None,
+    title: str,
+    image_color: str | None = None,
+    image_scale: float = 1.0,
+) -> Composed:
+    """Compose a key PNG; a multi-frame GIF image also yields the AnimationSpec whose first frame the PNG shows."""
+    # The renderer draws a GIF's first frame, so for an animated GIF this PNG is already the poster.
+    png = compose_key_image(appearance, image, title, plugin_image_color=image_color, plugin_image_scale=image_scale)
+    # is_animated_gif never raises. A GIF that fails only when fully decoded keeps this poster; the factory warns once.
+    if image is None or not is_animated_gif(image):
+        return Composed(png, None)
+    return Composed(png, AnimationSpec(image, appearance, title, image_scale))
 
 
 def compose_key_frames(
