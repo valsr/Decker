@@ -1,5 +1,6 @@
 """Tests for DeviceManager."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -251,3 +252,223 @@ class TestBlankKey:
         with patch("decker.server.devices.manager._HardwareDeviceManager") as mock_dm:
             mock_dm.return_value.enumerate.return_value = []
             dm.blank_key("nope", 0)
+
+
+class TestDeviceWatcher:
+    """After a PC sleep the USB handle is dead: the watcher must notice, reopen and redraw the device."""
+
+    @staticmethod
+    def _deck(serial: str = "ABC123", path: str | None = None) -> MagicMock:
+        deck = _make_deck(serial)
+        deck.id.return_value = path or f"/dev/hidraw-{serial}"
+        deck.get_firmware_version.return_value = "1.0"
+        deck.deck_type.return_value = "Stream Deck"
+        deck.vendor_id.return_value = 1
+        deck.product_id.return_value = 2
+        return deck
+
+    @pytest.fixture(name="watched")
+    def watched_fixture(self, tmp_path):
+        store = DeviceStateStore(data_dir=tmp_path)
+        store.create(MagicMock())
+        store.save_device = MagicMock()  # type: ignore[method-assign]
+        context = MagicMock()
+        context.device_state_store = store
+        context.page_controller.active_page_id.return_value = "p1"
+        dm = _manager()
+        dm.create(context)
+        yield dm, context
+        dm.destroy()
+        store.destroy()
+
+    @staticmethod
+    def _enumerate(*decks):
+        patcher = patch("decker.server.devices.manager._HardwareDeviceManager")
+        mock = patcher.start()
+        mock.return_value.enumerate.return_value = list(decks)
+        return patcher
+
+    @staticmethod
+    def _pushed(context):
+        return [(c.args[0], json.loads(c.args[1])) for c in context.event_bus.push.call_args_list]
+
+    def test_a_new_device_is_opened_restored_and_announced(self, watched):
+        dm, context = watched
+        deck = self._deck()
+        patcher = self._enumerate(deck)
+
+        dm.check_devices()
+        patcher.stop()
+
+        device_id = device_id_for_serial("ABC123")
+        assert_that(dm.get_device_state(device_id)).is_not_none()
+        context.page_controller.restore.assert_called_once_with(device_id)
+        assert_that(self._pushed(context)).is_equal_to([("devices_changed", {"device_id": device_id})])
+        deck.set_key_callback.assert_called_once()
+
+    def test_healthy_devices_are_left_alone(self, watched):
+        dm, context = watched
+        patcher = self._enumerate(self._deck())
+
+        dm.check_devices()
+        context.reset_mock()
+        dm.check_devices()
+        dm.check_devices()
+        patcher.stop()
+
+        context.page_controller.restore.assert_not_called()
+        context.event_bus.push.assert_not_called()
+
+    def test_a_device_that_stops_answering_is_dropped_closed_and_reported(self, watched):
+        dm, context = watched
+        deck = self._deck()
+        patcher = self._enumerate(deck)
+        dm.check_devices()
+        patcher.stop()
+        context.reset_mock()
+        deck.get_serial_number.side_effect = OSError("device went away")
+        patcher = self._enumerate()  # nothing is plugged in while the PC sleeps
+
+        dm.check_devices()
+        patcher.stop()
+
+        assert_that(dm._devices).is_empty()  # pylint: disable=protected-access
+        deck.close.assert_called()
+        context.page_controller.restore.assert_not_called()
+        device_id = device_id_for_serial("ABC123")
+        assert_that(self._pushed(context)).is_equal_to([("devices_changed", {"device_id": device_id})])
+
+    def test_a_device_that_comes_back_is_reopened_restored_and_announced(self, watched):
+        dm, context = watched
+        old = self._deck(path="/dev/hidraw3")
+        patcher = self._enumerate(old)
+        dm.check_devices()
+        patcher.stop()
+        old.get_serial_number.side_effect = OSError("gone")
+        patcher = self._enumerate()
+        dm.check_devices()
+        patcher.stop()
+        context.reset_mock()
+        new = self._deck(path="/dev/hidraw7")  # the same deck, with a new device path after the wake
+        patcher = self._enumerate(new)
+
+        dm.check_devices()
+        patcher.stop()
+
+        device_id = device_id_for_serial("ABC123")
+        context.page_controller.restore.assert_called_once_with(device_id)
+        new.set_key_callback.assert_called_once()
+        assert_that(dm.get_device_state(device_id)).is_not_none()
+        assert_that(self._pushed(context)).is_equal_to([("devices_changed", {"device_id": device_id})])
+
+    def test_a_lost_device_that_is_already_back_in_the_same_pass_is_reopened_at_once(self, watched):
+        dm, context = watched
+        old = self._deck(path="/dev/hidraw3")
+        patcher = self._enumerate(old)
+        dm.check_devices()
+        patcher.stop()
+        context.reset_mock()
+        old.get_serial_number.side_effect = OSError("gone")
+        new = self._deck(path="/dev/hidraw4")
+        patcher = self._enumerate(new)
+
+        dm.check_devices()
+        patcher.stop()
+
+        context.page_controller.restore.assert_called_once_with(device_id_for_serial("ABC123"))
+
+    def test_an_open_failure_is_retried_on_the_next_pass(self, watched):
+        dm, context = watched
+        stubborn = self._deck()
+        stubborn.open.side_effect = OSError("busy")
+        patcher = self._enumerate(stubborn)
+        dm.check_devices()
+        patcher.stop()
+        assert_that(dm._devices).is_empty()  # pylint: disable=protected-access
+        context.page_controller.restore.assert_not_called()
+
+        patcher = self._enumerate(self._deck())
+        dm.check_devices()
+        patcher.stop()
+
+        context.page_controller.restore.assert_called_once_with(device_id_for_serial("ABC123"))
+
+    def test_one_bad_deck_does_not_stop_the_others(self, watched):
+        dm, context = watched
+        bad = self._deck("BAD", path="/dev/hidraw1")
+        bad.open.side_effect = OSError("busy")
+        good = self._deck("GOOD", path="/dev/hidraw2")
+        patcher = self._enumerate(bad, good)
+
+        dm.check_devices()
+        patcher.stop()
+
+        context.page_controller.restore.assert_called_once_with(device_id_for_serial("GOOD"))
+
+    def test_an_enumeration_failure_changes_nothing(self, watched):
+        dm, context = watched
+        patcher = patch("decker.server.devices.manager._HardwareDeviceManager")
+        mock = patcher.start()
+        mock.return_value.enumerate.side_effect = OSError("hid broke")
+
+        dm.check_devices()
+        patcher.stop()
+
+        context.event_bus.push.assert_not_called()
+
+    def test_a_failing_restore_does_not_break_the_pass(self, watched):
+        dm, context = watched
+        context.page_controller.restore.side_effect = RuntimeError("boom")
+        patcher = self._enumerate(self._deck("A", "/dev/hidraw1"), self._deck("B", "/dev/hidraw2"))
+
+        dm.check_devices()
+        patcher.stop()
+
+        assert_that(context.page_controller.restore.call_count).is_equal_to(2)
+
+    def test_the_watcher_runs_passes_until_stopped_and_survives_errors(self, watched):
+        import time
+
+        dm, _context = watched
+        calls: list[int] = []
+
+        def check():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("boom")
+
+        dm.check_devices = check
+
+        dm.start_watching(0.01)
+        deadline = time.monotonic() + 3
+        while len(calls) < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        dm.stop_watching()
+        settled = len(calls)
+        time.sleep(0.05)
+
+        assert_that(settled).is_greater_than_or_equal_to(3)
+        assert_that(len(calls)).is_equal_to(settled)
+
+    def test_start_watching_twice_runs_one_watcher(self, watched):
+        import threading
+
+        dm, _context = watched
+        dm.check_devices = lambda: None
+
+        dm.start_watching(0.05)
+        dm.start_watching(0.05)
+
+        assert_that([t for t in threading.enumerate() if t.name == "device-watch"]).is_length(1)
+        dm.stop_watching()
+
+    def test_destroy_stops_the_watcher(self, watched):
+        import threading
+
+        dm, _context = watched
+        dm.check_devices = lambda: None
+        dm.start_watching(0.05)
+
+        dm.destroy()
+
+        assert_that([t for t in threading.enumerate() if t.name == "device-watch"]).is_empty()

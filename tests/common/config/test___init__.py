@@ -342,3 +342,9 @@ class TestToBool:
     def test_numeric(self):
         assert_that(_to_bool(1)).is_true()
         assert_that(_to_bool(0)).is_false()
+
+
+def test_the_device_watch_interval_defaults_to_two_seconds() -> None:
+    from decker.common import config
+
+    assert_that(config.get("server.device_watch_interval")).is_equal_to(2.0)
