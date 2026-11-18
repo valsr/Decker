@@ -4,6 +4,7 @@ import pytest
 from assertpy import assert_that
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLabel, QTabBar, QToolButton
 
 from decker.client.widgets.page_tab_bar import PageTabBar
@@ -337,3 +338,92 @@ class TestOverflow:
 
         assert_that(widget._scroll_left.isHidden()).is_true()
         widget.close()
+
+
+class TestClickOutsideCommits:
+    @pytest.fixture(name="shown")
+    def shown_fixture(self, bar, qapp):
+        from PyQt6.QtWidgets import QWidget
+
+        bar.show()
+        other = QWidget()
+        other.resize(40, 40)
+        other.show()
+        qapp.processEvents()
+        yield bar, other
+        other.close()
+        bar.close()
+
+    @staticmethod
+    def _click(widget) -> None:
+        QTest.mouseClick(widget, Qt.MouseButton.LeftButton)  # type: ignore[call-overload]
+
+    def test_clicking_another_widget_commits_the_rename(self, shown, model):
+        bar, other = shown
+        calls = _record(bar.rename_page_requested)
+        bar.start_rename(model.pages[1].page_id)
+        bar._rename_edit.setText("Media")
+
+        self._click(other)
+
+        assert_that(calls).is_equal_to([(model.pages[1].page_id, "Media")])
+        assert_that(bar._rename_edit).is_none()
+
+    def test_clicking_a_button_of_the_bar_commits_too(self, shown, model):
+        bar, _other = shown
+        calls = _record(bar.rename_page_requested)
+        bar.start_rename(model.pages[1].page_id)
+        bar._rename_edit.setText("Media")
+
+        self._click(bar._add_button)
+
+        assert_that(calls).is_equal_to([(model.pages[1].page_id, "Media")])
+
+    def test_clicking_inside_the_editor_keeps_editing(self, shown, model):
+        bar, _other = shown
+        calls = _record(bar.rename_page_requested)
+        bar.start_rename(model.pages[1].page_id)
+        bar._rename_edit.setText("Media")
+
+        self._click(bar._rename_edit)
+
+        assert_that(calls).is_empty()
+        assert_that(bar._rename_edit).is_not_none()
+
+    @pytest.mark.parametrize("text", ["", "   ", "Page 2"])
+    def test_blank_or_unchanged_names_are_not_emitted_on_an_outside_click(self, shown, model, text):
+        bar, other = shown
+        calls = _record(bar.rename_page_requested)
+        bar.start_rename(model.pages[1].page_id)
+        bar._rename_edit.setText(text)
+
+        self._click(other)
+
+        assert_that(calls).is_empty()
+        assert_that(bar._rename_edit).is_none()
+
+    def test_the_outside_click_listener_is_removed_afterwards(self, shown, model):
+        bar, other = shown
+        calls = _record(bar.rename_page_requested)
+        bar.start_rename(model.pages[1].page_id)
+        bar._rename_edit.setText("Media")
+        self._click(other)
+
+        bar.start_rename(model.pages[0].page_id)
+        bar._rename_edit.setText("Home")
+        bar._rename_edit.editingFinished.emit()  # finishing normally removes the listener as well
+        self._click(other)
+
+        assert_that(calls).is_equal_to([(model.pages[1].page_id, "Media"), (model.pages[0].page_id, "Home")])
+
+    def test_escape_still_cancels_without_a_commit_on_later_clicks(self, shown, model):
+        bar, other = shown
+        calls = _record(bar.rename_page_requested)
+        bar.start_rename(model.pages[1].page_id)
+        edit = bar._rename_edit
+        edit.setText("Media")
+        edit.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier))
+
+        self._click(other)
+
+        assert_that(calls).is_empty()
