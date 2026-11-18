@@ -9,12 +9,15 @@ LINUX_DESKTOPS: tuple[str, ...] = ("kde", "gnome", "other")
 LINUX_SESSIONS: tuple[str, ...] = ("wayland", "x11")
 UNKNOWN = "unknown"
 
-_OS_LABELS = {"macos": "macOS"}
-_SYS_PLATFORMS = {"win32": "windows", "darwin": "macos"}
+_OS_LABELS: dict[str, str] = {"macos": "macOS"}
+_SYS_PLATFORMS: dict[str, str] = {"win32": "windows", "darwin": "macos"}
+_DESKTOP_LABELS: dict[str, str] = {"kde": "KDE", "gnome": "GNOME", "other": "Other"}
 
 
 @dataclass(frozen=True)
 class HostPlatform:
+    """The platform Decker is running on."""
+
     os: str
     desktop: str = UNKNOWN
     session: str = UNKNOWN
@@ -24,7 +27,7 @@ class HostPlatform:
         name = _OS_LABELS.get(self.os, self.os.capitalize())
         parts: list[str] = []
         if self.desktop != UNKNOWN:
-            parts.append("KDE" if self.desktop == "kde" else self.desktop.capitalize())
+            parts.append(_DESKTOP_LABELS.get(self.desktop, self.desktop.capitalize()))
         if self.session != UNKNOWN:
             parts.append(self.session.capitalize())
         return f"{name} ({', '.join(parts)})" if parts else name
@@ -58,6 +61,8 @@ def detect_platform(environ: Mapping[str, str] | None = None, platform_name: str
 
 @dataclass(frozen=True)
 class PlatformSpec:
+    """The platforms a plugin declares support for; None fields are unconstrained."""
+
     os: tuple[str, ...] | None = None
     desktops: tuple[str, ...] | None = None
     sessions: tuple[str, ...] | None = None
