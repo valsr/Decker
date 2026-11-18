@@ -208,16 +208,24 @@ class Composed:
     animation: AnimationSpec | None
 
 
-def compose_key_face(
+def compose_key_face(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     appearance: Mapping[str, Any],
     image: bytes | None,
     title: str,
     image_color: str | None = None,
     image_scale: float = 1.0,
+    poster: bool = True,
 ) -> Composed:
-    """Compose a key PNG; a multi-frame GIF image also yields the AnimationSpec whose first frame the PNG shows."""
+    """Compose a key PNG; a multi-frame GIF image also yields the AnimationSpec whose first frame the PNG shows.
+
+    With poster=False the PNG is not composed (it is empty): the caller only wants to know the animation.
+    """
     # The renderer draws a GIF's first frame, so for an animated GIF this PNG is already the poster.
-    png = compose_key_image(appearance, image, title, plugin_image_color=image_color, plugin_image_scale=image_scale)
+    png = (
+        compose_key_image(appearance, image, title, plugin_image_color=image_color, plugin_image_scale=image_scale)
+        if poster
+        else b""
+    )
     # is_animated_gif never raises. A GIF that fails only when fully decoded keeps this poster; the factory warns once.
     if image is None or not is_animated_gif(image):
         return Composed(png, None)

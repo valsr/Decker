@@ -507,3 +507,14 @@ def test_compose_key_face_of_gif_bytes_over_the_icon_size_cap_is_static(monkeypa
     face = compose_key_face(_appearance(), gif, "")
 
     assert_that(face.animation).is_none()
+
+
+def test_compose_key_face_without_a_poster_skips_the_png_but_still_finds_the_animation() -> None:
+    appearance = _appearance(background="#112233")
+    gif = make_gif(3)
+
+    face = compose_key_face(appearance, gif, "", poster=False)
+
+    assert_that(face.png).is_empty()
+    assert_that(face.animation).is_equal_to(AnimationSpec(gif, appearance, "", 1.0))
+    assert_that(compose_key_face(appearance, _png("#00ff00"), "", poster=False).animation).is_none()
