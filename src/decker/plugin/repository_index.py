@@ -9,6 +9,7 @@ from urllib.parse import urljoin, urlparse
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
+from decker.common.platforms import PlatformSpec, parse_platform_spec
 from decker.common.version import is_compatible
 from decker.plugin.manifest import is_valid_plugin_id, is_valid_version
 
@@ -38,6 +39,7 @@ class IndexVersion:
     sha256: str
     released: str
     contributes: dict[str, list[str]]
+    platforms: PlatformSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -185,7 +187,15 @@ def _parse_version(raw: Any, index_url: str) -> IndexVersion:
         sha256=sha256.lower(),
         released=_text(raw.get("released"), _MAX_NAME),
         contributes=_parse_contributes(raw.get("contributes")),
+        platforms=_parse_platforms(raw),
     )
+
+
+def _parse_platforms(raw: dict[str, Any]) -> PlatformSpec | None:
+    try:
+        return parse_platform_spec(raw.get("platforms"), raw.get("linux"))
+    except ValueError as exc:
+        raise _EntryError(f"invalid platform data: {exc}") from exc
 
 
 def _parse_specifier(value: Any) -> str | None:

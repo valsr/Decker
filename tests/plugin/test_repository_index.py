@@ -152,3 +152,27 @@ def test_latest_compatible_skips_incompatible_versions() -> None:
     assert best is not None
     assert_that(best.version).is_equal_to("2.0.0")
     assert_that(latest_compatible((version("3.0.0", ">=99"),))).is_none()
+
+
+def test_index_version_without_platform_fields_supports_all() -> None:
+    index = parse_index(_index([_plugin()]), INDEX_URL)
+    assert_that(index.plugins[0].versions[0].platforms).is_none()
+
+
+def test_index_version_parses_platform_fields() -> None:
+    entry = _version(platforms=["linux"], linux={"desktops": ["kde"], "sessions": ["wayland"]})
+    index = parse_index(_index([_plugin(versions=[entry])]), INDEX_URL)
+    spec = index.plugins[0].versions[0].platforms
+    assert spec is not None
+    assert_that(spec.os).is_equal_to(("linux",))
+    assert_that(spec.desktops).is_equal_to(("kde",))
+    assert_that(spec.sessions).is_equal_to(("wayland",))
+
+
+def test_invalid_platform_data_skips_only_that_version() -> None:
+    bad = _version(version="2.0.0", platforms="linux")
+    index = parse_index(_index([_plugin(versions=[_version(), bad])]), INDEX_URL)
+    assert_that(index.plugins).is_length(1)
+    assert_that([v.version for v in index.plugins[0].versions]).is_equal_to(["1.0.0"])
+    assert_that(index.warnings).is_length(1)
+    assert_that(index.warnings[0]).contains("com.decker.counter").contains("invalid platform data")
