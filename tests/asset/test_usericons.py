@@ -1,10 +1,16 @@
 """User icon ids and the user-icon store."""
 
+import io
+import threading
 from pathlib import Path
 
+import pytest
 from assertpy import assert_that
+from PIL import Image
 
-from decker.asset.usericons import UserIcons, normalize_id
+from decker.asset.iconresize import ImageImportError, ImportOptions
+from decker.asset.usericons import ImportResult, UserIcons, normalize_id
+from decker.plugin.icons import MAX_ICON_BYTES
 
 
 def test_normalize_id_lowercases_and_replaces_runs_of_other_characters() -> None:
@@ -71,7 +77,130 @@ def test_pack_info_counts_icons_and_lists_when_empty(tmp_path: Path) -> None:
     assert_that(info).contains_key("description", "plugin_id", "plugin_name", "plugin_version")
 
 
-def test_default_directory_follows_the_home(tmp_path: Path, monkeypatch) -> None:
+def test_default_directory_follows_the_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("decker.asset.usericons.user_icons", lambda: tmp_path)
     (tmp_path / "a.png").write_bytes(b"x")
     assert_that(UserIcons().list_icons()).is_equal_to(["a.png"])
+
+
+def test_read_icon_refuses_oversized_files(tmp_path: Path) -> None:
+    (tmp_path / "big.png").write_bytes(b"x" * (MAX_ICON_BYTES + 1))
+    assert_that(UserIcons(tmp_path).read_icon("big.png")).is_none()
+
+
+def test_exists_compares_stems_case_insensitively(tmp_path: Path) -> None:
+    (tmp_path / "Cat.png").write_bytes(b"x")
+    assert_that(UserIcons(tmp_path).exists("cat")).is_true()
+
+
+_SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
+_OPTIONS = ImportOptions()
+
+
+def _png(size: tuple[int, int] = (10, 20)) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", size, (255, 0, 0)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_import_png_writes_a_144_png_named_by_id(tmp_path: Path) -> None:
+    result = UserIcons(tmp_path).import_icon("My Cat", _png(), _OPTIONS)
+    assert_that(result).is_equal_to(ImportResult(ok=True, icon_id="my-cat", file="my-cat.png"))
+    with Image.open(tmp_path / "my-cat.png") as image:
+        assert_that(image.size).is_equal_to((144, 144))
+
+
+def test_import_svg_copies_bytes_unchanged(tmp_path: Path) -> None:
+    result = UserIcons(tmp_path).import_icon("logo", _SVG, _OPTIONS)
+    assert_that(result.file).is_equal_to("logo.svg")
+    assert_that((tmp_path / "logo.svg").read_bytes()).is_equal_to(_SVG)
+
+
+def test_import_refuses_an_unsafe_svg(tmp_path: Path) -> None:
+    data = b'<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>'
+    result = UserIcons(tmp_path).import_icon("logo", data, _OPTIONS)
+    assert_that(result.ok).is_false()
+    assert_that(list(tmp_path.iterdir())).is_empty()
+
+
+def test_import_refuses_a_duplicate_id_and_suggests_the_next(tmp_path: Path) -> None:
+    icons = UserIcons(tmp_path)
+    assert_that(icons.import_icon("cat", _png(), _OPTIONS).ok).is_true()
+    result = icons.import_icon("cat", _png(), _OPTIONS)
+    assert_that(result.ok).is_false()
+    assert_that(result.error).is_equal_to("id already exists")
+    assert_that(result.suggestion).is_equal_to("cat-2")
+    assert_that(list(tmp_path.iterdir())).is_length(1)
+
+
+def test_import_refuses_blank_names(tmp_path: Path) -> None:
+    result = UserIcons(tmp_path).import_icon("!!!", _png(), _OPTIONS)
+    assert_that(result.ok).is_false()
+    assert_that(result.error).is_equal_to("invalid name")
+
+
+def test_import_refuses_over_cap_and_leaves_no_files(tmp_path: Path) -> None:
+    result = UserIcons(tmp_path).import_icon("big", b"x" * (MAX_ICON_BYTES + 1), _OPTIONS)
+    assert_that(result.ok).is_false()
+    assert_that(list(tmp_path.iterdir())).is_empty()
+
+
+def test_import_refuses_non_images_and_leaves_no_files(tmp_path: Path) -> None:
+    result = UserIcons(tmp_path).import_icon("junk", b"not an image", _OPTIONS)
+    assert_that(result.ok).is_false()
+    assert_that(result.error).is_not_empty()
+    assert_that(list(tmp_path.iterdir())).is_empty()
+
+
+def test_import_creates_the_folder_when_missing(tmp_path: Path) -> None:
+    folder = tmp_path / "a" / "icons"
+    assert_that(UserIcons(folder).import_icon("cat", _png(), _OPTIONS).ok).is_true()
+    assert_that((folder / "cat.png").is_file()).is_true()
+
+
+def test_concurrent_imports_of_one_id_have_one_winner(tmp_path: Path) -> None:
+    icons = UserIcons(tmp_path)
+    results: list[ImportResult] = []
+    data = _png()
+
+    def run() -> None:
+        results.append(icons.import_icon("cat", data, _OPTIONS))
+
+    threads = [threading.Thread(target=run) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert_that([r for r in results if r.ok]).is_length(1)
+    assert_that([r for r in results if not r.ok]).is_length(7)
+    assert_that(list(tmp_path.iterdir())).is_length(1)
+
+
+def test_import_leaves_no_temp_files_on_a_failed_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(src: object, dst: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("decker.asset.usericons.os.replace", fail)
+    result = UserIcons(tmp_path).import_icon("cat", _png(), _OPTIONS)
+    assert_that(result.ok).is_false()
+    assert_that(list(tmp_path.iterdir())).is_empty()
+
+
+def test_import_result_to_json_has_the_documented_keys() -> None:
+    text = ImportResult(ok=False, error="e", suggestion="s").to_json()
+    assert_that(text).is_equal_to('{"ok": false, "id": "", "file": "", "error": "e", "suggestion": "s"}')
+
+
+def test_preview_returns_svg_unchanged_and_png_for_rasters(tmp_path: Path) -> None:
+    icons = UserIcons(tmp_path)
+    assert_that(icons.preview(_SVG, _OPTIONS)).is_equal_to(_SVG)
+    with Image.open(io.BytesIO(icons.preview(_png(), _OPTIONS))) as image:
+        assert_that(image.size).is_equal_to((144, 144))
+    assert_that(list(tmp_path.iterdir())).is_empty()
+
+
+def test_preview_refuses_bad_data(tmp_path: Path) -> None:
+    with pytest.raises(ImageImportError):
+        UserIcons(tmp_path).preview(b"junk", _OPTIONS)
+    with pytest.raises(ValueError):
+        UserIcons(tmp_path).preview(b"<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>", _OPTIONS)

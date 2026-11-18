@@ -1,9 +1,21 @@
 """The user's own imported icons, stored as plain files in the user icons folder."""
 
+import json
+import os
 import re
+import tempfile
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from decker.asset.iconresize import (
+    ImageImportError,
+    ImportOptions,
+    convert_raster,
+    preview_png,
+)
+from decker.asset.svgcheck import validate_svg
 from decker.common.paths import user_icons
 from decker.plugin.icons import MAX_ICON_BYTES
 
@@ -22,11 +34,33 @@ def normalize_id(name: str) -> str:
     return text[:_MAX_ID_LENGTH].strip("-_")
 
 
+def _is_svg(data: bytes) -> bool:
+    return data.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"<")
+
+
+@dataclass(frozen=True)
+class ImportResult:
+    """Outcome of an icon import."""
+
+    ok: bool
+    icon_id: str = ""
+    file: str = ""
+    error: str = ""
+    suggestion: str = ""
+
+    def to_json(self) -> str:
+        """Serialise for the RPC layer."""
+        return json.dumps(
+            {"ok": self.ok, "id": self.icon_id, "file": self.file, "error": self.error, "suggestion": self.suggestion}
+        )
+
+
 class UserIcons:
-    """Listing and reading of the icons in the user icons folder."""
+    """Listing, reading and importing of the icons in the user icons folder."""
 
     def __init__(self, directory: Path | None = None) -> None:
         self._directory: Path | None = directory
+        self._lock = threading.Lock()
 
     @property
     def directory(self) -> Path:
@@ -67,7 +101,7 @@ class UserIcons:
 
     def exists(self, icon_id: str) -> bool:
         """Whether an icon with this id exists under any supported extension."""
-        return any(Path(name).stem == icon_id for name in self.list_icons())
+        return any(Path(name).stem.lower() == icon_id for name in self.list_icons())
 
     def suggest_id(self, name: str) -> str:
         """The first free id for a name: ``id``, ``id-2``, ``id-3``, ..."""
@@ -77,3 +111,53 @@ class UserIcons:
             candidate = f"{base}-{number}"
             number += 1
         return candidate
+
+    def preview(self, data: bytes, options: ImportOptions) -> bytes:
+        """Return what the icon would look like (SVG unchanged, rasters as a 144x144 PNG); writes nothing."""
+        if len(data) > MAX_ICON_BYTES:
+            raise ImageImportError(f"image is larger than {MAX_ICON_BYTES} bytes")
+        if _is_svg(data):
+            validate_svg(data)
+            return data
+        return preview_png(data, options)
+
+    def import_icon(self, name: str, data: bytes, options: ImportOptions) -> ImportResult:
+        """Validate and store an icon under the id derived from name; never overwrites an existing icon."""
+        icon_id = normalize_id(name)
+        if not icon_id:
+            return ImportResult(ok=False, error="invalid name")
+        try:
+            payload, extension = self._prepare(data, options)
+        except ValueError as exc:
+            return ImportResult(ok=False, icon_id=icon_id, error=str(exc))
+        with self._lock:
+            if self.exists(icon_id):
+                return ImportResult(
+                    ok=False, icon_id=icon_id, error="id already exists", suggestion=self.suggest_id(name)
+                )
+            file_name = f"{icon_id}.{extension}"
+            try:
+                self._write_atomic(file_name, payload)
+            except OSError as exc:
+                return ImportResult(ok=False, icon_id=icon_id, error=f"cannot write icon: {exc}")
+        return ImportResult(ok=True, icon_id=icon_id, file=file_name)
+
+    @staticmethod
+    def _prepare(data: bytes, options: ImportOptions) -> tuple[bytes, str]:
+        if len(data) > MAX_ICON_BYTES:
+            raise ImageImportError(f"image is larger than {MAX_ICON_BYTES} bytes")
+        if _is_svg(data):
+            validate_svg(data)
+            return data, "svg"
+        return convert_raster(data, options)
+
+    def _write_atomic(self, file_name: str, payload: bytes) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        handle, temp_name = tempfile.mkstemp(dir=self.directory, prefix=".import-", suffix=".tmp")
+        try:
+            with os.fdopen(handle, "wb") as stream:
+                stream.write(payload)
+            os.replace(temp_name, self.directory / file_name)
+        except BaseException:
+            Path(temp_name).unlink(missing_ok=True)
+            raise
