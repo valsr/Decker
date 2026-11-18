@@ -4,11 +4,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 BUDGET: float = 0.75
-STEP_DOWN_BUSY: float = 0.75
+STEP_DOWN_BUSY: float = BUDGET  # the default budget's step-down threshold
 LAG_LIMIT_S: float = 0.250
-STEP_UP_BUSY: float = 0.50
 STEP_UP_HOLD_S: float = 30.0
-STEP_UP_PROJECTED: float = 0.65
+# Thresholds follow the budget: step down above it, step up below 2/3 of it when the step up projects to at most
+# 13/15 of it (written as budget * 2 / 3 and budget * 13 / 15, exact at the default 0.75: 0.50 and 0.65).
 
 
 @dataclass(frozen=True)
@@ -64,6 +64,11 @@ class LevelController:
         self._last_step_down: float | None = None
 
     @property
+    def step_down_busy(self) -> float:
+        """Busy fraction over 5 s above which the controller steps down (the budget itself)."""
+        return self._budget
+
+    @property
     def level(self) -> Level:
         """The current level."""
         return self._ladder[self._index]
@@ -80,7 +85,7 @@ class LevelController:
     def tick(self, sample: LoadSample, demand: Demand, seconds_per_report: float) -> Level:
         """Apply the step rules to a load sample; moves at most one rung."""
         last = len(self._ladder) - 1
-        if sample.busy_5s > STEP_DOWN_BUSY or sample.lag_s > LAG_LIMIT_S:
+        if sample.busy_5s > self._budget or sample.lag_s > LAG_LIMIT_S:
             if self._index < last:
                 self._index += 1
                 self._last_step_down = sample.now
@@ -89,7 +94,7 @@ class LevelController:
         return self.level
 
     def _may_step_up(self, sample: LoadSample, demand: Demand) -> bool:
-        if sample.busy_20s >= STEP_UP_BUSY:
+        if sample.busy_20s >= self._budget * 2 / 3:
             return False
         if self._last_step_down is not None and sample.now - self._last_step_down < STEP_UP_HOLD_S:
             return False
@@ -97,4 +102,4 @@ class LevelController:
         if current <= 0:
             return False
         projected = sample.busy_20s * demand(self._ladder[self._index - 1]) / current
-        return projected <= STEP_UP_PROJECTED
+        return projected <= self._budget * 13 / 15

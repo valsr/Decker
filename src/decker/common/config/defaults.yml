@@ -35,7 +35,9 @@ icons:
 animation:
   # Animate keys whose icon is an animated GIF; false shows each GIF's first frame only.
   enabled: true
-  # Share of each deck's USB write time animations may use (percent); quality and frame rate drop to stay within it.
+  # Share of each deck's USB write time (busy percent) animations may use, 10 to 90. Image quality and frame rate
+  # are lowered when the measured load stays above it and raised again below about two thirds of it.
   budget_percent: 75
-  # Memory for encoded animation frames, shared by all decks (MiB).
+  # Memory for encoded animation frames, shared by all decks (MiB, at least 1). A GIF whose frames do not fit
+  # stays a still image.
   cache_mb: 64

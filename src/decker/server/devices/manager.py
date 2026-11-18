@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import threading
 import zlib
 from collections.abc import Callable
@@ -29,6 +30,19 @@ _KeyEventCallback = Callable[[str, int, bool], None]  # (device_id, key_index, p
 ANIMATION_ENABLED_DEFAULT: bool = True
 ANIMATION_BUDGET_PERCENT_DEFAULT: float = 75.0
 ANIMATION_CACHE_MB_DEFAULT: int = 64
+ANIMATION_BUDGET_PERCENT_MIN: float = 10.0  # below this even the cheapest rung would never fit
+ANIMATION_BUDGET_PERCENT_MAX: float = 90.0  # above this the link has no room left for plugin writes and lag
+ANIMATION_CACHE_MB_MIN: int = 1
+
+
+def _clamped(key: str, value: float, low: float, high: float = math.inf) -> float:
+    if low <= value <= high:
+        return value
+    used = min(max(value, low), high)
+    logging.warning(
+        "DeviceManager: %s %s is out of range (minimum %s, maximum %s); using %s", key, value, low, high, used
+    )
+    return used
 
 
 def device_id_for_serial(serial: str) -> str:
@@ -75,10 +89,19 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
         self._page_resolver = context.page_controller.active_page_id
         self._animation_enabled = bool(config.get_as_or_default("animation.enabled", bool, ANIMATION_ENABLED_DEFAULT))
         budget_percent = config.get_as_or_default("animation.budget_percent", float, ANIMATION_BUDGET_PERCENT_DEFAULT)
-        self._animation_budget = float(budget_percent) / 100
+        self._animation_budget = (
+            _clamped(
+                "animation.budget_percent",
+                float(budget_percent),
+                ANIMATION_BUDGET_PERCENT_MIN,
+                ANIMATION_BUDGET_PERCENT_MAX,
+            )
+            / 100
+        )
         if self._factory is None:
             cache_mb = config.get_as_or_default("animation.cache_mb", int, ANIMATION_CACHE_MB_DEFAULT)
-            self._factory = AnimationFactory(cache_bytes=int(cache_mb) * 1024 * 1024)
+            cache_mb = int(_clamped("animation.cache_mb", int(cache_mb), ANIMATION_CACHE_MB_MIN))
+            self._factory = AnimationFactory(cache_bytes=cache_mb * 1024 * 1024)
 
     @property
     def animation_factory(self) -> AnimationFactory | None:
