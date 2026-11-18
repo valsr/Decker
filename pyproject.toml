@@ -9,7 +9,7 @@ packages = [{ include = "decker", from = "src" }, { include = "decker_plugin_sdk
 
 [tool.poetry.dependencies]
 python = "^3.14"
-streamdeck = "^0.9.8"
+streamdeck = "^0.10.0"
 termcolor = "^2.5.0"
 flatten-dict = "^0.4.2"
 xxhash = "^3.5.0"
