@@ -503,3 +503,29 @@ def test_a_gif_with_a_comment_and_a_loop_count_still_animates() -> None:
 
     assert_that(is_animated_gif(data)).is_true()
     assert_that(decode_gif(data)).is_length(3)
+
+
+def _three_frame_300x200_gif() -> bytes:
+    frames = [Image.new("RGB", (300, 200), (index * 80, 10, 10)) for index in range(3)]
+    return _make_gif(frames, duration=[50, 120, 80])
+
+
+def test_decode_gif_applies_the_transform_to_each_full_size_frame() -> None:
+    seen: list[tuple[int, int]] = []
+
+    def transform(image: Image.Image) -> Image.Image:
+        seen.append(image.size)
+        return image.resize((10, 10))
+
+    frames = decode_gif(_three_frame_300x200_gif(), transform=transform)
+
+    assert_that(frames).is_length(3)
+    assert_that([frame.image.size for frame in frames]).is_equal_to([(10, 10)] * 3)
+    assert_that([frame.delay_ms for frame in frames]).is_equal_to([50, 120, 80])
+    assert_that(seen).is_equal_to([(300, 200)] * 3)
+
+
+def test_decode_gif_without_transform_still_shrinks_to_144() -> None:
+    frames = decode_gif(_three_frame_300x200_gif())
+
+    assert_that([max(frame.image.size) for frame in frames]).is_equal_to([144] * 3)

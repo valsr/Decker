@@ -3,7 +3,7 @@
 import io
 import re
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from PIL import Image, ImageSequence
 
@@ -228,8 +228,12 @@ def _normalize_delay(delay_ms: object) -> int:
     return delay_ms
 
 
-def decode_gif(data: bytes) -> list[GifFrame]:
-    """Decode a GIF into composited RGBA frames shrunk to MAX_FRAME_SIZE; raise GifError if invalid or over budget."""
+def decode_gif(data: bytes, transform: Callable[[Image.Image], Image.Image] | None = None) -> list[GifFrame]:
+    """Decode a GIF into composited RGBA frames, each passed through transform (default: shrink to MAX_FRAME_SIZE).
+
+    Raise GifError if the GIF is invalid or over budget; the budget is checked on the source canvas.
+    """
+    apply = transform or _shrink
     try:
         if len(data) > MAX_ICON_BYTES:
             raise GifError(f"GIF is larger than {MAX_ICON_BYTES} bytes")
@@ -255,7 +259,7 @@ def decode_gif(data: bytes) -> list[GifFrame]:
                     raise GifError(
                         f"GIF has too many pixels ({len(frames) + 1} frames up to {frame.width}x{frame.height})"
                     )
-                frames.append(GifFrame(_shrink(frame), _normalize_delay(frame.info.get("duration"))))
+                frames.append(GifFrame(apply(frame.convert("RGBA")), _normalize_delay(frame.info.get("duration"))))
             return frames
     except GifError:
         raise
