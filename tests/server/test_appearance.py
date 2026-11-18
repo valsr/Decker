@@ -1,3 +1,4 @@
+import hashlib
 import io
 from typing import Any
 
@@ -8,7 +9,11 @@ from PIL import Image
 
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
 from decker.plugin.manifest import ManifestValidationError, PluginManifest
-from decker.server.appearance import compose_key_image, resolve_appearance
+from decker.server.appearance import (
+    compose_key_frames,
+    compose_key_image,
+    resolve_appearance,
+)
 
 
 def _png(color: str, size: int = 72) -> bytes:
@@ -431,3 +436,34 @@ def test_appearance_title_opts_in_to_templates() -> None:
 
     title = next(e for e in APPEARANCE_SCHEMA if e.get("key") == "title")
     assert_that(title["template"]).is_true()
+
+
+def test_first_composed_frame_equals_static_composition() -> None:
+    appearance = _appearance(background="#112233", title="T")
+    static = _open(compose_key_image(appearance, _png("#ff0000", 144), ""))
+    frame = Image.new("RGBA", (144, 144), "#ff0000")
+    composed = compose_key_frames(appearance, [frame], "")[0]
+    assert_that(composed.mode).is_equal_to("RGB")
+    assert_that(list(composed.getdata())).is_equal_to(list(static.getdata()))
+
+
+def test_title_and_background_are_drawn_on_every_frame() -> None:
+    appearance = _appearance(background="#0000ff", title="X")
+    frames = [Image.new("RGBA", (144, 144), (0, 0, 0, 0)) for _ in range(2)]
+    first, second = compose_key_frames(appearance, frames, "")
+    plain = list(Image.new("RGB", (144, 144), (0, 0, 255)).getdata())
+    assert_that(first.getpixel((0, 0))).is_equal_to((0, 0, 255))
+    assert_that(list(first.getdata())).is_equal_to(list(second.getdata()))
+    assert_that(list(first.getdata())).is_not_equal_to(plain)
+
+
+def test_existing_compose_key_image_output_is_unchanged() -> None:
+    appearance = _appearance(background="#112233", title="X")
+    with_image = compose_key_image(appearance, _png("#00ff00"), "Plugin")
+    without_image = compose_key_image(appearance, None, "Plugin")
+    assert_that(hashlib.sha256(with_image).hexdigest()).is_equal_to(
+        "33665d76e23f6eba2f01298be83d8475e089d4957213c74f3408b06f0911d11e"
+    )
+    assert_that(hashlib.sha256(without_image).hexdigest()).is_equal_to(
+        "da5662609ffa77924384bd1bc5bc01cc6b27779ed2ec9fba941d6b4910368826"
+    )
