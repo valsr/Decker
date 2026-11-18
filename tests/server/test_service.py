@@ -11,6 +11,7 @@ from PIL import Image
 
 from decker.animation.factory import AnimationFactory
 from decker.animation.model import AnimationSpec
+from decker.common.platforms import HostPlatform, PlatformSpec
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.repository_index import IndexPlugin, IndexVersion
 from decker.plugin.target import ActionTarget
@@ -594,8 +595,9 @@ class TestIconPackRpcs:
         assert_that(svc.iconpack_icon("p", "a.png")).is_equal_to("")
 
 
-def _version(version: str, decker: str | None = None) -> IndexVersion:
+def _version(version: str, decker: str | None = None, platforms: PlatformSpec | None = None) -> IndexVersion:
     return IndexVersion(
+        platforms=platforms,
         version=version,
         decker=decker,
         url=f"https://example.com/{version}.deckerplugin",
@@ -1085,3 +1087,69 @@ class TestIconImportRpcs:
         assert_that(json.loads(svc.icon_import("a", "a.png", b"", ""))["ok"]).is_false()
         assert_that(svc.icon_import_suggest("a")).is_equal_to("a")
         assert_that(svc.icon_import_preview("a.png", b"", "")).is_equal_to("")
+
+
+_LINUX_KDE = HostPlatform("linux", "kde", "wayland")
+
+
+class TestPlatformData:
+    def test_platform_info_reports_the_detected_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("decker.server.service.detect_platform", lambda: _LINUX_KDE)
+        info = json.loads(DeckerService().platform_info())
+        assert_that(info).is_equal_to(
+            {"os": "linux", "desktop": "kde", "session": "wayland", "label": "Linux (KDE, Wayland)"}
+        )
+
+    def test_platform_info_is_not_gated_for_remote_clients(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("decker.server.service.detect_platform", lambda: _LINUX_KDE)
+        with patch.object(DeckerService, "_install_allowed", return_value=False):
+            info = json.loads(DeckerService().platform_info())
+        assert_that(info["os"]).is_equal_to("linux")
+
+    def test_catalog_item_marks_unsupported_plugins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("decker.server.service.detect_platform", lambda: _LINUX_KDE)
+        item = _catalog(_entry(_version("1.0", platforms=PlatformSpec(os=("windows",)))))
+        assert_that(item["supported"]).is_false()
+        assert_that(item["platforms"]).is_equal_to(["windows"])
+        assert_that(item["versions"][0]["platforms"]).is_equal_to(["windows"])
+
+    def test_catalog_supported_follows_the_latest_compatible_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("decker.server.service.detect_platform", lambda: _LINUX_KDE)
+        item = _catalog(
+            _entry(
+                _version("1.0", platforms=PlatformSpec(os=("linux",))),
+                _version("2.0", decker=">=999", platforms=PlatformSpec(os=("windows",))),
+            )
+        )
+        assert_that(item["supported"]).is_true()
+        assert_that(item["platforms"]).is_equal_to(["linux"])
+
+    def test_catalog_item_without_platform_data_is_supported_with_none_fields(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("decker.server.service.detect_platform", lambda: _LINUX_KDE)
+        item = _catalog(_entry(_version("1.0")))
+        assert_that(item["supported"]).is_true()
+        assert_that(item["platforms"]).is_none()
+        assert_that(item["linux"]).is_none()
+
+    def test_installed_plugin_info_includes_platform_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("decker.server.service.detect_platform", lambda: _LINUX_KDE)
+        plugin = MagicMock()
+        plugin.manifest.platforms = PlatformSpec(os=("linux",), desktops=("gnome",))
+        plugin.manifest.icon = None
+        plugin.manifest.actions = ()
+        plugin.manifest.icon_packs = ()
+        plugin.manifest.global_settings = ()
+        info = DeckerService._plugin_info(plugin, {})  # pylint: disable=protected-access
+        assert_that(info["platforms"]).is_equal_to(["linux"])
+        assert_that(info["linux"]).is_equal_to({"desktops": ["gnome"]})
+        assert_that(info["supported"]).is_false()
+
+
+def _catalog(entry: CatalogEntry) -> dict:
+    from decker.server.service import (
+        _catalog_item,  # pylint: disable=import-outside-toplevel,protected-access
+    )
+
+    return _catalog_item(entry, None, _LINUX_KDE)

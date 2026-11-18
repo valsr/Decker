@@ -29,6 +29,12 @@ from decker.common.model import (
     PageInfo,
     ProfileInfo,
 )
+from decker.common.platforms import (
+    HostPlatform,
+    PlatformSpec,
+    detect_platform,
+    platform_supports,
+)
 from decker.common.utils import api_response
 from decker.common.version import is_compatible
 from decker.plugin.icons import read_icon
@@ -76,9 +82,16 @@ class DeckerStatusEnum(StrEnum):
     UNHEALTHY = "unhealthy"
 
 
-def _catalog_item(entry: CatalogEntry, installed_version: str | None) -> dict[str, Any]:
+def _platform_fields(spec: PlatformSpec | None) -> dict[str, Any]:
+    payload = spec.to_payload() if spec is not None else {}
+    return {"platforms": payload.get("platforms"), "linux": payload.get("linux")}
+
+
+def _catalog_item(entry: CatalogEntry, installed_version: str | None, host: HostPlatform) -> dict[str, Any]:
     plugin = entry.plugin
     latest = _pick_version(plugin.versions, "")
+    shown = latest if latest is not None else (plugin.versions[0] if plugin.versions else None)
+    shown_spec = shown.platforms if shown is not None else None
     return {
         "id": plugin.id,
         "name": plugin.name,
@@ -90,6 +103,8 @@ def _catalog_item(entry: CatalogEntry, installed_version: str | None) -> dict[st
         "shadowed_by": entry.shadowed_by,
         "installed_version": installed_version,
         "latest_compatible": latest.version if latest is not None else None,
+        **_platform_fields(shown_spec),
+        "supported": platform_supports(shown_spec, host),
         "versions": [
             {
                 "version": item.version,
@@ -98,6 +113,7 @@ def _catalog_item(entry: CatalogEntry, installed_version: str | None) -> dict[st
                 "released": item.released,
                 "compatible": is_compatible(item.decker),
                 "contributes": item.contributes,
+                **_platform_fields(item.platforms),
             }
             for item in plugin.versions
         ],
@@ -171,6 +187,12 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         """Respond to a health-check ping from the monitor."""
         self._last_heartbeat = time.time()
         return self.status()  # pyright: ignore[reportReturnType] - @api_response converts the str
+
+    @exposed
+    def platform_info(self) -> str:
+        """Return the host platform (os, desktop, session, label) as a JSON string."""
+        host = detect_platform()
+        return json.dumps({**host.to_payload(), "label": host.label()})
 
     @exposed
     @api_response
@@ -349,8 +371,9 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             return []
         installed = {item.manifest.id: item.manifest.version for item in self._context.plugin_manager.plugins()}
         manager = self._context.plugin_manager
+        host = detect_platform()
         return [
-            _catalog_item(entry, installed.get(entry.plugin.id))
+            _catalog_item(entry, installed.get(entry.plugin.id), host)
             for entry in store.catalog()
             if not manager.is_builtin(entry.plugin.id)
         ]
@@ -899,6 +922,8 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             "global_settings_schema": schema_to_json(manifest.global_settings),
             "global_settings": global_settings,
             "builtin": builtin,
+            **_platform_fields(manifest.platforms),
+            "supported": platform_supports(manifest.platforms, detect_platform()),
         }
 
     def _is_active_page(self, device_id: str, page_id: str) -> bool:
