@@ -70,7 +70,33 @@ JSON with snake_case keys. Unknown keys are ignored. `format` must be the intege
 | `runtime` | for `actions` | See below. |
 | `global_settings` | no | [Settings schema](settings-schema.md) for plugin-wide settings, shown in Settings, Plugins. |
 | `permissions` | no | Reserved, ignored in v1. |
+| `platforms` | no | Non-empty list of OS names (`linux`, `windows`, `macos`) the plugin supports. Omitted means all platforms. See [Platforms](#platforms). |
+| `linux` | no | Object narrowing Linux support: `desktops` (`kde`, `gnome`, `other`) and `sessions` (`wayland`, `x11`). Only allowed when `platforms` is absent or includes `linux`. |
 | `contributes` | yes | Object keyed by contribution kind; must be non-empty. An unknown kind is refused with "requires a newer version of Decker". |
+
+### Platforms
+
+`platforms` and `linux` are optional and additive; `format` stays `1`. Plugins that declare neither support every
+platform, and older Decker versions ignore both fields.
+
+```json
+{ "platforms": ["linux", "windows"], "linux": { "desktops": ["kde", "gnome"], "sessions": ["wayland"] } }
+```
+
+- `platforms` must be a non-empty list of strings; names are trimmed and lowercased. Unknown names are kept but never
+  match, so a newer plugin does not break an older Decker. An empty list or non-string entries are a validation error.
+- `linux.desktops` and `linux.sessions` are each a non-empty list; omitted means any. `linux` with a `platforms` list
+  that lacks `linux` is a validation error.
+- Matching: the server's OS must be in `platforms`. On a Linux server, its desktop must be in `linux.desktops` and its
+  session in `linux.sessions`. The server detects the desktop from `XDG_CURRENT_DESKTOP` (contains `KDE` is `kde`,
+  `GNOME` is `gnome`, anything else is `other`) and the session from `XDG_SESSION_TYPE`. When either is unset (a
+  headless server) the host value is `unknown`, which satisfies any constraint on that axis.
+- A mismatch never blocks anything: the plugin still loads (the server logs a warning), and the client shows a "Not
+  supported on <platform>" badge. See [repositories](repositories.md) for the browser filter.
+- `platform_info` (RPC) returns the server's `{os, desktop, session, label}` as JSON, for example label
+  `Linux (KDE, Wayland)`; unknown parts are omitted from the label. Installed plugin info carries `platforms`, `linux`
+  and a server-computed `supported`.
+- Declare the platforms you have actually tested, and keep the plugins repository's support table in sync.
 
 ### `runtime`
 

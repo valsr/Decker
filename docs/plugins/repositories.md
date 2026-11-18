@@ -113,6 +113,16 @@ client.
 | `sha256` | Required, 64 hex characters |
 | `released` | Optional, free text timestamp |
 | `contributes` | Optional map of kind (`actions`, `icon_packs`) to a list of names, shown in the details pane |
+| `platforms`, `linux` | Optional; same fields and validation as the [manifest](package-and-manifest.md#platforms). Absent means all platforms. An invalid value skips that version entry with a warning |
+
+### Platform filter
+
+`repository_catalog` entries carry `platforms` and `linux` (from the latest compatible version, or the first listed
+one; `null` when absent), the same two keys on each item of `versions`, and a server-computed `supported` boolean
+for the server's platform (`platform_info`). The plugin browser shows a checkbox "Only show plugins that support this
+system (<platform label>)", on by default; the choice is remembered in the client's UI state (`plugins.platform_filter`).
+With it off, unsupported plugins show a "Not supported on <platform>" badge, and installing one asks for confirmation
+and then proceeds (warn, never block). Installed plugins that do not match show the same badge.
 
 ### Validation and URLs
 
@@ -168,7 +178,8 @@ days; `manual` never refreshes on its own.
 | `repositories_list` | Configured repositories with name, plugin count, last checked and last error | no |
 | `repository_add(url)` / `repository_remove(url)` | Add (fetches and validates) or remove | yes |
 | `repositories_check` | Start a background refresh of everything. Returns `{"started": true}` or `{"started": false, "reason": ...}` when a check is already running | no |
-| `repository_catalog` | Every repository plugin with versions and installed state | no |
+| `repository_catalog` | Every repository plugin with versions, installed state and platform support | no |
+| `platform_info` | The server's platform as JSON `{os, desktop, session, label}` | no |
 | `repository_icon(plugin_id)` | Icon as base64 | no |
 | `plugin_install_from_repository(plugin_id, version)` | Install or update; empty `version` means the latest compatible. Returns a job id or an `error:` message | yes |
 | `plugin_updates` | Current update report | no |
