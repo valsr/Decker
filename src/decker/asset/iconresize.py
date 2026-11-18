@@ -12,6 +12,7 @@ from decker.plugin.icons import MAX_ICON_BYTES
 
 ICON_SIZE = 144
 _FITS = ("center", "stretch")
+_FORMATS = ("PNG", "JPEG", "GIF")
 _RESAMPLING = {
     "nearest": Image.Resampling.NEAREST,
     "bilinear": Image.Resampling.BILINEAR,
@@ -73,7 +74,7 @@ def _check_size(data: bytes) -> None:
 
 
 def _convert_gif(data: bytes, options: ImportOptions) -> tuple[bytes, str]:
-    with Image.open(io.BytesIO(data)) as source:
+    with Image.open(io.BytesIO(data), formats=_FORMATS) as source:
         loop = source.info.get("loop", 0)
     frames = decode_gif(data, transform=lambda frame: resize_image(frame, options))
     if len(frames) < 2:
@@ -92,7 +93,7 @@ def _convert_gif(data: bytes, options: ImportOptions) -> tuple[bytes, str]:
 
 
 def _open_still(data: bytes) -> Image.Image:
-    with Image.open(io.BytesIO(data)) as image:
+    with Image.open(io.BytesIO(data), formats=_FORMATS) as image:
         if image.width * image.height > MAX_RASTER_PIXELS:
             raise ImageImportError(f"image is too large ({image.width}x{image.height})")
         image.load()

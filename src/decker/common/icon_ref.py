@@ -11,7 +11,7 @@ DEFAULT_ICON_COLOR = "#ffffff"
 _DEFAULTS: Mapping[str, Any] = {"ref": "", "color": DEFAULT_ICON_COLOR}
 
 
-_DISPLAY_SUFFIXES = (".svg", ".png", ".jpg", ".jpeg")
+_DISPLAY_SUFFIXES = (".svg", ".png", ".jpg", ".jpeg", ".gif")
 
 
 def icon_display_name(path: str) -> str:

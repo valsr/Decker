@@ -165,3 +165,25 @@ def test_preview_png_returns_a_144_png() -> None:
     with Image.open(io.BytesIO(data)) as out:
         assert_that(out.format).is_equal_to("PNG")
         assert_that(out.size).is_equal_to((144, 144))
+
+
+_EPS = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 10 10\n0 0 10 10 rectfill\nshowpage\n"
+
+
+def test_eps_is_refused() -> None:
+    with pytest.raises(ImageImportError):
+        convert_raster(_EPS, ImportOptions())
+    with pytest.raises(ImageImportError):
+        preview_png(_EPS, ImportOptions())
+
+
+def test_bmp_is_refused() -> None:
+    with pytest.raises(ImageImportError):
+        convert_raster(_png(_solid((10, 10)), "BMP"), ImportOptions())
+
+
+@pytest.mark.parametrize("fmt", ["PNG", "JPEG"])
+def test_allowed_still_formats_still_import(fmt: str) -> None:
+    data, ext = convert_raster(_png(_solid((10, 10)), fmt), ImportOptions())
+    assert_that(ext).is_equal_to("png")
+    assert_that(data).is_not_empty()

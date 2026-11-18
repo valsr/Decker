@@ -97,6 +97,7 @@ def test_normalize_returns_fresh_dict() -> None:
         ("x.tar.svg", "x.tar"),
         ("photo.JPEG", "photo"),
         ("pic.jpg", "pic"),
+        ("cat.gif", "cat"),
         ("noext", "noext"),
         (".svg", ".svg"),
         ("", ""),
