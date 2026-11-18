@@ -347,7 +347,7 @@ class PluginInstaller:
             if ctx.page_controller.active_page_id(device_id) == page_id:
                 ctx.device_manager.clear_key_state(device_id, key_index)
             else:
-                ctx.device_state_store.delete_key_state(device_id, page_id, key_index)
+                ctx.device_manager.delete_stored_key_state(device_id, page_id, key_index)
             devices.add(device_id)
         return devices
 

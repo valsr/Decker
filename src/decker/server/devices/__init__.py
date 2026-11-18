@@ -249,6 +249,12 @@ class Device:  # pylint: disable=too-many-instance-attributes
             if self._writer is None:
                 self._adaptive = AdaptiveConfig(controller, LoadMonitor(), factory, key_format)
 
+    @property
+    def animation_supported(self) -> bool:
+        """Whether this device can play animations (animation enabled and the device open)."""
+        with self._writer_lock:
+            return self._adaptive is not None and not self._closed
+
     def play_animation(self, key_index: int, spec: AnimationSpec) -> None:
         """Animate the key with spec once its frames are built; the poster already on the key stays until then."""
         writer = self._key_writer()

@@ -503,7 +503,7 @@ class TestKeysOnInactivePage:
 
         manager.deactivate_action.assert_not_called()
         ctx = service._context  # pylint: disable=protected-access
-        ctx.device_state_store.delete_key_state.assert_called_once_with("dev1", page2, 0)
+        ctx.device_manager.delete_stored_key_state.assert_called_once_with("dev1", page2, 0)
         ctx.device_manager.clear_key_state.assert_not_called()
 
     def test_update_settings_on_inactive_page_does_not_notify_plugin(self, service, manager, store, page2):
@@ -847,15 +847,15 @@ class TestKeyMoveAndCopy:
         other = service._context.page_store.add_page("dev1", "Other")  # pylint: disable=protected-access
         service.key_assign("dev1", other.page_id, 0, "com.p", "com.p.a", "c0", "{}")
         self._reset(manager, service)
-        dss = service._context.device_state_store  # pylint: disable=protected-access
+        dm = service._context.device_manager  # pylint: disable=protected-access
 
         assert_that(service.key_move("dev1", other.page_id, 0, 4)).is_true()
 
         manager.deactivate_action.assert_not_called()
         manager.activate_action.assert_not_called()
         assert_that(store.get("dev1", other.page_id, 4).target.context_id).is_equal_to("c0")
-        dss.delete_key_state.assert_any_call("dev1", other.page_id, 0)
-        dss.delete_key_state.assert_any_call("dev1", other.page_id, 4)
+        dm.delete_stored_key_state.assert_any_call("dev1", other.page_id, 0)
+        dm.delete_stored_key_state.assert_any_call("dev1", other.page_id, 4)
 
     def test_copy_on_the_active_page_creates_a_new_instance(self, service, manager, store):
         self._seed(service, store)

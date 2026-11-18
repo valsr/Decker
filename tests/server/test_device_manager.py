@@ -626,6 +626,17 @@ class TestDeviceManagerAnimations:
         assert_that(len(log.for_key(2))).is_equal_to(key2)
         assert_that(len(log.for_key(5))).is_greater_than(key5)
 
+    def test_delete_stored_key_state_drops_the_animation_of_a_page_that_is_not_shown(self, opened, store):
+        dm, device_id, log = opened
+        self._animate(dm, device_id, 2, log)
+        dm.show_page(device_id, "p2")
+
+        dm.delete_stored_key_state(device_id, "p1", 2)
+        store.save_key_image(device_id, "p1", 2, _png("red"))  # a new poster appears under the same key
+        dm.show_page(device_id, "p1")
+
+        assert_that(dm.playing_animation_id(device_id, 2)).is_none()
+
     def test_animation_disabled_in_config_keeps_the_static_poster_only(self, store, monkeypatch):
         real = config.get_as_or_default
         monkeypatch.setattr(
@@ -636,12 +647,17 @@ class TestDeviceManagerAnimations:
         dm, device_id = self._open(store, log)
         try:
             dm.set_image_bytes(device_id, 2, _png("red"))
-            dm.set_animation(device_id, 2, make_spec())
+            accepted = dm.set_animation(device_id, 2, make_spec())
             time.sleep(0.4)
+            state = dm.get_device_state(device_id)
+            assert state is not None
+            recorded = state.get_key_animation(2)
         finally:
             dm.destroy()
 
         assert_that(len(log.for_key(2))).is_equal_to(1)
+        assert_that(accepted).is_false()
+        assert_that(recorded).is_none()
 
     def test_set_animation_for_an_unavailable_device_is_a_no_op(self):
         dm = _manager()

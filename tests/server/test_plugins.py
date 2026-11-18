@@ -18,6 +18,7 @@ import pytest
 from assertpy import assert_that
 from PIL import Image
 
+from decker.common import config
 from decker.common.model import DeviceHardwareInfo, KeyInfo, PageInfo, ProfileInfo
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.gestures import Gesture
@@ -1796,6 +1797,23 @@ def deck_env_fixture(tmp_path):
             environment.manager.destroy()
 
 
+@pytest.fixture(name="disabled_deck_env")
+def disabled_deck_env_fixture(tmp_path, monkeypatch):
+    """Like deck_env, with animation.enabled false."""
+    real = config.get_as_or_default
+    monkeypatch.setattr(
+        "decker.server.devices.manager.config.get_as_or_default",
+        lambda path, kind, default: False if path == "animation.enabled" else real(path, kind, default),
+    )
+    with opened_deck_manager(tmp_path / "state") as (dm, device_id, log):
+        environment = Env(tmp_path, device_manager=dm)
+        try:
+            _install_gif_pack(environment, tmp_path / "gifs")
+            yield environment, device_id, log
+        finally:
+            environment.manager.destroy()
+
+
 def _static_on(device_id: str, key: int) -> ActionTarget:
     return ActionTarget("com.t.static", _STATIC_ACTION, f"ctx-static-{key}", device_id, key)
 
@@ -1994,6 +2012,36 @@ class TestAnimatedKeyFaces:
 
         assert_that(env.dm.playing_animation_id(device_id, 2)).is_equal_to(_animation(env, device_id, 2).animation_id)
         assert_that(_frames_written(log, 2)).is_true()
+
+    def test_a_key_cleared_while_its_page_is_hidden_does_not_replay_a_ghost_animation(self, deck_env):
+        env, device_id, log = deck_env
+        target = _static_on(device_id, 2)
+        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        assert_that(_frames_written(log, 2)).is_true()
+        page_id = env.dm.get_device_state(device_id).page_id
+        env.manager.deactivate_action(target)
+        env.dm.show_page(device_id, "p2")
+        # What key_unassign does for a page that is not shown: delete the stored state only.
+        env.dm._state_store.delete_key_state(device_id, page_id, 2)  # pylint: disable=protected-access
+
+        env.dm.show_page(device_id, page_id)
+
+        assert_that(env.dm.playing_animation_id(device_id, 2)).is_none()
+        entries = {e["key_index"]: e for e in env.manager.get_key_display_states(device_id)}
+        assert_that(entries).does_not_contain_key(2)
+
+    def test_animation_disabled_advertises_no_animation_and_registers_nothing(self, disabled_deck_env):
+        env, device_id, log = disabled_deck_env
+        target = _static_on(device_id, 2)
+
+        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        time.sleep(0.3)
+
+        assert_that(len(log.for_key(2))).is_equal_to(1)  # the poster only
+        assert_that(_animation(env, device_id, 2)).is_none()
+        assert_that(_last_event(env, 2)["animation_id"]).is_none()
+        assert_that(env.dm.animation_factory._specs).is_empty()  # pylint: disable=protected-access
+        assert_that(env.manager.get_key_display_states(device_id)).is_empty()
 
     def test_key_display_states_carry_animation_id(self, deck_env):
         env, device_id, _log = deck_env

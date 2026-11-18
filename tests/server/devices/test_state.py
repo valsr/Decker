@@ -245,10 +245,12 @@ class TestDeviceStateAnimations:
             state = _make_state(store)
             on_p1 = AnimationSpec(b"gif1", {}, "", 1.0)
             on_p2 = AnimationSpec(b"gif2", {}, "", 1.0)
+            state.update_key_image(1, b"poster1")
             state.set_key_animation(1, on_p1)
 
             state.switch_page("p2")
             assert_that(state.get_all_animations()).is_empty()
+            state.update_key_image(3, b"poster2")
             state.set_key_animation(3, on_p2)
             state.switch_page("p1")
 
@@ -262,6 +264,7 @@ class TestDeviceStateAnimations:
 
     def test_setting_none_forgets_the_animation(self):
         state = _make_state()
+        state.update_key_image(1, b"poster")
         state.set_key_animation(1, AnimationSpec(b"gif", {}, "", 1.0))
 
         state.set_key_animation(1, None)
@@ -270,6 +273,7 @@ class TestDeviceStateAnimations:
 
     def test_clear_key_drops_the_animation(self):
         state = _make_state()
+        state.update_key_image(1, b"poster")
         state.set_key_animation(1, AnimationSpec(b"gif", {}, "", 1.0))
 
         state.clear_key(1)
@@ -278,8 +282,28 @@ class TestDeviceStateAnimations:
 
     def test_get_all_animations_is_a_copy(self):
         state = _make_state()
+        state.update_key_image(1, b"poster")
         state.set_key_animation(1, AnimationSpec(b"gif", {}, "", 1.0))
 
         state.get_all_animations().clear()
 
         assert_that(state.get_all_animations()).is_length(1)
+
+    def test_a_key_without_an_image_reports_no_animation(self):
+        state = _make_state()
+        state.set_key_animation(1, AnimationSpec(b"gif", {}, "", 1.0))
+
+        assert_that(state.get_key_animation(1)).is_none()
+        assert_that(state.get_all_animations()).is_empty()
+
+    def test_forget_animation_drops_the_spec_of_another_page(self):
+        state = _make_state()
+        spec = AnimationSpec(b"gif", {}, "", 1.0)
+        state.update_key_image(1, b"poster")
+        state.set_key_animation(1, spec)
+
+        state.forget_animation("other", 1)
+        assert_that(state.get_key_animation(1)).is_same_as(spec)
+        state.forget_animation(state.page_id, 1)
+
+        assert_that(state.get_key_animation(1)).is_none()
