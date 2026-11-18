@@ -88,6 +88,44 @@ def test_same_gif_on_many_keys_encodes_once(factory: AnimationFactory, monkeypat
     assert_that({id(animation) for animation in animations}).is_length(1)
 
 
+def test_animation_larger_than_the_cache_budget_fails_once_and_is_never_rebuilt(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    calls: list[int] = []
+    real_encode = factory_module.encode_native
+
+    def spy(image: Image.Image, fmt: KeyFormat, quality: int) -> bytes:
+        calls.append(quality)
+        return real_encode(image, fmt, quality)
+
+    monkeypatch.setattr(factory_module, "encode_native", spy)
+    caplog.set_level(logging.WARNING, logger="decker.animation.factory")
+    tiny = AnimationFactory(cache_bytes=100)
+    spec = _spec()
+    try:
+        for _ in range(10):
+            assert_that(tiny.frames_for(spec, _FMT, 90)).is_none()
+            assert_that(tiny.wait_idle(10)).is_true()
+    finally:
+        tiny.close()
+
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert_that(warnings).is_length(1)
+    assert_that(warnings[0].getMessage()).contains("exceeds the cache budget")
+    assert_that(calls).is_length(5)
+
+
+def test_animation_within_the_cache_budget_builds_without_warnings(
+    factory: AnimationFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING, logger="decker.animation.factory")
+
+    animation = _built(factory, _spec())
+
+    assert_that(animation.frames).is_length(3)
+    assert_that([record for record in caplog.records if record.levelno == logging.WARNING]).is_empty()
+
+
 def test_built_animation_has_frames_reports_and_poster(factory: AnimationFactory) -> None:
     animation = _built(factory, _spec())
 
