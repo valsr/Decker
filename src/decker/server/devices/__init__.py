@@ -19,7 +19,7 @@ from decker.asset.renderer import AssetRenderer
 from decker.common.error import DeckNotOpenedError
 from decker.common.model import DeviceHardwareInfo, KeyInfo, KeyPressState
 
-DeviceCloseCallback = Callable[[str], None]  # called when the device is detected as closed
+DeviceCloseCallback = Callable[["Device"], None]  # called with the device when it is detected as closed
 
 _HELD_THRESHOLD_S: float = 0.5
 _MULTI_TAP_WINDOW_S: float = 0.35
@@ -126,7 +126,7 @@ class Device:  # pylint: disable=too-many-instance-attributes
         self._notify_on_closed = notify_on_closed
         self._key_trackers: dict[int, _KeyTracker] = {}
         self._layout: tuple[int, int] | None = None
-        self._writer_lock = threading.Lock()
+        self._writer_lock: threading.Lock = threading.Lock()
         self._writer: KeyWriter | None = None
         self._adaptive: AdaptiveConfig | None = None  # set when animation is enabled; writes then use the writer
         self._closed: bool = False
@@ -152,8 +152,7 @@ class Device:  # pylint: disable=too-many-instance-attributes
         try:
             self._device.get_serial_number()
         except Exception as exc:
-            if self._notify_on_closed:
-                self._notify_on_closed(self.device_id)
+            self._report_closed()
             raise DeckNotOpenedError(self.path) from exc
 
     def try_validate(self) -> bool:
@@ -162,8 +161,7 @@ class Device:  # pylint: disable=too-many-instance-attributes
             self._device.get_serial_number()
             return True
         except Exception:  # pylint: disable=broad-except
-            if self._notify_on_closed:
-                self._notify_on_closed(self.device_id)
+            self._report_closed()
             return False
 
     def get_hw_info(self) -> DeviceHardwareInfo:
@@ -223,9 +221,13 @@ class Device:  # pylint: disable=too-many-instance-attributes
             try_open_device(self._device)
 
         is_open = self._device.is_open() and self.try_validate()
-        if not is_open and self._notify_on_closed:
-            self._notify_on_closed(self.device_id)
+        if not is_open:
+            self._report_closed()
         return is_open
+
+    def _report_closed(self) -> None:
+        if self._notify_on_closed:
+            self._notify_on_closed(self)
 
     def set_animation_support(self, factory: AnimationFactory, enabled: bool, budget: float) -> None:
         """Let this device animate keys from factory within budget (busy fraction); disabled keeps posters only."""
@@ -248,18 +250,29 @@ class Device:  # pylint: disable=too-many-instance-attributes
         writer.play_spec(key_index, spec, poster_written=True)
 
     def stop_animations(self) -> None:
-        """Stop every key's animation; no frame is written after this returns (each key keeps its last frame)."""
+        """Stop every key's animation (each keeps its last frame), waiting up to 1 s for a frame write under way.
+
+        A frame write still blocked after that wait may land after this returns.
+        """
         with self._writer_lock:
             writer = self._writer
         if writer is not None:
             writer.stop_all(wait=_STOP_WAIT_S)
+
+    def stop_animation(self, key_index: int) -> None:
+        """Stop one key's animation, leaving its last frame on the key."""
+        with self._writer_lock:
+            writer = self._writer
+        if writer is not None:
+            writer.stop(key_index)
 
     def _key_writer(self) -> KeyWriter | None:
         with self._writer_lock:
             if self._adaptive is None or self._closed:
                 return None
             if self._writer is None:
-                self._writer = KeyWriter(self._write_key, adaptive=self._adaptive)
+                # Only set_key_image runs on the writer: frame writes must add no HID reads to the measured busy time.
+                self._writer = KeyWriter(self._device.set_key_image, adaptive=self._adaptive)
                 self._writer.start()
             return self._writer
 
@@ -272,6 +285,7 @@ class Device:  # pylint: disable=too-many-instance-attributes
         if writer is None:
             self._write_key(key_index, native)
             return True
+        self._try_open()  # as before a direct write: reopen a deck that was closed, or report it lost
         # False: not confirmed in time; the write may still land, so the caller must not trust what the key shows.
         return writer.submit_static(key_index, native)
 
@@ -311,8 +325,10 @@ class Device:  # pylint: disable=too-many-instance-attributes
             logging.error("Device.clear_key_image failed for %s[%d]: %s", self.id, key_index, exc)
 
     def close(self) -> None:
-        """Stop the key writer, then reset and close the underlying hardware connection."""
+        """Stop the key writer, then reset and close the underlying hardware connection; later calls do nothing."""
         with self._writer_lock:
+            if self._closed:
+                return
             self._closed = True
             writer, self._writer = self._writer, None
         if writer is not None:

@@ -131,14 +131,15 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
             known = list(self._devices.values())
         lost: list[str] = []
         for device in known:
-            if device.try_validate():  # a dead one also removes itself from _devices (see _on_device_closed)
+            if device.try_validate():  # a dead one also removes and closes itself (see _on_device_closed)
                 continue
             logging.warning(
                 "DeviceManager: device %s stopped answering; it will be reopened when it is back", device.id
             )
             lost.append(device.device_id)
             with self._lock:
-                self._devices.pop(device.device_id, None)
+                if self._devices.get(device.device_id) is device:
+                    del self._devices[device.device_id]
             device.close()  # releases the stale handle; errors are logged by Device.close
         return lost
 
@@ -207,12 +208,16 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
         return self._states.get(device_id)
 
     def clear_key_state(self, device_id: str, key_index: int) -> None:
-        """Remove in-memory and persisted key state for a slot."""
+        """Remove in-memory and persisted key state for a slot and stop its animation on the open device."""
         state = self._states.get(device_id)
         if state is not None:
             state.clear_key(key_index)
         elif self._state_store is not None:
             self._state_store.delete_key_state(device_id, self._page_resolver(device_id), key_index)
+        with self._lock:
+            device = self._devices.get(device_id)
+        if device is not None:
+            device.stop_animation(key_index)
 
     def blank_key(self, device_id: str, key_index: int) -> None:
         """Forget a slot's cached state and blank its hardware key (no-op if the device cannot be opened)."""
@@ -259,15 +264,12 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
         device.on_key_event(key_index, pressed)
         self._on_key_event_cb(device.device_id, key_index, pressed)
 
-    def _on_device_closed(self, device_id: str) -> None:
+    def _on_device_closed(self, device: Device) -> None:
+        # Identity, not id: a stale Device reporting late must never evict the reopened Device for the same serial.
         with self._lock:
-            # Collect matching key first to avoid modifying the dict while iterating
-            key = next(
-                (k for k, d in self._devices.items() if d.path == device_id or d.device_id == device_id),
-                None,
-            )
-            if key is not None:
-                del self._devices[key]
+            if self._devices.get(device.device_id) is device:
+                del self._devices[device.device_id]
+        device.close()  # outside the lock; idempotent, and never joins its own writer thread
 
     def list_devices(self) -> list[DeviceHardwareInfo]:
         """Return hardware info for all connected Stream Deck devices, even if not yet opened."""
@@ -303,7 +305,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
 
     def _close_device(self, device: Device) -> bool:
         with self._lock:
-            if device.device_id in self._devices:
+            if self._devices.get(device.device_id) is device:
                 device.close()
                 del self._devices[device.device_id]
                 return True
