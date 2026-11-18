@@ -95,3 +95,40 @@ def desynced_gif(big: tuple[int, int], balanced: bool, disposal: int = 0, hidden
     for _ in range(hidden):
         out += _hide(_frame(big[0], big[1], 2, disposal)) + (_fake() if balanced else b"")
     return bytes(out) + (b";" if balanced else _frame(2, 2, 1))
+
+
+_PALETTE = bytes([0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255])
+_HEAD = b"GIF89a\x02\x00\x02\x00\x81\x00\x00" + _PALETTE
+
+
+def netscape_hidden_gif(big: tuple[int, int], disposal: int = 0) -> bytes:
+    """A loop extension without its count block: Pillow reads one more chain, so `big` is its frame 0 and the walk
+    (which ends the extension at the terminator) sees it only as data."""
+    hidden = b"\x21\xff\x0bNETSCAPE2.0\x00" + bytes([0x21, 0x01, 51]) + b"\x01" * 31 + b"\x00"
+    return _HEAD + hidden + _frame(big[0], big[1], 2, disposal) + _frame(2, 2, 1) + _frame(2, 2, 3) + b";"
+
+
+def netscape_aligned_gif(height: int = 10, later_height: int = 8) -> bytes:
+    """The same quirk with two different frame-0 descriptors that share one pixel-data offset: offsets and frame
+    counts agree, only the rectangle (11264 x height for Pillow, 1 x 1 for a one-chain walk) differs."""
+    chain = bytearray(b"\x01" * 35)
+    chain[0], chain[1], chain[2], chain[34] = 0x21, 0x01, 37, 0
+    descriptor = b"\x2c\x00\x00\x00\x00\x00\x2c" + height.to_bytes(2, "little") + b"\x80"
+    frame0 = descriptor + bytes([0, 1, 0, 1, 0, 0]) + b"\x02" + _sub_blocks(_uniform_lzw(0x2C00 * height, 1))
+    later = b"".join(
+        b"\x2c\x00\x00\x00\x00\x01\x00"
+        + later_height.to_bytes(2, "little")
+        + b"\x00\x02"
+        + _sub_blocks(_uniform_lzw(later_height, 2))
+        for _ in range(4)
+    )
+    return _HEAD + b"\x21\xff\x0bNETSCAPE2.0\x00" + bytes(chain) + frame0 + later + b";"
+
+
+def comment_flood_gif(count: int, sub_block: bytes = b"") -> bytes:
+    """`count` comment extensions (each a single sub-block `sub_block`, empty by default) before two tiny frames."""
+    if sub_block:
+        comments = b"\x21\xfe" + (bytes([len(sub_block)]) + sub_block) * count + b"\x00"
+    else:
+        comments = b"\x21\xfe\x00" * count
+    return _HEAD + comments + _frame(2, 2, 1) + _frame(2, 2, 2) + b";"

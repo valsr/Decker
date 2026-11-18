@@ -10,7 +10,13 @@ from PIL.GifImagePlugin import GifImageFile
 
 from decker.animation import gif
 from decker.animation.gif import GifError, decode_gif, is_animated_gif, is_gif
-from tests.animation.grown_gif import desynced_gif, grown_gif
+from tests.animation.grown_gif import (
+    comment_flood_gif,
+    desynced_gif,
+    grown_gif,
+    netscape_aligned_gif,
+    netscape_hidden_gif,
+)
 
 
 def _make_gif(frames: list[Image.Image], **kwargs: object) -> bytes:
@@ -237,7 +243,7 @@ def test_padding_bytes_between_blocks_do_not_stop_a_gif_from_playing() -> None:
 
 def test_a_block_walk_that_disagrees_with_the_decoder_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     data = grown_gif((8, 8), [(8, 8)] * 3)
-    monkeypatch.setattr(gif, "_check_descriptors", lambda data: [10, 20])
+    monkeypatch.setattr(gif, "_check_descriptors", lambda data: gif._Walk([10, 20], (8, 8)))
 
     assert_that(is_animated_gif(data)).is_false()
     with pytest.raises(GifError, match="block walk"):
@@ -318,7 +324,7 @@ def test_the_running_canvas_total_is_checked_as_frames_are_read(monkeypatch: pyt
 
 
 def test_decode_rechecks_each_frame_when_the_descriptor_walk_is_bypassed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(gif, "_check_descriptors", lambda data: [])
+    monkeypatch.setattr(gif, "_check_descriptors", lambda data: gif._Walk([], None))
     monkeypatch.setattr(gif, "_check_budget", lambda image, offsets: None)
     monkeypatch.setattr(gif, "MAX_RASTER_PIXELS", 40 * 40)
     big = grown_gif((2, 2), [(2, 2), (41, 41)])
@@ -378,18 +384,24 @@ def test_empty_extension_blocks_cannot_show_the_walk_other_frames_than_pillow_re
     assert_that(calls).is_empty()
 
 
-def _one_chain_walk(data: bytes) -> list[int]:
+def _one_chain_walk(data: bytes, check_pixels: bool = True) -> gif._Walk:  # pylint: disable=protected-access
     """The naive walk (a single sub-block chain per extension, no budget): what the layout check must see through."""
-    offsets, pos = [], 13 + (3 << ((data[10] & 7) + 1))
+    offsets, canvas, pos = [], None, 13 + (3 << ((data[10] & 7) + 1))
+    width, height = int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
     while pos < len(data) and data[pos] != 0x3B:
         if data[pos] == 0x21:
             pos = gif._skip_sub_blocks(data, pos + 2)  # pylint: disable=protected-access
         elif data[pos] == 0x2C:
+            left, top, frame_width, frame_height = (
+                int.from_bytes(data[pos + i : pos + i + 2], "little") for i in (1, 3, 5, 7)
+            )
+            width, height = max(width, left + frame_width), max(height, top + frame_height)
+            canvas = canvas or (width, height)
             offsets.append(pos + 11)
             pos = gif._skip_sub_blocks(data, pos + 11)  # pylint: disable=protected-access
         else:
             pos += 1
-    return offsets
+    return gif._Walk(offsets, canvas)  # pylint: disable=protected-access
 
 
 @pytest.mark.parametrize("data", _DESYNCED.values(), ids=_DESYNCED.keys())
@@ -402,13 +414,18 @@ def test_the_layout_check_alone_catches_a_walk_that_was_fooled(data: bytes, monk
         decode_gif(data)
 
 
-def test_the_offset_check_rejects_ordinary_gifs_when_pillow_hides_its_state(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_layout_check_rejects_ordinary_gifs_when_pillow_hides_its_offset(monkeypatch: pytest.MonkeyPatch) -> None:
     data = grown_gif((8, 8), [(8, 8)] * 3)
     assert_that(is_animated_gif(data)).is_true()
-    monkeypatch.setattr(GifImageFile, "_GifImageFile__offset", None, raising=False)
-    monkeypatch.delattr(GifImageFile, "_seek")  # a renamed Pillow internal must reject, not leak or pass
 
-    assert_that(is_animated_gif(data)).is_false()
+    def hidden(image: Image.Image) -> int:
+        raise AttributeError("renamed in a newer Pillow")
+
+    monkeypatch.setattr(gif, "_frame_offset", hidden)
+
+    assert_that(is_animated_gif(data)).is_false()  # fails closed: upgrade Pillow, notice the failing tests
+    with pytest.raises(GifError, match="cannot verify"):
+        decode_gif(data)
 
 
 def test_the_walk_stays_linear_on_padding_runs() -> None:
@@ -421,3 +438,68 @@ def test_the_walk_stays_linear_on_padding_runs() -> None:
         decode_gif(data)
 
     assert_that(time.perf_counter() - started).is_less_than(1.0)
+
+
+def test_a_comment_flood_is_rejected_by_the_walk_in_well_under_a_second() -> None:
+    data = comment_flood_gif(350_000)  # about 1 MiB of empty comment blocks
+    started = time.perf_counter()
+
+    assert_that(is_animated_gif(data)).is_false()
+    with pytest.raises(GifError, match="comment|extension"):
+        decode_gif(data)
+    with pytest.raises(GifError):
+        gif.check_gif_bounds(data)
+
+    assert_that(time.perf_counter() - started).is_less_than(1.0)
+
+
+def test_a_comment_cut_into_one_byte_sub_blocks_is_rejected_quickly() -> None:
+    data = comment_flood_gif(gif.MAX_COMMENT_SUB_BLOCKS + 1, b"x")
+    started = time.perf_counter()
+
+    assert_that(is_animated_gif(data)).is_false()
+    with pytest.raises(GifError, match="comment"):
+        decode_gif(data)
+
+    assert_that(time.perf_counter() - started).is_less_than(1.0)
+
+
+@pytest.mark.parametrize("big", [(13000, 13000), (40, 40)], ids=["13000", "40"])
+def test_a_loop_extension_without_its_count_is_rejected_before_pillow_reads_it(
+    big: tuple[int, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = netscape_hidden_gif(big, disposal=2)
+    calls = _spy_on_pillow_work(monkeypatch)
+
+    assert_that(is_animated_gif(data)).is_false()
+    with pytest.raises(GifError, match="loop"):
+        decode_gif(data)
+
+    assert_that(calls).is_empty()
+
+
+def test_the_aligned_frame_zero_shape_is_rejected_before_pillow_reads_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _spy_on_pillow_work(monkeypatch)
+
+    assert_that(is_animated_gif(netscape_aligned_gif())).is_false()
+
+    assert_that(calls).is_empty()
+
+
+def test_the_frame_zero_canvas_check_alone_catches_the_aligned_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = netscape_aligned_gif()
+    monkeypatch.setattr(gif, "_check_descriptors", _one_chain_walk)
+    monkeypatch.setattr(gif, "_verify_offsets", lambda image, offsets: None)  # offsets agree here anyway
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", None)
+
+    assert_that(is_animated_gif(data)).is_false()
+    with pytest.raises(GifError, match="first frame"):
+        decode_gif(data)
+
+
+def test_a_gif_with_a_comment_and_a_loop_count_still_animates() -> None:
+    frames = [_solid((255, 0, 0)), _solid((0, 255, 0)), _solid((0, 0, 255))]
+    data = _make_gif(frames, duration=100, loop=3, comment=b"made by a test")
+
+    assert_that(is_animated_gif(data)).is_true()
+    assert_that(decode_gif(data)).is_length(3)

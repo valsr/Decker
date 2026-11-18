@@ -7,9 +7,10 @@ from xml.etree.ElementTree import ParseError
 import cairosvg  # type: ignore[import-untyped]
 from PIL import Image, UnidentifiedImageError
 
+from decker.animation.gif import MAX_RASTER_PIXELS, GifError, check_gif_bounds, is_gif
 from decker.asset.tint import tint_svg
+from decker.plugin.icons import MAX_ICON_BYTES
 
-MAX_RASTER_PIXELS = 4096 * 4096
 _SVG_SNIFF_BYTES = 64 * 1024
 
 
@@ -17,7 +18,25 @@ class ImageTooLargeError(ValueError):
     """Raised when a raster image exceeds the pixel budget."""
 
 
+def _guard_gif(source: Path | io.BytesIO) -> None:
+    """Refuse a GIF whose block structure would stall Pillow's open (a comment flood); other inputs pass through."""
+    if isinstance(source, Path):
+        with source.open("rb") as handle:
+            data = handle.read(MAX_ICON_BYTES + 1)
+    else:
+        data = source.getvalue()
+    if not is_gif(data):
+        return
+    try:
+        if len(data) > MAX_ICON_BYTES:
+            raise GifError("GIF is too large to read")
+        check_gif_bounds(data)
+    except GifError as exc:
+        raise UnidentifiedImageError(str(exc)) from exc
+
+
 def _open_raster(source: Path | io.BytesIO) -> Image.Image:
+    _guard_gif(source)
     image = Image.open(source)
     if image.width * image.height > MAX_RASTER_PIXELS:
         raise ImageTooLargeError(f"image is too large ({image.width}x{image.height})")
