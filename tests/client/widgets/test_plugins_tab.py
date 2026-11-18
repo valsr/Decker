@@ -323,3 +323,18 @@ def test_plugins_tab_badges_updates(tab):
     EventManager.get().emit(PluginUpdatesAvailableEvent(updates=[], missing=[]))
     assert_that(tab._plugin_list.item(0).text()).does_not_contain("Update available")
     assert_that(tab._plugin_list.item(1).text()).does_not_contain("Update available")
+
+
+def test_installed_plugin_rows_show_the_badge(manager):
+    host = {"os": "linux", "desktop": "kde", "session": "wayland", "label": "Linux (KDE, Wayland)"}
+    manager.answers["platform_info"] = json.dumps(host)
+    manager.answers["plugins_list"] = json.dumps(
+        [{**_PLUGINS[0], "supported": True}, {**_PLUGINS[1], "supported": False}]
+    )
+    widget = PluginsTab()
+    widget.refresh()
+
+    items = [widget._plugin_list.item(i) for i in range(2)]
+    texts = {str(it.data(plugins_tab._PLUGIN_ID_ROLE)): it.text() for it in items if it is not None}
+    assert_that(texts["com.acme.extra"]).contains("Not supported on Linux (KDE, Wayland)")
+    assert_that(texts["com.decker.core"]).does_not_contain("Not supported")

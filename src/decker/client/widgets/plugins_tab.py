@@ -40,6 +40,7 @@ _FAILURE_HINT = (
     "Installing and uninstalling is only allowed from the server's own machine, and only one at a time; "
     "otherwise check the connection."
 )
+FALLBACK_HOST_LABEL = "this system"
 _PLUGIN_ID_ROLE = Qt.ItemDataRole.UserRole
 
 
@@ -99,6 +100,20 @@ def _upload_package(manager: Any, path: Path) -> None:
         )
 
 
+def platform_badge(plugin: dict[str, Any], host_label: str) -> str:
+    """The "Not supported on <host>" badge text for a plugin, or an empty string when it is supported."""
+    return "" if plugin.get("supported", True) is not False else f"Not supported on {host_label}"
+
+
+def parse_host_label(raw: Any) -> str:
+    """The label from a `platform_info` RPC result, or a generic fallback when unavailable."""
+    try:
+        label = json.loads(raw)["label"] if raw else ""
+    except (ValueError, TypeError, KeyError):
+        label = ""
+    return str(label) or FALLBACK_HOST_LABEL
+
+
 def _contribution_summary(plugin: dict[str, Any]) -> str:
     parts = []
     for key, singular in (("actions", "action"), ("icon_packs", "icon pack")):
@@ -138,6 +153,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         self._failed_list: QListWidget = QListWidget()
         self._no_failures_label: QLabel = QLabel("No plugins failed to load.")
         self._selected_id: str | None = None
+        self._host_label: str = FALLBACK_HOST_LABEL
 
         self._build()
         em = EventManager.get()
@@ -156,6 +172,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         except (ValueError, TypeError):
             plugins = []
         self._plugins = {str(p["id"]): p for p in plugins}
+        self._host_label = parse_host_label(manager.call("platform_info") if manager is not None else None)
         self._render_plugins()
         allowed = refresh_install_allowed()
         self._install_btn.setEnabled(allowed)
@@ -216,6 +233,9 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
             )
             if plugin_id in self._updates:
                 text += f" · Update available: {self._updates[plugin_id]}"
+            badge = platform_badge(plugin, self._host_label)
+            if badge:
+                text += f" · {badge}"
             item = QListWidgetItem(_plugin_icon(plugin), text)
             item.setData(_PLUGIN_ID_ROLE, plugin_id)
             item.setToolTip(str(plugin.get("description", "")))

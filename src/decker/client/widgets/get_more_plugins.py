@@ -10,6 +10,7 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -32,12 +34,20 @@ from decker.client.events import (
     ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
-from decker.client.widgets.plugins_tab import NOT_ALLOWED_TOOLTIP, install_allowed
+from decker.client.ui_state_store import UiStateStore
+from decker.client.widgets.plugins_tab import (
+    FALLBACK_HOST_LABEL,
+    NOT_ALLOWED_TOOLTIP,
+    install_allowed,
+    parse_host_label,
+    platform_badge,
+)
 
 ALL_CATEGORIES = "All categories"
 _THUMB_SIZE = 40
 _SEP = ", "
 _ID_ROLE = Qt.ItemDataRole.UserRole
+_FILTER_KEY = "plugins.platform_filter"
 
 
 def human_size(size: int) -> str:
@@ -93,7 +103,7 @@ def _matches(plugin: dict[str, Any], needle: str) -> bool:
 class _PluginRow(QWidget):
     install_clicked = pyqtSignal(str)
 
-    def __init__(self, plugin: dict[str, Any], parent: QWidget | None = None) -> None:
+    def __init__(self, plugin: dict[str, Any], host_label: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.plugin_id = str(plugin["id"])
         self.icon_label: QLabel = QLabel()
@@ -114,6 +124,10 @@ class _PluginRow(QWidget):
         texts = QVBoxLayout()
         texts.addWidget(title)
         texts.addWidget(short)
+        self.badge: QLabel = QLabel(platform_badge(plugin, host_label))
+        self.badge.setProperty("role", "muted")
+        self.badge.setVisible(bool(self.badge.text()))
+        texts.addWidget(self.badge)
         layout = QHBoxLayout(self)
         layout.addWidget(self.icon_label)
         layout.addLayout(texts, 1)
@@ -129,8 +143,10 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
 
     _finished = pyqtSignal(object, object)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, ui_state_store: UiStateStore | None = None) -> None:
         super().__init__(parent)
+        self._ui_state_store: UiStateStore = ui_state_store or UiStateStore()
+        self._host_label: str = FALLBACK_HOST_LABEL
         self.setWindowTitle("Get More Plugins")
         self.resize(760, 560)
         self._catalog: list[dict[str, Any]] = []
@@ -147,6 +163,7 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
 
         self._search: QLineEdit = QLineEdit()
         self._category: QComboBox = QComboBox()
+        self._platform_only: QCheckBox = QCheckBox()
         self._refresh_btn: QPushButton = QPushButton("Refresh")
         self._list: QListWidget = QListWidget()
         self._details: QLabel = QLabel()
@@ -162,7 +179,7 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
     def refresh(self) -> None:
         """Re-read the catalog from the server."""
         self._status.setText("Loading…")
-        self._run(lambda m: to_plain(m.call("repository_catalog")), self._show_catalog)
+        self._run(_load_catalog, self._show_catalog)
 
     def done(self, result: int) -> None:
         """Close the dialog, dropping queued icon loads and event subscriptions."""
@@ -186,6 +203,9 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         self._status.setProperty("role", "muted")
         self._list.setIconSize(QSize(_THUMB_SIZE, _THUMB_SIZE))
         self._finished.connect(lambda done, result: done(result))
+        self._platform_only.setText(_filter_text(self._host_label))
+        self._platform_only.setChecked(self._ui_state_store.get(_FILTER_KEY) is not False)
+        self._platform_only.toggled.connect(self._on_filter_toggled)
         self._search.textChanged.connect(lambda *_: self._apply_filter())
         self._category.currentIndexChanged.connect(lambda *_: self._apply_filter())
         self._refresh_btn.clicked.connect(self.refresh)
@@ -200,6 +220,7 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         panes.addWidget(self._details, 2)
         layout = QVBoxLayout(self)
         layout.addLayout(top)
+        layout.addWidget(self._platform_only)
         layout.addLayout(panes, 1)
         layout.addWidget(self._status)
 
@@ -221,7 +242,14 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         self._worker = threading.Thread(target=target, daemon=True)
         self._worker.start()
 
-    def _show_catalog(self, catalog: Any) -> None:
+    def _on_filter_toggled(self, checked: bool) -> None:
+        self._ui_state_store.set(_FILTER_KEY, checked)
+        self._apply_filter()
+
+    def _show_catalog(self, loaded: Any) -> None:
+        catalog, label = loaded if loaded else (None, FALLBACK_HOST_LABEL)
+        self._host_label = label
+        self._platform_only.setText(_filter_text(label))
         if not isinstance(catalog, list):
             self._status.setText("Could not load the plugin catalog from the server.")
             return
@@ -244,7 +272,10 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         self._pending.clear()
         self._list.clear()
         self._rows.clear()
+        platform_only = self._platform_only.isChecked()
         for plugin in self._catalog:
+            if platform_only and plugin.get("supported", True) is False:
+                continue
             if category != ALL_CATEGORIES and plugin.get("category") != category:
                 continue
             if needle and not _matches(plugin, needle):
@@ -258,7 +289,7 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
 
     def _add_row(self, plugin: dict[str, Any]) -> None:
         plugin_id = str(plugin["id"])
-        row = _PluginRow(plugin)
+        row = _PluginRow(plugin, self._host_label)
         row.install_clicked.connect(self._on_install)
         item = QListWidgetItem()
         item.setData(_ID_ROLE, plugin_id)
@@ -319,6 +350,8 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
     def _on_install(self, plugin_id: str) -> None:
         if self._installing is not None or not install_allowed():
             return
+        if not self._confirm_unsupported(plugin_id):
+            return
         self._installing = plugin_id
         self._job_id = None
         self._early_finished = None
@@ -326,6 +359,16 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         self._status.setText(f"Installing {plugin_id}…")
         self._apply_busy()
         self._run(lambda m: m.call("plugin_install_from_repository", plugin_id), self._after_start)
+
+    def _confirm_unsupported(self, plugin_id: str) -> bool:
+        plugin = next((p for p in self._catalog if str(p["id"]) == plugin_id), None)
+        if plugin is None or plugin.get("supported", True) is not False:
+            return True
+        name = _text(plugin, "name") or plugin_id
+        answer = QMessageBox.question(
+            self, "Install plugin", f"{name} does not declare support for {self._host_label}. Install anyway?"
+        )
+        return bool(answer == QMessageBox.StandardButton.Yes)
 
     def _after_start(self, job_id: Any) -> None:
         if isinstance(job_id, str) and job_id and not job_id.startswith("error:"):
@@ -364,7 +407,7 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         if event.ok:
             self._mark_installed(event.plugin_id, event.version)
         self._apply_filter()
-        self._run(lambda m: to_plain(m.call("repository_catalog")), self._show_catalog_keep_status)
+        self._run(_load_catalog, self._show_catalog_keep_status)
 
     def _mark_installed(self, plugin_id: str | None, version: str | None) -> None:
         # Until the server's fresh catalog arrives the rows would still offer "Install" for what was just installed.
@@ -392,6 +435,20 @@ class GetMorePluginsDialog(QDialog):  # pylint: disable=too-many-instance-attrib
         self._show_catalog(catalog)
         if self._catalog:
             self._status.setText(status)
+
+
+def _filter_text(host_label: str) -> str:
+    return f"Only show plugins that support this system ({host_label})"
+
+
+def _load_catalog(manager: Any) -> tuple[Any, str]:
+    catalog = to_plain(manager.call("repository_catalog"))
+    try:
+        label = parse_host_label(manager.call("platform_info"))
+    except Exception:  # pylint: disable=broad-exception-caught
+        logging.exception("Could not read the server platform")
+        label = FALLBACK_HOST_LABEL
+    return catalog, label
 
 
 def _visible_catalog(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
