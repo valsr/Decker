@@ -2,6 +2,7 @@
 
 import io
 import json
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -590,6 +591,19 @@ class TestDeviceManagerAnimations:
         assert_that(state.get_key_animation(2)).is_none()
         assert_that(state.get_all_animations()).is_empty()
 
+    def test_clear_key_state_stops_the_keys_animation(self, opened):
+        dm, device_id, log = opened
+        self._animate(dm, device_id, 2, log)
+        self._animate(dm, device_id, 5, log)
+
+        dm.clear_key_state(device_id, 2)
+        time.sleep(0.15)  # a frame already under way may still land
+        key2, key5 = len(log.for_key(2)), len(log.for_key(5))
+        time.sleep(0.35)
+
+        assert_that(len(log.for_key(2))).is_equal_to(key2)
+        assert_that(len(log.for_key(5))).is_greater_than(key5)
+
     def test_animation_disabled_in_config_keeps_the_static_poster_only(self, store, monkeypatch):
         real = config.get_as_or_default
         monkeypatch.setattr(
@@ -623,3 +637,91 @@ class TestDeviceManagerAnimations:
 
         assert_that(dm.animation_factory).is_none()
         assert_that(factory.frames_for(make_spec(), MagicMock(), 90)).is_none()  # closed: never builds
+
+
+class TestLostAnimatingDevice:
+    """A deck that vanishes (PC sleep) while animating must be dropped and fully closed, and never evict its successor."""
+
+    @pytest.fixture(name="watched")
+    def watched_fixture(self, tmp_path):
+        store = DeviceStateStore(data_dir=tmp_path)
+        store.create(MagicMock())
+        store.save_device = MagicMock()  # type: ignore[method-assign]
+        context = MagicMock()
+        context.device_state_store = store
+        context.page_controller.active_page_id.return_value = "p1"
+        dm = _manager()
+        dm.create(context)
+        yield dm
+        dm.destroy()
+        store.destroy()
+
+    @staticmethod
+    def _check(dm: DeviceManager, *decks: MagicMock) -> None:
+        with patch("decker.server.devices.manager._HardwareDeviceManager") as mock_dm:
+            mock_dm.return_value.enumerate.return_value = list(decks)
+            dm.check_devices()
+
+    @staticmethod
+    def _writers() -> list[str]:
+        return [t.name for t in threading.enumerate() if t.name == WRITER_THREAD and t.is_alive()]
+
+    def _animating(self, dm: DeviceManager, path: str) -> tuple[MagicMock, Device, WriteLog]:
+        deck = TestDeviceWatcher._deck(path=path)  # pylint: disable=protected-access
+        log = WriteLog()
+        deck.set_key_image.side_effect = log
+        self._check(dm, deck)
+        device_id = device_id_for_serial("ABC123")
+        device = dm._devices[device_id]  # pylint: disable=protected-access
+        dm.set_image_bytes(device_id, 2, _png("red"))
+        dm.set_animation(device_id, 2, make_spec())
+        assert_that(wait_until(lambda: len(log.for_key(2)) >= 3)).is_true()
+        return deck, device, log
+
+    @staticmethod
+    def _go_away(deck: MagicMock) -> None:
+        deck.get_serial_number.side_effect = OSError("device went away")
+        deck.set_key_image.side_effect = OSError("device went away")
+
+    def test_a_static_write_to_a_lost_animating_deck_drops_and_closes_it(self, watched):
+        dm = watched
+        deck, _device, _log = self._animating(dm, "/dev/hidraw3")
+        self._go_away(deck)
+
+        dm.set_image_bytes(device_id_for_serial("ABC123"), 4, _png("blue"))
+
+        assert_that(dm._devices).is_empty()  # pylint: disable=protected-access
+        deck.reset.assert_called_once()
+        deck.close.assert_called_once()
+        assert_that(wait_until(lambda: not self._writers())).is_true()
+
+    def test_the_watcher_closes_a_lost_animating_deck_once_and_its_writer_ends(self, watched):
+        dm = watched
+        deck, _device, _log = self._animating(dm, "/dev/hidraw3")
+        self._go_away(deck)
+
+        self._check(dm)
+
+        assert_that(dm._devices).is_empty()  # pylint: disable=protected-access
+        deck.reset.assert_called_once()
+        deck.close.assert_called_once()
+        assert_that(wait_until(lambda: not self._writers())).is_true()
+
+    def test_a_stale_device_failing_later_does_not_evict_the_reopened_one(self, watched):
+        dm = watched
+        old_deck, stale, _log = self._animating(dm, "/dev/hidraw3")
+        self._go_away(old_deck)
+        new_deck = TestDeviceWatcher._deck(path="/dev/hidraw7")  # pylint: disable=protected-access
+
+        self._check(dm, new_deck)
+        reopened = dm._devices[device_id_for_serial("ABC123")]  # pylint: disable=protected-access
+        stale.set_image_bytes(4, _png("blue"))
+        stale.play_animation(2, make_spec())
+        assert_that(stale.try_validate()).is_false()
+
+        assert_that(reopened).is_not_same_as(stale)
+        assert_that(dm._devices).is_equal_to(
+            {device_id_for_serial("ABC123"): reopened}
+        )  # pylint: disable=protected-access
+        old_deck.reset.assert_called_once()
+        new_deck.close.assert_not_called()

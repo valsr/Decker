@@ -267,3 +267,63 @@ class TestAnimatedDevice:
         device.play_animation(1, make_spec())
 
         assert_that([t for t in threading.enumerate() if t.name == WRITER_THREAD]).is_empty()
+
+    def test_animation_frames_issue_no_hid_reads(self, animated: Device, deck: MagicMock, log: WriteLog) -> None:
+        animated.play_animation(1, make_spec())
+        assert_that(wait_until(lambda: len(log.for_key(1)) >= 2)).is_true()
+        deck.get_serial_number.reset_mock()
+        deck.is_open.reset_mock()
+        frames_before = len(log.for_key(1))
+
+        assert_that(wait_until(lambda: len(log.for_key(1)) >= frames_before + 3)).is_true()
+
+        assert_that(deck.get_serial_number.call_count).is_zero()
+        assert_that(deck.is_open.call_count).is_zero()
+
+    def test_static_writes_still_check_the_deck_first(self, animated: Device, deck: MagicMock, log: WriteLog) -> None:
+        animated.set_image_bytes(3, _png("red"))
+
+        deck.get_serial_number.assert_called()
+        assert_that(len(log.writes)).is_equal_to(1)
+
+    def test_stop_animation_stops_only_that_key(self, animated: Device, log: WriteLog) -> None:
+        animated.play_animation(1, make_spec())
+        animated.play_animation(2, make_spec())
+        assert_that(wait_until(lambda: len(log.for_key(1)) >= 2 and len(log.for_key(2)) >= 2)).is_true()
+
+        animated.stop_animation(1)
+        time.sleep(0.15)  # a frame already under way may still land
+        key1, key2 = len(log.for_key(1)), len(log.for_key(2))
+        time.sleep(0.35)
+
+        assert_that(len(log.for_key(1))).is_equal_to(key1)
+        assert_that(len(log.for_key(2))).is_greater_than(key2)
+
+    def test_close_runs_once(self, animated: Device, deck: MagicMock, log: WriteLog) -> None:
+        animated.set_image_bytes(3, _png("red"))
+
+        animated.close()
+        animated.close()
+
+        deck.reset.assert_called_once()
+        deck.close.assert_called_once()
+
+    def test_close_from_the_writer_thread_does_not_hang(self, animated: Device, deck: MagicMock, log: WriteLog) -> None:
+        animated.play_animation(1, make_spec())
+        assert_that(wait_until(lambda: len(log.for_key(1)) >= 1)).is_true()
+
+        deck.set_key_image.side_effect = lambda *_: animated.close()
+
+        assert_that(wait_until(lambda: deck.close.call_count == 1)).is_true()
+        assert_that(wait_until(lambda: not [t for t in threading.enumerate() if t.name == WRITER_THREAD])).is_true()
+
+    def test_a_lost_device_reports_itself(self, deck: MagicMock) -> None:
+        reported: list[Device] = []
+        device = Device("dev", "serial", deck, reported.append)
+        deck.get_serial_number.side_effect = OSError("gone")
+
+        assert_that(device.try_validate()).is_false()
+
+        assert_that(reported).is_length(1)
+        assert_that(reported[0]).is_same_as(device)
+        device.close()
