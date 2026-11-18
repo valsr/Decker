@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from decker.asset.iconpack import IconPackRegistry
 from decker.common import config
 from decker.common.manager import Manager
+from decker.common.platforms import detect_platform, platform_supports
 from decker.common.template import expand_template
 from decker.common.text_style import is_color
 from decker.common.version import decker_version
@@ -192,6 +193,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def add_plugin(self, plugin: InstalledPlugin) -> None:
         """Register a plugin's contributions; an actions plugin's process starts when its first action appears."""
         manifest = plugin.manifest
+        host = detect_platform()
+        if not platform_supports(manifest.platforms, host):
+            logging.warning("[%s] plugin does not declare support for this platform (%s)", manifest.id, host.label())
         with self._lock:
             self._plugins[manifest.id] = plugin
         try:

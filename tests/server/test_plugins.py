@@ -20,6 +20,7 @@ from PIL import Image
 
 from decker.common import config
 from decker.common.model import DeviceHardwareInfo, KeyInfo, PageInfo, ProfileInfo
+from decker.common.platforms import HostPlatform, PlatformSpec
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.gestures import Gesture
 from decker.plugin.loader import InstalledPlugin
@@ -415,6 +416,21 @@ class TestListing:
         env.manager.add_plugin(removed)
 
         assert_that(env.manager.list_actions()).extracting("action_uuid").contains(_REC_ACTION)
+
+    def test_registering_a_mismatching_plugin_logs_a_warning_but_loads_it(
+        self, env, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("decker.server.plugins.detect_platform", lambda: HostPlatform("linux", "kde", "wayland"))
+        original = next(p for p in env.manager.plugins() if p.manifest.id == "com.decker.rec")
+        env.manager.remove_plugin("com.decker.rec")
+        mismatching = replace(original, manifest=replace(original.manifest, platforms=PlatformSpec(os=("windows",))))
+
+        with caplog.at_level("WARNING"):
+            env.manager.add_plugin(mismatching)
+
+        assert_that(caplog.text).contains("[com.decker.rec] plugin does not declare support for this platform")
+        assert_that(caplog.text).contains("Linux (KDE, Wayland)")
+        assert_that(env.manager.plugins()).extracting("manifest").extracting("id").contains("com.decker.rec")
 
 
 class TestWillAppear:
