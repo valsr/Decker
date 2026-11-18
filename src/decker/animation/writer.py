@@ -8,12 +8,31 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
-from decker.animation.model import Animation
+from decker.animation.controller import (
+    LADDER,
+    LAG_LIMIT_S,
+    STEP_DOWN_BUSY,
+    Demand,
+    Level,
+    LevelController,
+    LoadSample,
+)
+from decker.animation.encode import KeyFormat
+from decker.animation.load import LoadMonitor
+from decker.animation.model import Animation, AnimationSpec
 
 logger = logging.getLogger(__name__)
 
 WriteFn = Callable[[int, bytes | None], None]
+
+# How often a pending factory build (first frames or a new quality) is polled; keeps step from spinning.
+POLL_S: float = 0.050
+TICK_S: float = 1.0
+LAG_SUSTAIN_S: float = 1.0
+SHORT_WINDOW_S: float = 5.0
+LONG_WINDOW_S: float = 20.0
 
 # Floor for any returned deadline, so a caller never gets a deadline at or before "now" and never spins.
 _MIN_WAIT = 1e-6
@@ -30,6 +49,7 @@ class _Slot:
     deadline: float | None
     shown_index: int | None = None
     shown_data: bytes | None = None
+    spec: AnimationSpec | None = None
 
 
 @dataclass
@@ -45,17 +65,207 @@ class _FrameWrite:
     key_index: int
     slot: _Slot
     index: int
+    deadline: float
 
 
 _Action = _StaticJob | _FrameWrite
 
 
-class KeyWriter:
+class FrameSource(Protocol):  # pylint: disable=too-few-public-methods
+    """Non-blocking source of encoded animations, such as AnimationFactory."""
+
+    def frames_for(self, spec: AnimationSpec, fmt: KeyFormat, quality: int) -> Animation | None:
+        """Return the animation for spec in fmt at quality, or None while it is not available."""
+
+
+@dataclass(frozen=True)
+class AdaptiveConfig:
+    """Optional parts that let a KeyWriter adapt quality and frame rate to its measured write load."""
+
+    controller: LevelController | None = None
+    monitor: LoadMonitor | None = None
+    factory: FrameSource | None = None
+    fmt: KeyFormat | None = None
+
+
+def _ends_ms(animation: Animation) -> tuple[int, ...]:
+    return tuple(itertools.accumulate(frame.delay_ms for frame in animation.frames))
+
+
+def _new_slot(animation: Animation, now: float, fps_cap: int | None, spec: AnimationSpec | None = None) -> _Slot:
+    return _Slot(animation, now, fps_cap, _ends_ms(animation), deadline=now, spec=spec)
+
+
+def _native_fps(animation: Animation) -> float:
+    total_ms = animation.total_ms
+    if total_ms <= 0 or len(animation.frames) < 2:
+        return 0.0
+    return 1000 * len(animation.frames) / total_ms
+
+
+def _mean_reports(animation: Animation, quality: int) -> float:
+    estimate = animation.reports_by_quality.get(quality)
+    if estimate is not None:
+        return estimate
+    return sum(frame.reports for frame in animation.frames) / len(animation.frames)
+
+
+class _Adapter:
+    """Level control for one writer; every method is called with the writer's lock held."""
+
+    def __init__(self, config: AdaptiveConfig) -> None:
+        self.controller: LevelController | None = config.controller
+        self.monitor: LoadMonitor = config.monitor if config.monitor is not None else LoadMonitor()
+        self.factory: FrameSource | None = config.factory
+        self.fmt: KeyFormat | None = config.fmt
+        # Keys whose animation waits for its first frames from the factory.
+        self.waiting: dict[int, AnimationSpec] = {}
+        self.next_tick: float | None = None
+        self.next_poll: float = -math.inf
+        self.replanned_at: float | None = None
+
+    @property
+    def level(self) -> Level:
+        """The controller's level, or the top level without a controller."""
+        return self.controller.level if self.controller is not None else LADDER[0]
+
+    def cap_for(self, animation: Animation, requested: int | None) -> int | None:
+        """The level's frame-rate cap if it is below the animation's native rate; requested without a controller."""
+        if self.controller is None:
+            return requested
+        cap = self.controller.level.fps_cap
+        return cap if cap is not None and cap < _native_fps(animation) else None
+
+    def demand(self, slots: dict[int, _Slot]) -> Demand:
+        """Reports per second the playing slots need at a level (mean reports per frame x capped frame rate)."""
+        animations = [slot.animation for slot in slots.values()]
+
+        def reports_per_second(level: Level) -> float:
+            total = 0.0
+            for animation in animations:
+                native = _native_fps(animation)
+                fps = native if level.fps_cap is None else min(native, level.fps_cap)
+                total += _mean_reports(animation, level.quality) * fps
+            return total
+
+        return reports_per_second
+
+    def replan(self, slots: dict[int, _Slot], now: float, cause: str) -> None:
+        """Re-plan the level for a changed set of playing slots."""
+        if self.controller is None:
+            return
+        self.replanned_at = now
+        old = self.controller.level
+        new = self.controller.replan(self.demand(slots), self.monitor.seconds_per_report)
+        self._changed(slots, (old, new), now, cause)
+
+    def tick(self, slots: dict[int, _Slot], now: float) -> None:
+        """Feed the measured load to the controller, at most once per TICK_S while anything is animated."""
+        if self.controller is None or not (slots or self.waiting):
+            return
+        if self.next_tick is None:
+            self.next_tick = now + TICK_S
+        if now < self.next_tick:
+            return
+        self.next_tick = now + TICK_S
+        monitor = self.monitor
+        lagging = monitor.lag_over(now, LAG_LIMIT_S, LAG_SUSTAIN_S)
+        busy_20s = monitor.busy_fraction(now, LONG_WINDOW_S)
+        if self.replanned_at is not None and now - self.replanned_at < LONG_WINDOW_S:
+            # The long window still measures the previous key set, so its step-up projection would be wrong.
+            busy_20s = 1.0
+        sample = LoadSample(
+            now,
+            monitor.busy_fraction(now, SHORT_WINDOW_S),
+            busy_20s,
+            monitor.last_lag_s if lagging else 0.0,
+        )
+        old = self.controller.level
+        new = self.controller.tick(sample, self.demand(slots), monitor.seconds_per_report)
+        # Mirrors the controller's step-down rules; any other change is a step up.
+        if sample.busy_5s > STEP_DOWN_BUSY:
+            cause = "overloaded"
+        elif sample.lag_s > LAG_LIMIT_S:
+            cause = "frames lagging"
+        else:
+            cause = "load dropped"
+        self._changed(slots, (old, new), now, cause)
+
+    def poll(self, slots: dict[int, _Slot], now: float) -> bool:
+        """Start ready waiting animations and switch slots to the level's quality; True if a slot started."""
+        if now < self.next_poll or self.factory is None or self.fmt is None:
+            return False
+        self.next_poll = now + POLL_S
+        quality = self.level.quality
+        started = False
+        for key_index, spec in list(self.waiting.items()):
+            animation = self.factory.frames_for(spec, self.fmt, quality)
+            if animation is not None:
+                del self.waiting[key_index]
+                slots[key_index] = _new_slot(animation, now, self.cap_for(animation, None), spec)
+                started = True
+        for slot in slots.values():
+            if slot.spec is not None and slot.animation.quality != quality:
+                animation = self.factory.frames_for(slot.spec, self.fmt, quality)
+                if animation is not None:
+                    self._switch(slot, animation, now)
+        return started
+
+    def deadlines(self, slots: dict[int, _Slot]) -> list[float]:
+        """Clock times at which tick or poll has work to do."""
+        wanted: list[float] = []
+        if self.controller is not None and self.next_tick is not None and (slots or self.waiting):
+            wanted.append(self.next_tick)
+        quality = self.level.quality
+        if self.waiting or any(s.spec is not None and s.animation.quality != quality for s in slots.values()):
+            wanted.append(self.next_poll)
+        return wanted
+
+    def record(self, action: _Action, started: float, ended: float) -> None:
+        """Record a write's busy time, its reports and, for a frame, how late it was."""
+        reports = 0
+        if isinstance(action, _FrameWrite):
+            reports = action.slot.animation.frames[action.index].reports
+            self.monitor.record_lag(ended, max(0.0, ended - action.deadline))
+        elif action.data is not None and self.fmt is not None:
+            reports = math.ceil(len(action.data) / self.fmt.report_payload)
+        self.monitor.record_write(ended, max(0.0, ended - started), reports)
+
+    def _switch(self, slot: _Slot, animation: Animation, now: float) -> None:
+        # Same start time: the new quality continues at the same elapsed time; its next frame boundary writes it.
+        slot.animation = animation
+        slot.ends_ms = _ends_ms(animation)
+        slot.fps_cap = self.cap_for(animation, None)
+        if slot.deadline is None:
+            slot.deadline = now
+            slot.shown_index = None
+
+    def _changed(self, slots: dict[int, _Slot], levels: tuple[Level, Level], now: float, cause: str) -> None:
+        old, new = levels
+        if new == old:
+            return
+        logger.info(
+            "Animation level %s -> %s: %s (busy %.0f%% over %.0f s)",
+            old,
+            new,
+            cause,
+            100 * self.monitor.busy_fraction(now, SHORT_WINDOW_S),
+            SHORT_WINDOW_S,
+        )
+        for slot in slots.values():
+            slot.fps_cap = self.cap_for(slot.animation, None)
+        self.next_poll = -math.inf
+
+
+class KeyWriter:  # pylint: disable=too-many-instance-attributes
     """Serialises all image writes of one device: queued static writes first, then animation frames by deadline."""
 
-    def __init__(self, write: WriteFn, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self, write: WriteFn, clock: Callable[[], float] = time.monotonic, *, adaptive: AdaptiveConfig | None = None
+    ) -> None:
         self._write: WriteFn = write
         self._clock: Callable[[], float] = clock
+        self._adapter: _Adapter = _Adapter(adaptive if adaptive is not None else AdaptiveConfig())
         self._condition: threading.Condition = threading.Condition()
         self._statics: deque[_StaticJob] = deque()
         self._slots: dict[int, _Slot] = {}
@@ -77,13 +287,14 @@ class KeyWriter:
             job = _StaticJob(key_index, data)
             self._statics.append(job)
             # A timed-out job still runs: it is the newest image for a key whose animation is already cancelled.
-            self._slots.pop(key_index, None)
+            self._remove(key_index)
             self._notify()
         return job.done.wait(timeout) and job.ok
 
     def play(self, key_index: int, animation: Animation, fps_cap: int | None = None) -> None:
-        """Start (or replace) the key's animation from now, capped at fps_cap frames per second if given.
+        """Start (or replace) the key's fixed animation from now, capped at fps_cap frames per second if given.
 
+        With a level controller configured the level's cap applies instead of fps_cap.
         Raises ValueError if the animation has no frames or fps_cap is not None and not positive.
         """
         if not animation.frames:
@@ -91,28 +302,58 @@ class KeyWriter:
         if fps_cap is not None and fps_cap <= 0:
             raise ValueError(f"fps_cap must be positive, got {fps_cap}")
         now = self._clock()
-        ends_ms = tuple(itertools.accumulate(frame.delay_ms for frame in animation.frames))
         with self._condition:
-            self._slots[key_index] = _Slot(animation, now, fps_cap, ends_ms, deadline=now)
+            self._adapter.waiting.pop(key_index, None)
+            self._slots[key_index] = _new_slot(animation, now, self._adapter.cap_for(animation, fps_cap))
+            self._adapter.replan(self._slots, now, "animated keys changed")
             self._notify()
+
+    def play_spec(self, key_index: int, spec: AnimationSpec, poster_written: bool = True) -> None:
+        """Animate the key with spec at the current level's quality, starting once the factory has its frames.
+
+        poster_written False keeps the key's current animation playing until then (no poster replaced it).
+        Raises ValueError if the writer has no factory or key format.
+        """
+        adapter = self._adapter
+        if adapter.factory is None or adapter.fmt is None:
+            raise ValueError("play_spec needs an AdaptiveConfig with a factory and a key format")
+        with self._condition:
+            if poster_written:
+                self._remove(key_index)
+            adapter.waiting[key_index] = spec
+            adapter.next_poll = -math.inf
+            self._notify()
+
+    @property
+    def level(self) -> Level:
+        """The current quality and frame-rate level (the top level when no controller is configured)."""
+        with self._condition:
+            return self._adapter.level
 
     def stop(self, key_index: int) -> None:
         """Stop the key's animation, leaving its last written frame on the key."""
         with self._condition:
-            self._slots.pop(key_index, None)
+            self._remove(key_index)
             self._notify()
 
     def stop_all(self) -> None:
         """Stop every animation."""
         with self._condition:
+            had_slots = bool(self._slots)
             self._slots.clear()
+            self._adapter.waiting.clear()
+            if had_slots:
+                self._adapter.replan(self._slots, self._clock(), "animated keys changed")
             self._notify()
 
     def step(self, now: float) -> float | None:
         """Perform at most one due write and return the clock time of the next deadline, or None when idle."""
+        self._adapt(now)
         action = self._next_action(now)
         if action is not None:
-            self._complete(action, self._perform(action), now)
+            started = self._clock()
+            ok = self._perform(action)
+            self._complete(action, ok, now, (started, self._clock()))
         with self._condition:
             self._processing_key = None
             return self._next_deadline(now)
@@ -130,6 +371,7 @@ class KeyWriter:
         with self._condition:
             self._closing = True
             self._slots.clear()
+            self._adapter.waiting.clear()
             pending = list(self._statics)
             self._statics.clear()
             if self._in_flight is not None:
@@ -140,6 +382,22 @@ class KeyWriter:
             job.done.set()
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout)
+
+    def _remove(self, key_index: int) -> None:
+        self._adapter.waiting.pop(key_index, None)
+        self._drop_slot(key_index, "animated keys changed")
+
+    def _drop_slot(self, key_index: int, cause: str) -> None:
+        if self._slots.pop(key_index, None) is not None:
+            self._adapter.replan(self._slots, self._clock(), cause)
+
+    def _adapt(self, now: float) -> None:
+        with self._condition:
+            if self._closing:
+                return
+            if self._adapter.poll(self._slots, now):
+                self._adapter.replan(self._slots, now, "animation ready")
+            self._adapter.tick(self._slots, now)
 
     def _notify(self) -> None:
         self._wake = True
@@ -166,7 +424,7 @@ class KeyWriter:
                 logger.exception("Key writer step failed; waiting for the next change")
                 return None
             logger.exception("Key %d animation failed; dropping it", key_index)
-            self._slots.pop(key_index, None)
+            self._drop_slot(key_index, "animation failed")
             return self._clock()
 
     def _next_action(self, now: float) -> _Action | None:
@@ -186,7 +444,7 @@ class KeyWriter:
                 slot = self._slots[key_index]
                 index = slot.animation.frame_index_at(self._elapsed_ms(slot, now)) if slot.ends_ms[-1] > 0 else 0
                 if index != slot.shown_index and slot.animation.frames[index].data != slot.shown_data:
-                    return _FrameWrite(key_index, slot, index)
+                    return _FrameWrite(key_index, slot, index, now if slot.deadline is None else slot.deadline)
                 slot.shown_index = index
                 slot.deadline = self._deadline_after(slot, now, None)
             return None
@@ -204,8 +462,9 @@ class KeyWriter:
             return False
         return True
 
-    def _complete(self, action: _Action, ok: bool, now: float) -> None:
+    def _complete(self, action: _Action, ok: bool, now: float, span: tuple[float, float]) -> None:
         with self._condition:
+            self._adapter.record(action, *span)
             if isinstance(action, _StaticJob):
                 self._in_flight = None
                 if not action.done.is_set():
@@ -216,7 +475,7 @@ class KeyWriter:
             if self._slots.get(action.key_index) is not slot:
                 return
             if not ok:
-                del self._slots[action.key_index]
+                self._drop_slot(action.key_index, "animation failed")
                 return
             slot.shown_index = action.index
             slot.shown_data = slot.animation.frames[action.index].data
@@ -228,6 +487,7 @@ class KeyWriter:
         if self._statics:
             return now + _MIN_WAIT
         deadlines = [slot.deadline for slot in self._slots.values() if slot.deadline is not None]
+        deadlines.extend(self._adapter.deadlines(self._slots))
         if not deadlines:
             return None
         return max(min(deadlines), now + _MIN_WAIT)
