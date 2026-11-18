@@ -18,6 +18,7 @@ from decker.server.appearance import (
     compose_key_image,
     resolve_appearance,
 )
+from tests.animation.grown_gif import grown_gif
 from tests.server.animation_fixture import make_gif
 
 
@@ -488,8 +489,16 @@ def test_compose_key_face_of_an_animated_gif_carries_the_spec_that_produced_the_
 
 @pytest.mark.parametrize(
     "image",
-    [None, _png("#00ff00"), make_gif(1), b"GIF89a" + b"\x00\xff" * 40, b"GIF89a", make_gif(MAX_GIF_FRAMES + 1)],
-    ids=["none", "png", "single-frame-gif", "corrupt-gif", "header-only-gif", "over-frame-cap-gif"],
+    [
+        None,
+        _png("#00ff00"),
+        make_gif(1),
+        b"GIF89a" + b"\x00\xff" * 40,
+        b"GIF89a",
+        make_gif(MAX_GIF_FRAMES + 1),
+        grown_gif((2, 2), [(2, 2)] + [(8000, 8000)] * 3),
+    ],
+    ids=["none", "png", "single-frame-gif", "corrupt-gif", "header-only-gif", "over-frame-cap-gif", "grown-canvas-gif"],
 )
 def test_compose_key_face_of_anything_but_an_animated_gif_is_static(image: bytes | None) -> None:
     appearance = _appearance(background="#112233")
