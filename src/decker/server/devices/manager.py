@@ -260,6 +260,12 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
             state.set_key_animation(key_index, spec)
         device.play_animation(key_index, spec)
 
+    def playing_animation_id(self, device_id: str, key_index: int) -> str | None:
+        """Id of the animation a key of an already open device plays or waits to play, or None; opens nothing."""
+        with self._lock:
+            device = self._devices.get(device_id)
+        return device.animation_id(key_index) if device is not None else None
+
     def _on_hw_key_event(self, device: Device, key_index: int, pressed: bool) -> None:
         with self._lock:
             current = self._devices.get(device.device_id) is device

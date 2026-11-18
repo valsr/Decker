@@ -31,12 +31,12 @@ def is_gif(data: bytes) -> bool:
 
 
 def is_animated_gif(data: bytes) -> bool:
-    """Return True for a decodable GIF with more than one frame."""
+    """Return True for a decodable GIF with more than one and at most MAX_GIF_FRAMES frames."""
     if not is_gif(data):
         return False
     try:
         with Image.open(io.BytesIO(data)) as image:
-            return bool(getattr(image, "n_frames", 1) > 1)
+            return bool(1 < getattr(image, "n_frames", 1) <= MAX_GIF_FRAMES)
     except Exception:  # pylint: disable=broad-exception-caught
         return False
 

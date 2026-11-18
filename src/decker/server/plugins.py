@@ -110,12 +110,16 @@ class _StreamDeckHardwareSink:
     def set_animation(self, device_id: str, key_index: int, spec: AnimationSpec) -> None:
         """Animate the key (its poster already written by set_image) and register spec for the key_animation RPC."""
         if self._device_manager is None:
-            logging.debug("set_animation: no DeviceManager available")
             return
         factory = self._device_manager.animation_factory
         if factory is not None:
             factory.register(spec)
         self._device_manager.set_animation(device_id, key_index, spec)
+
+    def is_playing(self, device_id: str, key_index: int, animation_id: str) -> bool:
+        """Whether the key's open device already plays (or is about to play) the animation animation_id."""
+        manager = self._device_manager
+        return manager is not None and manager.playing_animation_id(device_id, key_index) == animation_id
 
     def set_title(self, device_id: str, key_index: int, title: str) -> None:
         """Store the display label for client polling (hardware text not rendered)."""
@@ -535,13 +539,16 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         target = live.target
         try:
             composed = self._compose(live)
+            animation_id = composed.animation.animation_id if composed.animation is not None else None
             with self._lock:
                 if self._live.get(target.context_id) is not live:
                     return
-                # Poster first: a static write ends the key's animation, so the animation must start after it.
-                self._sink.set_image(target.device_id, target.key_index, composed.png)
-                if composed.animation is not None:
-                    self._sink.set_animation(target.device_id, target.key_index, composed.animation)
+                # The id covers the whole PNG, so a key already playing it needs neither a poster nor a restart.
+                if animation_id is None or not self._sink.is_playing(target.device_id, target.key_index, animation_id):
+                    # Poster first: a static write ends the key's animation, so the animation must start after it.
+                    self._sink.set_image(target.device_id, target.key_index, composed.png)
+                    if composed.animation is not None:
+                        self._sink.set_animation(target.device_id, target.key_index, composed.animation)
         except Exception:  # pylint: disable=broad-except
             logging.warning("Could not compose key image for context %s", target.context_id, exc_info=True)
             return

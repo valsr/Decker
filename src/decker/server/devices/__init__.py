@@ -267,6 +267,12 @@ class Device:  # pylint: disable=too-many-instance-attributes
         if writer is not None:
             writer.stop_all(wait=_STOP_WAIT_S)
 
+    def animation_id(self, key_index: int) -> str | None:
+        """Id of the animation the key plays or waits to play on this device, or None."""
+        with self._writer_lock:
+            writer = self._writer
+        return writer.animation_id(key_index) if writer is not None else None
+
     def stop_animation(self, key_index: int) -> None:
         """Stop one key's animation, leaving its last frame on the key."""
         with self._writer_lock:

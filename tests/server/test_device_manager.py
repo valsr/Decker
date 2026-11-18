@@ -583,6 +583,25 @@ class TestDeviceManagerAnimations:
         assert state is not None
         assert_that(state.get_key_animation(2)).is_none()
 
+    def test_playing_animation_id_follows_what_the_key_actually_plays(self, opened):
+        dm, device_id, log = opened
+        animation_id = make_spec().animation_id
+        assert_that(dm.playing_animation_id(device_id, 2)).is_none()
+
+        self._animate(dm, device_id, 2, log)
+        assert_that(dm.playing_animation_id(device_id, 2)).is_equal_to(animation_id)
+        dm.show_page(device_id, "p2")
+        assert_that(dm.playing_animation_id(device_id, 2)).is_none()
+        dm.show_page(device_id, "p1")
+        assert_that(dm.playing_animation_id(device_id, 2)).is_equal_to(animation_id)
+        dm.set_image_bytes(device_id, 2, _png("blue"))
+        assert_that(dm.playing_animation_id(device_id, 2)).is_none()
+
+        self._animate(dm, device_id, 2, log)
+        dm.close_device(device_id)
+        assert_that(dm.playing_animation_id(device_id, 2)).is_none()
+        assert_that(dm.playing_animation_id("nope", 2)).is_none()
+
     def test_clear_key_state_forgets_the_animation(self, opened):
         dm, device_id, log = opened
         self._animate(dm, device_id, 2, log)

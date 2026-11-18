@@ -81,6 +81,13 @@ def test_more_than_300_frames_raises_gif_error() -> None:
         decode_gif(data)
 
 
+@pytest.mark.parametrize("count, animated", [(gif.MAX_GIF_FRAMES, True), (gif.MAX_GIF_FRAMES + 1, False)])
+def test_only_gifs_within_the_frame_cap_count_as_animated(count: int, animated: bool) -> None:
+    data = _make_gif([Image.new("L", (2, 2), i % 256) for i in range(count)], duration=20)
+
+    assert_that(is_animated_gif(data)).is_equal_to(animated)
+
+
 def test_frame_above_pixel_budget_raises_gif_error(monkeypatch: pytest.MonkeyPatch) -> None:
     data = _make_gif([_solid((1, 2, 3), 8)])
     monkeypatch.setattr(gif, "MAX_RASTER_PIXELS", 10)
