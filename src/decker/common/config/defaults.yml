@@ -32,3 +32,10 @@ icons:
   # Icon theme for the System Icons library (an installed freedesktop theme name).
   # Empty: use the desktop's current theme (GTK or KDE settings), else Adwaita.
   system_theme: ""
+animation:
+  # Animate keys whose icon is an animated GIF; false shows each GIF's first frame only.
+  enabled: true
+  # Share of each deck's USB write time animations may use (percent); quality and frame rate drop to stay within it.
+  budget_percent: 75
+  # Memory for encoded animation frames, shared by all decks (MiB).
+  cache_mb: 64

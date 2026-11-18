@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from decker.animation.model import AnimationSpec
 from decker.common.model import KeyPressState
 
 if TYPE_CHECKING:
@@ -27,6 +28,7 @@ class DeviceState:
     Call update_key_image / update_key_label on each write-through event.
     Call get_key_state to read a consistent snapshot for any key index.
     Call switch_page when the device shows a different page.
+    Key animations are kept per page in memory only (the plugin host recomposes them after a restart).
     """
 
     def __init__(
@@ -43,6 +45,7 @@ class DeviceState:
         self._lock = threading.Lock()
         self._images: dict[int, bytes] = {}
         self._labels: dict[int, str] = {}
+        self._animations: dict[str, dict[int, AnimationSpec]] = {}  # page id -> key index -> spec
 
     # ------------------------------------------------------------------
     # Write-through updates
@@ -68,11 +71,21 @@ class DeviceState:
         if self._store is not None:
             self._store.save_key_label(self._device_id, self._page_id, key_index, label)
 
+    def set_key_animation(self, key_index: int, spec: AnimationSpec | None) -> None:
+        """Record (or with None forget) the animation of a key on the current page, in memory only."""
+        with self._lock:
+            page = self._animations.setdefault(self._page_id, {})
+            if spec is None:
+                page.pop(key_index, None)
+            else:
+                page[key_index] = spec
+
     def clear_key(self, key_index: int) -> None:
-        """Remove in-memory image and label for a key and delete them from the store."""
+        """Remove in-memory image, label and animation for a key and delete the image and label from the store."""
         with self._lock:
             self._images.pop(key_index, None)
             self._labels.pop(key_index, None)
+            self._animations.get(self._page_id, {}).pop(key_index, None)
         if self._store is not None:
             self._store.delete_key_state(self._device_id, self._page_id, key_index)
 
@@ -96,6 +109,16 @@ class DeviceState:
             label=label,
             press_state=self._get_press_state(key_index),
         )
+
+    def get_key_animation(self, key_index: int) -> AnimationSpec | None:
+        """Return the animation recorded for a key on the current page, or None."""
+        with self._lock:
+            return self._animations.get(self._page_id, {}).get(key_index)
+
+    def get_all_animations(self) -> dict[int, AnimationSpec]:
+        """Return a copy of the current page's recorded animations by key index."""
+        with self._lock:
+            return dict(self._animations.get(self._page_id, {}))
 
     def get_all_images(self) -> list[tuple[int, bytes]]:
         """Return all (key_index, image) pairs currently held in memory."""
@@ -122,7 +145,7 @@ class DeviceState:
                 self._labels[key_index] = label
 
     def switch_page(self, page_id: str) -> None:
-        """Drop the in-memory state and load page_id's persisted images and labels instead."""
+        """Drop the in-memory state and load page_id's persisted images and labels (and its animations) instead."""
         with self._lock:
             self._page_id = page_id
             self._images.clear()

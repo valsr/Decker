@@ -354,3 +354,11 @@ def test_the_system_icon_theme_defaults_to_auto_detect() -> None:
     from decker.common import config
 
     assert_that(config.get("icons.system_theme")).is_equal_to("")
+
+
+def test_animation_defaults_are_enabled_at_a_75_percent_budget_with_a_64_mib_cache() -> None:
+    from decker.common import config
+
+    assert_that(config.get("animation.enabled")).is_true()
+    assert_that(config.get("animation.budget_percent")).is_equal_to(75)
+    assert_that(config.get("animation.cache_mb")).is_equal_to(64)
