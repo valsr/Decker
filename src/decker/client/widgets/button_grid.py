@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import (
+    QBuffer,
     QByteArray,
     QEvent,
+    QIODevice,
     QMimeData,
     QPoint,
     QSize,
@@ -20,11 +22,14 @@ from PyQt6.QtGui import (
     QDrag,
     QEnterEvent,
     QFocusEvent,
+    QHideEvent,
     QIcon,
     QKeyEvent,
     QMouseEvent,
+    QMovie,
     QPixmap,
     QResizeEvent,
+    QShowEvent,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -48,6 +53,7 @@ _MIME_TYPE = "application/x-decker-action"
 _KEY_MIME_TYPE = "application/x-decker-key"
 _PLUS_ICON = Path(__file__).resolve().parents[2] / "assets" / "plus-circle.svg"
 _BADGE_COLOR = "#2ecc71"  # the copy badge's green
+_ICON_PX = 68  # px, the key image inside its button
 _BADGE_SIZE = 30  # px, the label holding the badge
 
 
@@ -119,7 +125,7 @@ class _RunButton(QToolButton):
         self.long_pressed.emit()
 
 
-class KeyButtonWidget(QPushButton):
+class KeyButtonWidget(QPushButton):  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """Square button for one key: a click selects it, its play button runs it, and it accepts action drops."""
 
     action_dropped = pyqtSignal(int, object)
@@ -143,6 +149,9 @@ class KeyButtonWidget(QPushButton):
         self._dragged = False  # a drag began during this press, so its remaining moves and release are not clicks
         self._scope = ""
         self._copy_badge = self._build_copy_badge()
+        self._poster: QPixmap | None = None  # the static image, shown while no animation plays
+        self._movie: QMovie | None = None
+        self._movie_buffer: QBuffer | None = None  # the movie reads from it, so it must outlive the movie
         self.setProperty("selected", False)
 
     def set_selected(self, selected: bool) -> None:
@@ -252,6 +261,7 @@ class KeyButtonWidget(QPushButton):
     def set_image(self, image_b64: str | None) -> None:
         """Set or clear the key image from a base64-encoded PNG."""
         if not image_b64:
+            self._poster = None
             self.setIcon(QIcon())
             self.setIconSize(QSize(0, 0))
             self._refresh_text()
@@ -260,8 +270,68 @@ class KeyButtonWidget(QPushButton):
         pixmap = QPixmap()
         pixmap.loadFromData(QByteArray(raw))
         self.setIcon(QIcon(pixmap))
-        self.setIconSize(QSize(68, 68))
+        self.setIconSize(QSize(_ICON_PX, _ICON_PX))
         self.setText("")
+        self._poster = pixmap
+
+    def set_animation(self, data: bytes | None) -> None:
+        """Play an animated image (WebP or GIF bytes) as the key face; None or unreadable data shows the poster."""
+        self._release_movie()
+        if not data:
+            return
+        buffer = QBuffer(self)
+        buffer.setData(QByteArray(data))
+        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        movie = QMovie(self)
+        movie.setDevice(buffer)
+        if not movie.isValid():
+            movie.deleteLater()
+            buffer.deleteLater()
+            return
+        self._movie, self._movie_buffer = movie, buffer
+        movie.frameChanged.connect(self._on_movie_frame)
+        movie.start()
+        if not self.isVisible():
+            movie.setPaused(True)
+
+    def _release_movie(self) -> None:
+        movie, buffer = self._movie, self._movie_buffer
+        self._movie = self._movie_buffer = None
+        if movie is None or buffer is None:
+            return
+        movie.stop()
+        movie.deleteLater()
+        buffer.close()
+        buffer.deleteLater()
+        self._restore_poster()
+
+    def _restore_poster(self) -> None:
+        if self._poster is None:
+            self.setIcon(QIcon())
+            self.setIconSize(QSize(0, 0))
+            self._refresh_text()
+            return
+        self.setIcon(QIcon(self._poster))
+        self.setIconSize(QSize(_ICON_PX, _ICON_PX))
+
+    def _on_movie_frame(self) -> None:
+        if self._movie is None:
+            return
+        self.setIcon(QIcon(self._movie.currentPixmap()))
+        self.setIconSize(QSize(_ICON_PX, _ICON_PX))
+        self.setText("")
+
+    def hideEvent(self, a0: QHideEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Pause the animation while the key is not on screen."""
+        super().hideEvent(a0)
+        if self._movie is not None:
+            self._movie.setPaused(True)
+
+    def showEvent(self, a0: QShowEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Resume the animation when the key is on screen again."""
+        super().showEvent(a0)
+        if self._movie is not None:
+            self._movie.setPaused(False)
 
     # ------------------------------------------------------------------
     # Drag source
@@ -457,3 +527,8 @@ class ButtonGridWidget(QWidget):
         """Update the image for a single key button from a base64-encoded PNG."""
         if button := self._buttons.get(key_index):
             button.set_image(image_b64)
+
+    def set_key_animation(self, key_index: int, animation_b64: str | None) -> None:
+        """Play a base64-encoded animated image on a key; None or an empty string goes back to its static image."""
+        if button := self._buttons.get(key_index):
+            button.set_animation(base64.b64decode(animation_b64) if animation_b64 else None)
