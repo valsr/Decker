@@ -92,6 +92,8 @@ files. `image` and `icon` are mutually exclusive (a payload with both is dropped
 (malformed, unknown pack, path outside the pack, too large, pack uninstalled later) clears the image and is logged.
 Decker's own **System Icons** (the server's freedesktop icon theme) are packs too: `pack:decker.system.<category>/<icon name>` with `<category>` one of `actions`, `applications`, `categories`, `devices`, `emblems`, `emotes`, `mimetypes`, `places`, `status`, `other` and the icon's name without extension (for example `pack:decker.system.actions/edit-copy`). The name follows the active theme, and an icon the theme does not have is treated like a missing pack icon. The `decker.system.` pack id prefix is reserved and a plugin pack using it is refused.
 
+**User library.** Icons the user imported (GIF, PNG, JPG, SVG) form the `decker.user` pack, always listed (even when empty) after the plugin packs: `pack:decker.user/<id>.<ext>`, for example `pack:decker.user/my-cat.gif`. Imports go through the `icon_import` RPC, which is loopback-gated like `plugin_install` (`icon_import_suggest` and `icon_import_preview` are open to every client). The `decker.user` pack id is reserved and a plugin pack using it is refused.
+
 A pack icon is drawn at 70% of the key and centred, so the key's title stays readable around it (images sent with
 `image` still fill the key). `color` recolours SVG icons: it sets the SVG's `color` (so `fill="currentColor"` follows it) and a default `fill`, and
 the alpha becomes the SVG's opacity. Raster icons ignore it, and an invalid colour leaves the icon untinted.

@@ -10,11 +10,14 @@ import time
 import uuid
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import PurePath
 from typing import TYPE_CHECKING, Any
 
 from rpyc.core.service import Service
 from rpyc.utils import exposed
 
+from decker.asset.iconresize import ImageImportError, ImportOptions
+from decker.asset.usericons import ImportResult, normalize_id
 from decker.common import config
 from decker.common.appearance_schema import APPEARANCE_KEYS
 from decker.common.icon_ref import DECKER_ICON_REF, parse_icon_ref
@@ -238,6 +241,42 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             return ""
         data = self._context.plugin_manager.icon_packs.read_icon(pack_id, name)
         return base64.b64encode(data).decode("ascii") if data else ""
+
+    @exposed
+    def icon_import(self, name: str, filename: str, data: bytes, options: str) -> str:
+        """Import an image into the User icon pack (loopback only); returns the result as JSON."""
+        if not self._install_allowed():
+            raise PermissionError(_REMOTE_INSTALL_DENIED)
+        if self._context is None:
+            return ImportResult(ok=False, error="server not ready").to_json()
+        library = self._context.plugin_manager.icon_packs.user_icons
+        label = name if name.strip() else PurePath(filename).stem
+        try:
+            parsed = ImportOptions.from_json(options)
+        except ValueError as exc:
+            return ImportResult(ok=False, icon_id=normalize_id(label), error=f"invalid options: {exc}").to_json()
+        return library.import_icon(label, bytes(data), parsed).to_json()
+
+    @exposed
+    def icon_import_suggest(self, name: str) -> str:
+        """Return the first free User icon id for a name."""
+        if self._context is None:
+            return normalize_id(name) or "icon"
+        return self._context.plugin_manager.icon_packs.user_icons.suggest_id(name)
+
+    @exposed
+    def icon_import_preview(self, filename: str, data: bytes, options: str) -> str:
+        """Return a base64 PNG (or the SVG) of how an import would look, or an empty string if it is refused."""
+        del filename
+        if self._context is None:
+            return ""
+        library = self._context.plugin_manager.icon_packs.user_icons
+        try:
+            preview = library.preview(bytes(data), ImportOptions.from_json(options))
+        except (ValueError, ImageImportError) as exc:
+            logging.info("Icon import preview refused: %s", exc)
+            return ""
+        return base64.b64encode(preview).decode("ascii")
 
     @exposed
     def plugin_install_allowed(self) -> bool:

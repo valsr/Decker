@@ -1,13 +1,19 @@
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from assertpy import assert_that
 
 from decker.asset.iconpack import IconPackRegistry
+from decker.asset.usericons import USER_PACK_ID, USER_PLUGIN_NAME, UserIcons
 from decker.common.icon_ref import DECKER_ICON_REF
 from decker.plugin.icons import MAX_ICON_BYTES
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import PluginManifest
+
+
+def _no_user(packs: list[dict]) -> list[dict]:
+    return [pack for pack in packs if pack["id"] != USER_PACK_ID]
 
 
 def _plugin(tmp_path, path="pack", plugin_id="com.t.p", pack_id="com.t.p.icons") -> InstalledPlugin:
@@ -38,7 +44,7 @@ def test_list_icons_finds_images(tmp_path):
     registry = IconPackRegistry()
     registry.register(_plugin(tmp_path))
     assert_that(registry.list_icons("com.t.p.icons")).is_equal_to(["a.png", "sub/b.svg"])
-    assert_that(registry.list_packs()).is_equal_to(
+    assert_that(_no_user(registry.list_packs())).is_equal_to(
         [
             {
                 "id": "com.t.p.icons",
@@ -123,7 +129,7 @@ def test_pack_path_escaping_plugin_is_refused(tmp_path):
     failures: list[tuple[str, str]] = []
     registry = IconPackRegistry(on_failure=lambda pid, err: failures.append((pid, err)))
     registry.register(_plugin(plugin_dir, path="../elsewhere"))
-    assert_that(registry.list_packs()).is_empty()
+    assert_that(_no_user(registry.list_packs())).is_empty()
     assert_that(failures).is_length(1)
     assert_that(failures[0][1]).contains("outside")
 
@@ -136,7 +142,7 @@ def test_missing_folder_and_duplicate_id_are_refused(tmp_path):
     registry.register(_plugin(tmp_path))
     registry.register(_plugin(tmp_path))
     assert_that(failures).is_length(2)
-    assert_that(registry.list_packs()).is_length(1)
+    assert_that(_no_user(registry.list_packs())).is_length(1)
 
 
 def test_unregister_removes_pack(tmp_path):
@@ -144,7 +150,7 @@ def test_unregister_removes_pack(tmp_path):
     registry = IconPackRegistry()
     registry.register(_plugin(tmp_path))
     registry.unregister("com.t.p")
-    assert_that(registry.list_packs()).is_empty()
+    assert_that(_no_user(registry.list_packs())).is_empty()
     assert_that(registry.list_icons("com.t.p.icons")).is_empty()
 
 
@@ -259,10 +265,10 @@ class TestSystemIconPacks:
 
         packs = registry.list_packs()
 
-        assert_that([p["id"] for p in packs]).is_equal_to(
+        assert_that([p["id"] for p in _no_user(packs)]).is_equal_to(
             ["com.t.p.icons", "decker.system.actions", "decker.system.places"]
         )
-        assert_that(packs[1]["plugin_name"]).is_equal_to("System Icons")
+        assert_that(_no_user(packs)[1]["plugin_name"]).is_equal_to("System Icons")
 
     def test_icons_and_bytes_are_served_for_system_packs(self, tmp_path):
         registry = IconPackRegistry(system_icons=self._system(tmp_path))
@@ -300,12 +306,12 @@ class TestSystemIconPacks:
 
         registry.unregister("com.t.p")
 
-        assert_that([p["id"] for p in registry.list_packs()]).is_equal_to(
+        assert_that([p["id"] for p in _no_user(registry.list_packs())]).is_equal_to(
             ["decker.system.actions", "decker.system.places"]
         )
 
     def test_the_default_registry_is_hermetic_in_tests(self):
-        assert_that(IconPackRegistry().list_packs()).is_empty()
+        assert_that(_no_user(IconPackRegistry().list_packs())).is_empty()
 
 
 def test_warm_warms_the_system_icons():
@@ -324,3 +330,50 @@ def test_warm_warms_the_system_icons():
     IconPackRegistry(system_icons=Spy()).warm()  # type: ignore[arg-type]
 
     assert_that(Spy.warmed).is_equal_to(1)
+
+
+def _user_registry(tmp_path) -> IconPackRegistry:
+    return IconPackRegistry(user_icons=UserIcons(tmp_path / "user"))
+
+
+def test_user_pack_is_listed_even_when_empty(tmp_path) -> None:
+    registry = _user_registry(tmp_path)
+    packs = registry.list_packs()
+    user = [pack for pack in packs if pack["id"] == USER_PACK_ID]
+    assert_that(user).is_length(1)
+    assert_that(user[0]["icon_count"]).is_equal_to(0)
+    assert_that(user[0]["plugin_name"]).is_equal_to(USER_PLUGIN_NAME)
+
+
+def test_user_pack_icons_are_served_by_name(tmp_path) -> None:
+    registry = _user_registry(tmp_path)
+    (tmp_path / "user").mkdir()
+    (tmp_path / "user" / "cat.svg").write_bytes(b"<svg/>")
+    assert_that(registry.list_icons(USER_PACK_ID)).is_equal_to(["cat.svg"])
+    assert_that(registry.read_icon(USER_PACK_ID, "cat.svg")).is_equal_to(b"<svg/>")
+    assert_that(registry.read_ref(f"pack:{USER_PACK_ID}/cat.svg")).is_equal_to(b"<svg/>")
+    assert_that(registry.read_icon(USER_PACK_ID, "../x.svg")).is_none()
+
+
+def test_user_pack_sits_between_plugin_and_system_packs(tmp_path) -> None:
+    _pack(tmp_path)
+    registry = _user_registry(tmp_path)
+    registry.register(_plugin(tmp_path))
+    ids = [pack["id"] for pack in registry.list_packs()]
+    assert_that(ids[:2]).is_equal_to(["com.t.p.icons", USER_PACK_ID])
+
+
+def test_a_plugin_cannot_register_the_user_pack_id(tmp_path) -> None:
+    _pack(tmp_path)
+    failures: list[tuple[str, str]] = []
+    registry = IconPackRegistry(
+        on_failure=lambda pid, err: failures.append((pid, err)), user_icons=UserIcons(tmp_path / "user")
+    )
+    plugin = MagicMock()  # the manifest validator cannot produce this id, so the registry guard is tested directly
+    plugin.manifest.id = "com.t.p"
+    plugin.plugin_dir = tmp_path
+    plugin.manifest.icon_packs = [MagicMock(id=USER_PACK_ID, path="pack")]
+    registry.register(plugin)
+    assert_that(failures).is_length(1)
+    assert_that(failures[0][1]).contains("reserved")
+    assert_that([p for p in registry.list_packs() if p["id"] == USER_PACK_ID]).is_length(1)
