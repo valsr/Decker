@@ -352,8 +352,16 @@ class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
         layout.addWidget(choose_file_btn)
         layout.addWidget(from_pack_btn)
 
+    def _import_allowed(self) -> bool:
+        if self.connection_manager is None:
+            return False
+        try:
+            return bool(self.connection_manager.call("plugin_install_allowed"))
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+
     def _choose_file(self) -> None:
-        if self.connection_manager is None or not self.connection_manager.call("plugin_install_allowed"):
+        if self.connection_manager is None or not self._import_allowed():
             QMessageBox.information(self, "Import icon", "Importing icons needs a local connection to the server.")
             return
         path_str, _filter = QFileDialog.getOpenFileName(self, "Choose icon", "", _IMAGE_FILE_FILTER)

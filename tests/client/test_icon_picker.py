@@ -156,6 +156,28 @@ class TestIconPickerWidget:
         assert_that(shown).is_length(1)
         assert_that(shown[0]).contains("local connection")
 
+    def test_choose_file_treats_a_failing_allowed_check_as_not_allowed(
+        self, qapp, monkeypatch
+    ):  # pylint: disable=unused-argument
+        import decker.client.icon_picker as module  # pylint: disable=import-outside-toplevel
+
+        shown: list[str] = []
+        monkeypatch.setattr(module.QMessageBox, "information", staticmethod(lambda _p, _t, text: shown.append(text)))
+
+        def fail(*_a, **_k):
+            raise AssertionError("file dialog opened")
+
+        monkeypatch.setattr(module.QFileDialog, "getOpenFileName", staticmethod(fail))
+
+        class Broken:
+            def call(self, *_args):
+                raise ConnectionError("gone")
+
+        IconPickerWidget(None, Broken())._choose_file()  # pylint: disable=protected-access
+
+        assert_that(shown).is_length(1)
+        assert_that(shown[0]).contains("local connection")
+
     def test_choose_file_emits_nothing_when_dialog_cancelled(
         self, qapp, monkeypatch
     ):  # pylint: disable=unused-argument
