@@ -7,13 +7,16 @@ import pytest
 from assertpy import assert_that
 from PIL import Image
 
+from decker.animation.model import AnimationSpec
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
 from decker.plugin.manifest import ManifestValidationError, PluginManifest
 from decker.server.appearance import (
+    compose_key_face,
     compose_key_frames,
     compose_key_image,
     resolve_appearance,
 )
+from tests.server.animation_fixture import make_gif
 
 
 def _png(color: str, size: int = 72) -> bytes:
@@ -467,3 +470,28 @@ def test_existing_compose_key_image_output_is_unchanged() -> None:
     assert_that(hashlib.sha256(without_image).hexdigest()).is_equal_to(
         "da5662609ffa77924384bd1bc5bc01cc6b27779ed2ec9fba941d6b4910368826"
     )
+
+
+def test_compose_key_face_of_an_animated_gif_carries_the_spec_that_produced_the_poster() -> None:
+    appearance = _appearance(background="#112233", title="X")
+    gif = make_gif(3)
+
+    face = compose_key_face(appearance, gif, "P", "#ff0000", 0.7)
+
+    expected = compose_key_image(appearance, gif, "P", plugin_image_color="#ff0000", plugin_image_scale=0.7)
+    assert_that(face.png).is_equal_to(expected)
+    assert_that(face.animation).is_equal_to(AnimationSpec(gif, appearance, "P", 0.7))
+
+
+@pytest.mark.parametrize(
+    "image",
+    [None, _png("#00ff00"), make_gif(1), b"GIF89a" + b"\x00\xff" * 40, b"GIF89a"],
+    ids=["none", "png", "single-frame-gif", "corrupt-gif", "header-only-gif"],
+)
+def test_compose_key_face_of_anything_but_an_animated_gif_is_static(image: bytes | None) -> None:
+    appearance = _appearance(background="#112233")
+
+    face = compose_key_face(appearance, image, "")
+
+    assert_that(face.png).is_equal_to(compose_key_image(appearance, image, ""))
+    assert_that(face.animation).is_none()

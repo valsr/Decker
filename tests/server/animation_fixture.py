@@ -3,13 +3,17 @@
 import io
 import threading
 import time
-from collections.abc import Callable
-from unittest.mock import MagicMock
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
 from decker.animation.model import AnimationSpec
 from decker.server.appearance import resolve_appearance
+from decker.server.device_state_store import DeviceStateStore
+from decker.server.devices.manager import DeviceManager, device_id_for_serial
 
 WRITER_THREAD = "decker-key-writer"
 
@@ -22,8 +26,14 @@ def make_gif(count: int = 3, delay_ms: int = 100) -> bytes:
     return buffer.getvalue()
 
 
-def make_spec() -> AnimationSpec:
-    return AnimationSpec(make_gif(), resolve_appearance({}, {"background": "#202020"}), "", 1.0)
+def truncated_gif() -> bytes:
+    """A valid 8-frame GIF cut in half: Pillow still counts its frames, but decoding them fails."""
+    data = make_gif(8)
+    return data[: len(data) // 2]
+
+
+def make_spec(gif: bytes | None = None) -> AnimationSpec:
+    return AnimationSpec(gif or make_gif(), resolve_appearance({}, {"background": "#202020"}), "", 1.0)
 
 
 def wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
@@ -76,3 +86,28 @@ def stateful_deck(serial: str = "ABC123", path: str = "/dev/hidraw0") -> MagicMo
 def lifecycle(deck: MagicMock) -> list[str]:
     """The deck's open/close/reset calls in order."""
     return [call[0] for call in deck.mock_calls if call[0] in LIFECYCLE]
+
+
+@contextmanager
+def opened_deck_manager(data_dir: Path) -> Iterator[tuple[DeviceManager, str, WriteLog]]:
+    """A created DeviceManager with one fake deck open on page "p1"; yields (manager, device id, write log)."""
+    store = DeviceStateStore(data_dir=data_dir)
+    store.create(MagicMock())
+    store.save_device = MagicMock()  # type: ignore[method-assign]  # mocked deck info is not storable
+    context = MagicMock()
+    context.device_state_store = store
+    context.page_controller.active_page_id.return_value = "p1"
+    manager = DeviceManager(on_key_event=lambda *_: None)
+    log = WriteLog()
+    try:
+        manager.create(context)
+        deck = stateful_deck()
+        deck.set_key_image.side_effect = log
+        with patch("decker.server.devices.manager._HardwareDeviceManager") as hardware:
+            hardware.return_value.enumerate.return_value = [deck]
+            device = manager.open_device(device_id_for_serial("ABC123"))
+        assert device is not None
+        yield manager, device.device_id, log
+    finally:
+        manager.destroy()
+        store.destroy()
