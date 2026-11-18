@@ -45,7 +45,7 @@ discarded.
 |-------|---------|---------|
 | `ready` | | none |
 | `pong` | | none |
-| `set_image` | yes | `{"image": "<base64>", "format": "png"}` (`png`, `jpeg` or `svg`), or `{"image": null}` to clear, or `{"icon": "pack:<pack id>/<path>", "color": "#rrggbb"}` to show an icon from an installed icon pack (see [Images](#images)) |
+| `set_image` | yes | `{"image": "<base64>", "format": "png"}` (`png`, `jpeg`, `svg` or `gif`; an animated GIF animates on the key, see [Images](#images)), or `{"image": null}` to clear, or `{"icon": "pack:<pack id>/<path>", "color": "#rrggbb"}` to show an icon from an installed icon pack (see [Images](#images)) |
 | `set_title` | yes | `{"title": "text"}`, shown only when the user set no title; titles are one line, so line breaks are drawn as a single space |
 | `set_state` | yes | `{"state": 1}`, an index into the action's `states` |
 | `show_alert`, `show_ok` | yes | none (accepted, no visible effect in v1) |
@@ -100,6 +100,12 @@ A user can set an icon override on a key; it replaces whatever the plugin shows 
 
 Raster images larger than 4096 x 4096 pixels are rejected. Decker scales the image to the key and draws it over
 the key background, then the title. Invalid base64 is dropped.
+
+A GIF with 2 to 300 frames, sent as `image` or taken from a pack icon, animates on the key (unless the user turned
+`animation.enabled` off). The key first shows the GIF's first frame; the animation starts once Decker has built it.
+Frame delays under 20 ms are played as 100 ms. A GIF over a limit (see [limits](limits.md)), a single-frame GIF or one
+that fails to decode is shown as its first frame (or, if undecodable, as no image) and never animates. Sending any other
+image, or clearing the image, ends the animation.
 
 ## Flood protection and liveness
 
