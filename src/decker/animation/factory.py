@@ -113,10 +113,15 @@ def _build_preview(spec: AnimationSpec) -> tuple[bytes, int]:
     return data, len(data)
 
 
+class _OverBudgetError(Exception):
+    pass
+
+
 class AnimationFactory:
     """Shared, size-bounded source of encoded animations and GUI previews, built in the background."""
 
     def __init__(self, cache_bytes: int) -> None:
+        self._cache_bytes: int = cache_bytes
         self._frames: SizedLru = SizedLru(cache_bytes)
         self._previews: SizedLru = SizedLru(PREVIEW_CACHE_BYTES)
         self._specs: OrderedDict[str, AnimationSpec] = OrderedDict()
@@ -182,13 +187,20 @@ class AnimationFactory:
     def _build_in_background(self, key: _Key, spec: AnimationSpec) -> None:
         try:
             if not self._closed:
-                self._frames.get_or_build(key, functools.partial(_build_animation, spec, key[1], key[2]))
+                self._frames.get_or_build(key, functools.partial(self._build_within_budget, spec, key[1], key[2]))
         except Exception as exc:  # pylint: disable=broad-exception-caught
             self._remember_failure(spec, exc)
         finally:
             with self._state:
                 self._pending.discard(key)
                 self._state.notify_all()
+
+    def _build_within_budget(self, spec: AnimationSpec, fmt: KeyFormat, quality: int) -> tuple[Animation, int]:
+        # An animation the cache cannot hold would be rebuilt on every poll, so it fails like a bad GIF.
+        animation, size = _build_animation(spec, fmt, quality)
+        if size > self._cache_bytes:
+            raise _OverBudgetError(f"animation exceeds the cache budget ({size} > {self._cache_bytes} bytes)")
+        return animation, size
 
     def _remember_failure(self, spec: AnimationSpec, exc: Exception) -> None:
         with self._state:
