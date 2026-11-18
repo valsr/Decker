@@ -7,6 +7,7 @@ import pytest
 from assertpy import assert_that
 from PIL import Image
 
+from decker.animation import gif as gif_module
 from decker.animation.gif import MAX_GIF_FRAMES
 from decker.animation.model import AnimationSpec
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
@@ -463,13 +464,14 @@ def test_title_and_background_are_drawn_on_every_frame() -> None:
 
 def test_existing_compose_key_image_output_is_unchanged() -> None:
     appearance = _appearance(background="#112233", title="X")
-    with_image = compose_key_image(appearance, _png("#00ff00"), "Plugin")
-    without_image = compose_key_image(appearance, None, "Plugin")
-    assert_that(hashlib.sha256(with_image).hexdigest()).is_equal_to(
-        "33665d76e23f6eba2f01298be83d8475e089d4957213c74f3408b06f0911d11e"
+    # Pixel hashes (not PNG bytes, which vary with the zlib/Pillow version), taken from the pre-refactor 399bca1 code.
+    with_image = _open(compose_key_image(appearance, _png("#00ff00"), "Plugin"))
+    without_image = _open(compose_key_image(appearance, None, "Plugin"))
+    assert_that(hashlib.sha256(with_image.tobytes()).hexdigest()).is_equal_to(
+        "9e1380e915cb77e1fbf10f0ccab905bd4f226ab51394ccaf13b08d7578479557"
     )
-    assert_that(hashlib.sha256(without_image).hexdigest()).is_equal_to(
-        "da5662609ffa77924384bd1bc5bc01cc6b27779ed2ec9fba941d6b4910368826"
+    assert_that(hashlib.sha256(without_image.tobytes()).hexdigest()).is_equal_to(
+        "f15b622974dc7fb55301c3c8fd4b3d7e86922e23037e538b2e76538000ebc2ca"
     )
 
 
@@ -495,4 +497,13 @@ def test_compose_key_face_of_anything_but_an_animated_gif_is_static(image: bytes
     face = compose_key_face(appearance, image, "")
 
     assert_that(face.png).is_equal_to(compose_key_image(appearance, image, ""))
+    assert_that(face.animation).is_none()
+
+
+def test_compose_key_face_of_gif_bytes_over_the_icon_size_cap_is_static(monkeypatch: pytest.MonkeyPatch) -> None:
+    gif = make_gif(3)
+    monkeypatch.setattr(gif_module, "MAX_ICON_BYTES", len(gif) - 1)
+
+    face = compose_key_face(_appearance(), gif, "")
+
     assert_that(face.animation).is_none()
