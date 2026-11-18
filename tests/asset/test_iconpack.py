@@ -97,6 +97,25 @@ def test_read_icon_rejects_oversized(tmp_path):
     assert_that(registry.read_icon("com.t.p.icons", "big.png")).is_none()
 
 
+def test_gif_is_listed_and_served_from_a_pack(tmp_path):
+    _pack(tmp_path)
+    (tmp_path / "pack" / "a.gif").write_bytes(b"GIF89a-bytes")
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    assert_that(registry.list_icons("com.t.p.icons")).contains("a.gif")
+    assert_that(registry.read_icon("com.t.p.icons", "a.gif")).is_equal_to(b"GIF89a-bytes")
+
+
+def test_icon_of_3_mib_is_served_and_5_mib_is_refused(tmp_path):
+    _pack(tmp_path)
+    (tmp_path / "pack" / "mid.png").write_bytes(b"x" * (3 * 1024 * 1024))
+    (tmp_path / "pack" / "huge.png").write_bytes(b"x" * (5 * 1024 * 1024))
+    registry = IconPackRegistry()
+    registry.register(_plugin(tmp_path))
+    assert_that(registry.read_icon("com.t.p.icons", "mid.png")).is_length(3 * 1024 * 1024)
+    assert_that(registry.read_icon("com.t.p.icons", "huge.png")).is_none()
+
+
 def test_pack_path_escaping_plugin_is_refused(tmp_path):
     plugin_dir = tmp_path / "plugin"
     (tmp_path / "elsewhere").mkdir()

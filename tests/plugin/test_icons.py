@@ -49,6 +49,13 @@ class TestReadIcon:
 
         assert_that(read_icon(tmp_path, "big")).is_none()
 
+    def test_icon_of_3_mib_is_served_and_5_mib_is_refused(self, tmp_path):
+        (tmp_path / "mid.png").write_bytes(b"x" * (3 * 1024 * 1024))
+        (tmp_path / "huge.png").write_bytes(b"x" * (5 * 1024 * 1024))
+
+        assert_that(read_icon(tmp_path, "mid")).is_length(3 * 1024 * 1024)
+        assert_that(read_icon(tmp_path, "huge")).is_none()
+
     def test_unreadable_icon_is_skipped(self, tmp_path, monkeypatch):
         (tmp_path / "icon.png").write_bytes(b"png")
 

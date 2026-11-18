@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-MAX_ICON_BYTES = 256 * 1024
+MAX_ICON_BYTES = 4 * 1024 * 1024
 # Elgato manifests name icons without an extension; @2x is the high-resolution variant.
 _CANDIDATE_SUFFIXES = ("", ".svg", "@2x.png", ".png")
 

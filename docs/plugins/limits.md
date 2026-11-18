@@ -11,7 +11,7 @@
 | Protocol line size | 8 MiB; longer lines are discarded |
 | stderr | read in 8 KiB chunks and logged; never buffered unbounded |
 | Raster image from `set_image` | at most 4096 x 4096 pixels |
-| Icon file in an icon pack | size-capped when served over RPC |
+| Icon file (pack icon or action `icon`) | at most 4 MiB; larger files are ignored |
 
 ## Process lifecycle
 
