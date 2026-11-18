@@ -595,6 +595,25 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             return ""
 
     @exposed
+    def key_animation(self, animation_id: str) -> str:
+        """
+        Return the composed animated image of an animated key, by the animation_id of its state event.
+
+        Returns:
+            str: base64 animated WebP (GIF without WebP support), or "" if the id is unknown or cannot be built.
+        """
+        if self._context is None or not isinstance(animation_id, str):
+            return ""
+        try:
+            factory = self._context.device_manager.animation_factory
+            spec = factory.spec_for(animation_id) if factory is not None else None
+            image = factory.preview_webp(spec) if factory is not None and spec is not None else None
+            return base64.b64encode(image).decode("ascii") if image else ""
+        except Exception:  # pylint: disable=broad-except
+            logging.debug("key_animation failed", exc_info=True)
+            return ""
+
+    @exposed
     @api_response
     def pages_list(self, device_id: str, profile_id: int = -1) -> DevicePages | None:
         """Return a profile's pages in order, its default page and the page shown on the device.
