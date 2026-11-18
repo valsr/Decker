@@ -4,6 +4,7 @@ import re
 from xml.etree import ElementTree
 
 _DOCTYPE = re.compile(r"<!\s*(doctype|entity)", re.IGNORECASE)
+_ENCODING = re.compile(r"^\s*<\?xml[^>]*?encoding\s*=\s*[\"']([^\"']*)[\"']", re.IGNORECASE)
 _FORBIDDEN_TAGS = frozenset({"script", "foreignobject"})
 _ALLOWED_HREF_PREFIXES = ("#", "data:image/")
 
@@ -23,10 +24,15 @@ def _check_attributes(element: ElementTree.Element) -> None:
 
 def validate_svg(data: bytes) -> None:
     """Raise ValueError(reason) unless data is a self-contained SVG without scripts, entities or external references."""
+    if b"\x00" in data:
+        raise ValueError("not UTF-8 text")
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise ValueError("not valid UTF-8 text") from exc
+        raise ValueError("not UTF-8 text") from exc
+    declared = _ENCODING.match(text)
+    if declared and declared.group(1).lower() != "utf-8":
+        raise ValueError("only UTF-8 encoding is allowed")
     if _DOCTYPE.search(text):
         raise ValueError("DOCTYPE and ENTITY declarations are not allowed")
     try:
