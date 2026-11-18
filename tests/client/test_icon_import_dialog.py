@@ -53,7 +53,7 @@ class TestIconImportDialog:
     def test_dialog_prefills_the_id_from_the_suggestion(self, qapp: QApplication, tmp_path: Path) -> None:
         server = FakeServer()
 
-        dialog = IconImportDialog(None, server, _file(tmp_path))
+        dialog = IconImportDialog(None, server, "Cat.png", _png_bytes())
 
         assert_that(server.named("icon_import_suggest")).is_equal_to([("icon_import_suggest", "Cat")])
         assert_that(dialog._id_edit.text()).is_equal_to("cat")  # pylint: disable=protected-access
@@ -61,7 +61,7 @@ class TestIconImportDialog:
     def test_import_sends_id_bytes_and_options_and_emits_imported(self, qapp: QApplication, tmp_path: Path) -> None:
         server = FakeServer()
         path = _file(tmp_path)
-        dialog = IconImportDialog(None, server, path)
+        dialog = IconImportDialog(None, server, "Cat.png", path.read_bytes())
         received: list[str] = []
         dialog.imported.connect(received.append)
         dialog._fit.setCurrentText("Stretch")  # pylint: disable=protected-access
@@ -80,7 +80,7 @@ class TestIconImportDialog:
         server = FakeServer(
             {"ok": False, "id": "cat", "file": "", "error": "cat already exists", "suggestion": "cat-2"}
         )
-        dialog = IconImportDialog(None, server, _file(tmp_path))
+        dialog = IconImportDialog(None, server, "Cat.png", _png_bytes())
         received: list[str] = []
         dialog.imported.connect(received.append)
 
@@ -97,7 +97,7 @@ class TestIconImportDialog:
     def test_svg_hides_fit_and_interpolation(self, qapp: QApplication, tmp_path: Path) -> None:
         svg = _file(tmp_path, "logo.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>")
 
-        dialog = IconImportDialog(None, FakeServer(), svg)
+        dialog = IconImportDialog(None, FakeServer(), "logo.svg", svg.read_bytes())
         dialog.show()
 
         assert_that(dialog._fit.isVisible()).is_false()  # pylint: disable=protected-access
@@ -105,7 +105,7 @@ class TestIconImportDialog:
 
     def test_options_change_refreshes_the_preview(self, qapp: QApplication, tmp_path: Path) -> None:
         server = FakeServer()
-        dialog = IconImportDialog(None, server, _file(tmp_path))
+        dialog = IconImportDialog(None, server, "Cat.png", _png_bytes())
         before = len(server.named("icon_import_preview"))
 
         dialog._fit.setCurrentText("Stretch")  # pylint: disable=protected-access
@@ -117,6 +117,6 @@ class TestIconImportDialog:
         assert_that(dialog._preview.pixmap().isNull()).is_false()  # pylint: disable=protected-access
 
     def test_refused_preview_shows_a_placeholder_not_an_exception(self, qapp: QApplication, tmp_path: Path) -> None:
-        dialog = IconImportDialog(None, FakeServer(preview=""), _file(tmp_path))
+        dialog = IconImportDialog(None, FakeServer(preview=""), "Cat.png", _png_bytes())
 
         assert_that(dialog._preview.text()).is_not_empty()  # pylint: disable=protected-access

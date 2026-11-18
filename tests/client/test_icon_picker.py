@@ -32,9 +32,9 @@ class TestIconPickerWidget:
         class FakeImport(QObject):
             imported = pyqtSignal(str)
 
-            def __init__(self, _parent, _cm, path):
+            def __init__(self, _parent, _cm, name, _data):
                 super().__init__()
-                opened.append(path)
+                opened.append(Path(name))
 
             def exec(self):
                 self.imported.emit("icon.png")
@@ -50,8 +50,65 @@ class TestIconPickerWidget:
 
         widget._choose_file()  # pylint: disable=protected-access
 
-        assert_that(opened).is_equal_to([source])
+        assert_that(opened).is_equal_to([Path("icon.png")])
         assert_that(received).is_equal_to([("decker.user", "icon.png")])
+
+    def _picker_with_dialog(self, monkeypatch, source: Path):
+        import decker.client.icon_picker as module  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(module.QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(source), "")))
+        warnings: list[str] = []
+        monkeypatch.setattr(module.QMessageBox, "warning", staticmethod(lambda _p, _t, text: warnings.append(text)))
+        opened: list[tuple[str, bytes]] = []
+
+        class FakeImport(QObject):
+            imported = pyqtSignal(str)
+
+            def __init__(self, _parent, _cm, name, data):
+                super().__init__()
+                opened.append((name, data))
+
+            def exec(self):
+                return 0
+
+        monkeypatch.setattr(module, "IconImportDialog", FakeImport)
+        return IconPickerWidget(None, _Allowed()), warnings, opened
+
+    def test_choose_file_warns_and_skips_the_dialog_for_an_oversize_file(
+        self, qapp, tmp_path, monkeypatch
+    ):  # pylint: disable=unused-argument
+        source = tmp_path / "big.png"
+        source.write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+        widget, warnings, opened = self._picker_with_dialog(monkeypatch, source)
+
+        widget._choose_file()  # pylint: disable=protected-access
+
+        assert_that(warnings).is_length(1)
+        assert_that(warnings[0]).contains("4 MiB")
+        assert_that(opened).is_empty()
+
+    def test_choose_file_warns_instead_of_raising_for_an_unreadable_file(
+        self, qapp, tmp_path, monkeypatch
+    ):  # pylint: disable=unused-argument
+        widget, warnings, opened = self._picker_with_dialog(monkeypatch, tmp_path / "gone.png")
+
+        widget._choose_file()  # pylint: disable=protected-access
+
+        assert_that(warnings).is_length(1)
+        assert_that(warnings[0]).contains("gone.png")
+        assert_that(opened).is_empty()
+
+    def test_choose_file_passes_the_bytes_of_a_normal_file_to_the_dialog(
+        self, qapp, tmp_path, monkeypatch
+    ):  # pylint: disable=unused-argument
+        source = tmp_path / "ok.png"
+        source.write_bytes(b"abc")
+        widget, warnings, opened = self._picker_with_dialog(monkeypatch, source)
+
+        widget._choose_file()  # pylint: disable=protected-access
+
+        assert_that(warnings).is_empty()
+        assert_that(opened).is_equal_to([("ok.png", b"abc")])
 
     def test_choose_file_explains_when_import_is_not_allowed(
         self, qapp, tmp_path, monkeypatch

@@ -38,6 +38,7 @@ from decker.common.icon_ref import icon_display_name
 
 _IMAGE_FILE_FILTER = "Images (*.svg *.png *.jpg *.jpeg *.gif)"
 _THUMB_SIZE = 64
+MAX_IMPORT_BYTES = 4 * 1024 * 1024  # the server's per-icon limit
 _FILTER_DELAY_MS = 150
 _DATA_ROLE = Qt.ItemDataRole.UserRole
 
@@ -357,7 +358,16 @@ class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
         path_str, _filter = QFileDialog.getOpenFileName(self, "Choose icon", "", _IMAGE_FILE_FILTER)
         if not path_str:
             return
-        dialog = IconImportDialog(self, self.connection_manager, Path(path_str))
+        path = Path(path_str)
+        try:
+            if path.stat().st_size > MAX_IMPORT_BYTES:
+                QMessageBox.warning(self, "Import icon", f"{path.name} is larger than 4 MiB and cannot be imported.")
+                return
+            data = path.read_bytes()
+        except OSError as exc:
+            QMessageBox.warning(self, "Import icon", f"Cannot read {path.name}: {exc}")
+            return
+        dialog = IconImportDialog(self, self.connection_manager, path.name, data)
         dialog.imported.connect(lambda file: self.pack_icon_selected.emit("decker.user", file))
         dialog.exec()
 

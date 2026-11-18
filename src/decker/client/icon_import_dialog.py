@@ -35,15 +35,15 @@ class IconImportDialog(QDialog):  # pylint: disable=too-many-instance-attributes
 
     imported = pyqtSignal(str)
 
-    def __init__(self, parent: QWidget | None, connection_manager: _RpcCaller, path: Path) -> None:
+    def __init__(self, parent: QWidget | None, connection_manager: _RpcCaller, filename: str, data: bytes) -> None:
         super().__init__(parent)
         self.setWindowTitle("Import icon")
         self._cm = connection_manager
-        self._path = path
-        self._data = path.read_bytes()
+        self._filename = filename
+        self._data = data
         self._suggestion = ""
 
-        self._id_edit = QLineEdit(self._call_str("icon_import_suggest", path.stem) or path.stem)
+        self._id_edit = QLineEdit(self._call_str("icon_import_suggest", Path(filename).stem) or Path(filename).stem)
         self._fit = QComboBox()
         self._fit.addItems(list(_FITS))
         self._interpolation = QComboBox()
@@ -77,7 +77,7 @@ class IconImportDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         layout.addWidget(self._error)
         layout.addWidget(self._use_suggestion)
         layout.addWidget(self._import_button)
-        if path.suffix.lower() == ".svg":
+        if Path(filename).suffix.lower() == ".svg":
             form.setRowVisible(self._fit, False)
             form.setRowVisible(self._interpolation, False)
         self._refresh_preview()
@@ -95,7 +95,7 @@ class IconImportDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         return result if isinstance(result, str) else ""
 
     def _refresh_preview(self) -> None:
-        raw = self._call_str("icon_import_preview", self._path.name, self._data, self._options_json())
+        raw = self._call_str("icon_import_preview", self._filename, self._data, self._options_json())
         pixmap = QPixmap()
         try:
             loaded = bool(raw) and pixmap.loadFromData(QByteArray(base64.b64decode(raw, validate=True)))
@@ -115,7 +115,7 @@ class IconImportDialog(QDialog):  # pylint: disable=too-many-instance-attributes
 
     def _import(self) -> None:
         try:
-            raw = self._cm.call("icon_import", self._id_edit.text(), self._path.name, self._data, self._options_json())
+            raw = self._cm.call("icon_import", self._id_edit.text(), self._filename, self._data, self._options_json())
             result = json.loads(raw)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             self._show_error(f"Import failed: {exc}", "")
