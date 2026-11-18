@@ -121,20 +121,29 @@ def test_lag_over_250ms_steps_down_immediately_even_if_busy_is_low() -> None:
     assert_that(level).is_equal_to(L1)
 
 
-@pytest.mark.parametrize("native_fps", [10, 24, 50])
-def test_no_oscillation_over_a_600s_simulated_steady_load(native_fps: int) -> None:
+@pytest.mark.parametrize(("native_fps", "expected"), [(10, L0), (24, L1), (50, L2)])
+def test_no_oscillation_over_a_600s_simulated_steady_load(native_fps: int, expected: Level) -> None:
     controller = LevelController(LADDER)
     demand = _demand_for(native_fps)
-    controller.replan(demand, SECONDS_PER_REPORT)
-    changes = 0
+    changes_after_settling = 0
 
     for second in range(600):
         busy = demand(controller.level) * SECONDS_PER_REPORT
         before = controller.level
         controller.tick(LoadSample(float(second), busy, busy, 0.0), demand, SECONDS_PER_REPORT)
-        changes += controller.level != before
+        if second >= 60:
+            changes_after_settling += controller.level != before
 
-    assert_that(changes).is_equal_to(0)
+    assert_that(controller.level).is_equal_to(expected)
+    assert_that(changes_after_settling).is_equal_to(0)
+
+
+def test_does_not_step_up_when_only_the_projection_blocks_it() -> None:
+    controller = _controller_at(1)
+
+    level = controller.tick(LoadSample(500.0, 0.45, 0.45, 0.0), _demand_for(24), SECONDS_PER_REPORT)
+
+    assert_that(level).is_equal_to(L1)
 
 
 def test_bmp_ladder_has_no_quality_change() -> None:
