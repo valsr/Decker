@@ -61,6 +61,10 @@ class IconPackRegistry:
                     plugin_id, plugin.manifest.name, plugin.manifest.version, spec.name, spec.description, root
                 )
 
+    def warm(self) -> None:
+        """Index the system icon theme in the background (it takes a second or two on a large theme)."""
+        self._system.warm()
+
     def unregister(self, plugin_id: str) -> None:
         """Drop every pack the plugin contributed."""
         with self._lock:

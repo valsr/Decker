@@ -287,3 +287,21 @@ class TestSystemIconPacks:
 
     def test_the_default_registry_is_hermetic_in_tests(self):
         assert_that(IconPackRegistry().list_packs()).is_empty()
+
+
+def test_warm_warms_the_system_icons():
+    class Spy:
+        warmed = 0
+
+        def warm(self):
+            Spy.warmed += 1
+
+        def owns(self, _pack_id):
+            return False
+
+        def list_packs(self):
+            return []
+
+    IconPackRegistry(system_icons=Spy()).warm()  # type: ignore[arg-type]
+
+    assert_that(Spy.warmed).is_equal_to(1)

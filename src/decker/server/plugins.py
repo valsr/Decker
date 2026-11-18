@@ -206,6 +206,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._sdk_path = stage_sdk()
         except OSError:
             logging.exception("Could not stage the plugin SDK; installed plugins will not be able to start")
+        self.icon_packs.warm()
         recover_interrupted_installs(self._user_loader.plugins_dir)
         builtin = self._user_loader.scan_builtin()
         user = self._user_loader.scan()

@@ -218,7 +218,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
     @exposed
     @api_response
     def iconpacks_list(self) -> list:
-        """List the icon packs contributed by installed plugins."""
+        """List the icon packs: those contributed by installed plugins, then the System Icons categories."""
         if self._context is None:
             return []
         return self._context.plugin_manager.icon_packs.list_packs()
@@ -226,7 +226,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
     @exposed
     @api_response
     def iconpack_icons(self, pack_id: str) -> list:
-        """List an icon pack's image paths, relative to the pack folder."""
+        """List an icon pack's image paths relative to its folder (System Icons: bare icon names)."""
         if self._context is None:
             return []
         return self._context.plugin_manager.icon_packs.list_icons(pack_id)
