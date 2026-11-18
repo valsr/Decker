@@ -1,10 +1,12 @@
 """Tests for decker.client.widgets.get_more_plugins."""
 
+import json
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from assertpy import assert_that
+from PyQt6.QtWidgets import QMessageBox
 
 from decker.client.context import AppContext
 from decker.client.events import (
@@ -14,11 +16,13 @@ from decker.client.events import (
     ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
+from decker.client.ui_state_store import UiStateStore
 from decker.client.widgets import plugins_tab
 from decker.client.widgets.get_more_plugins import (
     GetMorePluginsDialog,
     button_state,
     human_size,
+    platform_badge,
 )
 
 # pylint: disable=protected-access,redefined-outer-name,unused-argument
@@ -364,3 +368,135 @@ def test_installing_a_plugin_leaves_the_other_rows_alone(dialog, manager, qapp):
     assert_that(states["a.update"]).is_equal_to("Update")
     assert_that(states["a.done"]).is_equal_to("Installed")
     _settle(dialog, qapp)
+
+
+_HOST = {"os": "linux", "desktop": "kde", "session": "wayland", "label": "Linux (KDE, Wayland)"}
+
+
+@pytest.fixture
+def store(tmp_path):
+    ui_store = UiStateStore(tmp_path / "config.db")
+    yield ui_store
+    ui_store.close()
+
+
+@pytest.fixture
+def platform_manager(manager):
+    manager.answers["platform_info"] = json.dumps(_HOST)
+    manager.answers["repository_catalog"] = [
+        _plugin("a.fresh", "Fresh", supported=True),
+        _plugin("a.mac", "MacOnly", supported=False),
+    ]
+    return manager
+
+
+def test_platform_badge_is_empty_for_supported_plugins_and_names_the_host_otherwise():
+    assert_that(platform_badge({"supported": True}, "Linux (KDE)")).is_equal_to("")
+    assert_that(platform_badge({}, "Linux (KDE)")).is_equal_to("")
+    assert_that(platform_badge({"supported": False}, "Linux (KDE)")).is_equal_to("Not supported on Linux (KDE)")
+
+
+def test_filter_hides_unsupported_plugins_by_default(platform_manager, store, qapp):
+    widget = GetMorePluginsDialog(ui_state_store=store)
+    _settle(widget, qapp)
+
+    assert_that(widget._platform_only.isChecked()).is_true()
+    assert_that(widget._platform_only.text()).is_equal_to(
+        "Only show plugins that support this system (Linux (KDE, Wayland))"
+    )
+    assert_that(list(widget._rows)).is_equal_to(["a.fresh"])
+    widget.close()
+
+
+def test_unchecking_the_filter_shows_unsupported_plugins_with_a_badge(platform_manager, store, qapp):
+    widget = GetMorePluginsDialog(ui_state_store=store)
+    _settle(widget, qapp)
+
+    widget._platform_only.setChecked(False)
+
+    assert_that(list(widget._rows)).is_equal_to(["a.fresh", "a.mac"])
+    assert_that(widget._rows["a.mac"].badge.text()).is_equal_to("Not supported on Linux (KDE, Wayland)")
+    assert_that(widget._rows["a.fresh"].badge.text()).is_equal_to("")
+    widget.close()
+
+
+def _unfiltered(platform_manager, store, qapp):
+    store.set("plugins.platform_filter", False)
+    widget = GetMorePluginsDialog(ui_state_store=store)
+    _settle(widget, qapp)
+    return widget
+
+
+def _installs(manager):
+    return [c.args for c in manager.call.call_args_list if c.args[0] == "plugin_install_from_repository"]
+
+
+def test_install_of_an_unsupported_plugin_asks_and_cancel_does_not_install(platform_manager, store, qapp):
+    widget = _unfiltered(platform_manager, store, qapp)
+
+    with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No) as question:
+        widget._on_install("a.mac")
+
+    assert_that(question.call_args.args[2]).is_equal_to(
+        "MacOnly does not declare support for Linux (KDE, Wayland). Install anyway?"
+    )
+    assert_that(widget._installing).is_none()
+    assert_that(_installs(platform_manager)).is_empty()
+    widget.close()
+
+
+def test_install_of_an_unsupported_plugin_proceeds_on_yes(platform_manager, store, qapp):
+    widget = _unfiltered(platform_manager, store, qapp)
+
+    with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+        widget._on_install("a.mac")
+    _settle(widget, qapp)
+
+    assert_that(_installs(platform_manager)).is_equal_to([("plugin_install_from_repository", "a.mac")])
+    widget.close()
+
+
+def test_install_of_a_supported_plugin_does_not_ask(platform_manager, store, qapp):
+    widget = GetMorePluginsDialog(ui_state_store=store)
+    _settle(widget, qapp)
+
+    with patch.object(QMessageBox, "question") as question:
+        widget._on_install("a.fresh")
+    _settle(widget, qapp)
+
+    question.assert_not_called()
+    assert_that(widget._installing).is_equal_to("a.fresh")
+    widget.close()
+
+
+def test_filter_choice_is_remembered(platform_manager, store, qapp):
+    first = GetMorePluginsDialog(ui_state_store=store)
+    _settle(first, qapp)
+    first._platform_only.setChecked(False)
+    first.close()
+
+    second = GetMorePluginsDialog(ui_state_store=store)
+    _settle(second, qapp)
+
+    assert_that(store.get("plugins.platform_filter")).is_false()
+    assert_that(second._platform_only.isChecked()).is_false()
+    assert_that(list(second._rows)).is_equal_to(["a.fresh", "a.mac"])
+    second.close()
+
+
+def test_platform_info_is_fetched_off_the_ui_thread(platform_manager, store, qapp):
+    threads: list[int] = []
+    original = platform_manager.call.side_effect
+
+    def fake(method, *args):
+        if method == "platform_info":
+            threads.append(threading.get_ident())
+        return original(method, *args)
+
+    platform_manager.call.side_effect = fake
+    widget = GetMorePluginsDialog(ui_state_store=store)
+    _settle(widget, qapp)
+
+    assert_that(threads).is_not_empty()
+    assert_that(threads).does_not_contain(threading.get_ident())
+    widget.close()
