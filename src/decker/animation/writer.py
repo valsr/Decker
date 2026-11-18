@@ -63,9 +63,14 @@ class KeyWriter:
         self._wake: bool = False
         self._closing: bool = False
         self._thread: threading.Thread | None = None
+        # Key whose slot step is evaluating; the worker drops that slot if step raises.
+        self._processing_key: int | None = None
 
     def submit_static(self, key_index: int, data: bytes | None, timeout: float = 5.0) -> bool:
-        """Write data (None blanks) to the key ahead of animations; True once written, False on timeout or error."""
+        """Write data (None blanks) to the key ahead of animations; True once written, False on timeout or error.
+
+        False means not confirmed in time; the image may still be written later.
+        """
         with self._condition:
             if self._closing:
                 return False
@@ -77,7 +82,14 @@ class KeyWriter:
         return job.done.wait(timeout) and job.ok
 
     def play(self, key_index: int, animation: Animation, fps_cap: int | None = None) -> None:
-        """Start (or replace) the key's animation from now, capped at fps_cap frames per second if given."""
+        """Start (or replace) the key's animation from now, capped at fps_cap frames per second if given.
+
+        Raises ValueError if the animation has no frames or fps_cap is not None and not positive.
+        """
+        if not animation.frames:
+            raise ValueError("animation has no frames")
+        if fps_cap is not None and fps_cap <= 0:
+            raise ValueError(f"fps_cap must be positive, got {fps_cap}")
         now = self._clock()
         ends_ms = tuple(itertools.accumulate(frame.delay_ms for frame in animation.frames))
         with self._condition:
@@ -102,6 +114,7 @@ class KeyWriter:
         if action is not None:
             self._complete(action, self._perform(action), now)
         with self._condition:
+            self._processing_key = None
             return self._next_deadline(now)
 
     def start(self) -> None:
@@ -134,13 +147,27 @@ class KeyWriter:
 
     def _run(self) -> None:
         while True:
-            deadline = self.step(self._clock())
+            try:
+                deadline = self.step(self._clock())
+            except Exception:  # pylint: disable=broad-exception-caught
+                # A scheduling bug or bad animation must not kill the worker: static writes and other keys depend on it.
+                deadline = self._drop_failing_slot()
             with self._condition:
                 if self._closing:
                     return
                 if not self._wake:
                     self._condition.wait(None if deadline is None else max(0.0, deadline - self._clock()))
                 self._wake = False
+
+    def _drop_failing_slot(self) -> float | None:
+        with self._condition:
+            key_index, self._processing_key = self._processing_key, None
+            if key_index is None:
+                logger.exception("Key writer step failed; waiting for the next change")
+                return None
+            logger.exception("Key %d animation failed; dropping it", key_index)
+            self._slots.pop(key_index, None)
+            return self._clock()
 
     def _next_action(self, now: float) -> _Action | None:
         with self._condition:
@@ -155,6 +182,7 @@ class KeyWriter:
                 if slot.deadline is not None and slot.deadline <= now
             )
             for _, key_index in due:
+                self._processing_key = key_index
                 slot = self._slots[key_index]
                 index = slot.animation.frame_index_at(self._elapsed_ms(slot, now)) if slot.ends_ms[-1] > 0 else 0
                 if index != slot.shown_index and slot.animation.frames[index].data != slot.shown_data:
