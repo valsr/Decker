@@ -1,6 +1,8 @@
 import threading
 import time
+from dataclasses import dataclass, field
 
+import pytest
 from assertpy import assert_that
 
 from decker.animation.model import Animation, Frame
@@ -181,6 +183,62 @@ def test_stop_and_stop_all_end_animations() -> None:
 
     assert_that(writer.step(0.5)).is_none()
     assert_that(recorder.writes).is_equal_to([(1, b"f0"), (2, b"f0")])
+
+
+@dataclass(frozen=True)
+class _ExplodingAnimation(Animation):
+    """Passes play's validation, but frame_index_at raises from its explode_on-th call on."""
+
+    explode_on: int = 1
+    calls: list[int] = field(default_factory=list)
+
+    def frame_index_at(self, elapsed_ms: int) -> int:
+        self.calls.append(elapsed_ms)
+        if len(self.calls) >= self.explode_on:
+            raise RuntimeError("scheduler bug")
+        return super().frame_index_at(elapsed_ms)
+
+
+def _exploding(explode_on: int) -> _ExplodingAnimation:
+    frames = tuple(Frame(data, 1, 10) for data in _frames(3, "x"))
+    return _ExplodingAnimation("bad", 90, frames, b"poster", {90: 1.0}, explode_on=explode_on)
+
+
+@pytest.mark.parametrize(
+    ("animation", "fps_cap"),
+    [(_animation(_frames(3)), 0), (_animation(_frames(3)), -5), (Animation("empty", 90, (), b"poster", {}), None)],
+)
+def test_play_rejects_empty_animations_and_non_positive_fps_caps(animation: Animation, fps_cap: int | None) -> None:
+    writer = KeyWriter(_Recorder(), clock=lambda: 0.0)
+
+    assert_that(writer.play).raises(ValueError).when_called_with(0, animation, fps_cap)
+    assert_that(writer.step(0.0)).is_none()
+
+
+def test_worker_survives_a_failing_animation_and_keeps_other_keys_and_static_writes_going() -> None:
+    writes: list[tuple[int, bytes | None]] = []
+    good_key_animating = threading.Event()
+
+    def write(key_index: int, data: bytes | None) -> None:
+        writes.append((key_index, data))
+        if [key for key, _ in writes].count(1) >= 3:
+            good_key_animating.set()
+
+    writer = KeyWriter(write)
+    writer.play(0, _exploding(explode_on=1))  # raises while choosing its frame
+    writer.play(3, _exploding(explode_on=2))  # raises after its first write, scheduling the next
+    writer.play(1, _animation(_frames(100), delay_ms=10))
+    writer.start()
+    try:
+        assert_that(good_key_animating.wait(5.0)).is_true()
+        assert_that(writer.submit_static(2, b"static", timeout=5.0)).is_true()
+    finally:
+        writer.close()
+
+    assert_that([data for key, data in writes if key == 0]).is_empty()
+    assert_that([data for key, data in writes if key == 3]).is_equal_to([b"x0"])
+    assert_that(writes).contains((2, b"static"))
+    assert_that(_writer_threads()).is_empty()
 
 
 def test_submit_static_reports_write_success_and_write_errors() -> None:
