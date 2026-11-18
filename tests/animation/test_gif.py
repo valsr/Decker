@@ -3,9 +3,11 @@ import io
 import pytest
 from assertpy import assert_that
 from PIL import Image
+from PIL.GifImagePlugin import GifImageFile
 
 from decker.animation import gif
 from decker.animation.gif import GifError, decode_gif, is_animated_gif, is_gif
+from tests.animation.grown_gif import grown_gif
 
 
 def _make_gif(frames: list[Image.Image], **kwargs: object) -> bytes:
@@ -158,3 +160,88 @@ def test_gif_bytes_over_the_icon_size_cap_are_not_animated(monkeypatch: pytest.M
     assert_that(is_animated_gif(data)).is_false()
     with pytest.raises(GifError, match="larger than"):
         decode_gif(data)
+
+
+def _count_seeks(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    seeks: list[int] = []
+    original = GifImageFile.seek
+
+    def seek(self: GifImageFile, frame: int) -> None:
+        seeks.append(frame)
+        original(self, frame)
+
+    monkeypatch.setattr(GifImageFile, "seek", seek)
+    return seeks
+
+
+# 2x2 logical screen and a 2x2 first frame, then frames that make Pillow grow the canvas while iterating.
+_GROWN_SHAPES = {
+    "3x8000": [(2, 2)] + [(8000, 8000)] * 3,
+    "20x4096": [(2, 2)] + [(4096, 4096)] * 19,
+    "frame-over-raster-cap": [(2, 2), (4097, 4097)],
+}
+
+
+@pytest.mark.parametrize("sizes", _GROWN_SHAPES.values(), ids=_GROWN_SHAPES.keys())
+def test_frames_that_outgrow_the_logical_screen_are_rejected_before_any_frame_is_decoded(
+    sizes: list[tuple[int, int]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = grown_gif((2, 2), sizes)
+    assert_that(len(data)).is_less_than(300 * 1024)
+    seeks = _count_seeks(monkeypatch)
+
+    assert_that(is_animated_gif(data)).is_false()
+    with pytest.raises(GifError, match="too large|too many pixels"):
+        decode_gif(data)
+
+    assert_that(seeks).is_empty()
+
+
+def test_the_running_canvas_total_is_checked_as_frames_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Budget for the first frames only: the third frame's growth tips the running total, not the header.
+    data = grown_gif((2, 2), [(2, 2), (30, 30), (30, 30), (30, 30)])
+    monkeypatch.setattr(gif, "MAX_GIF_PIXELS", 3 * 900 - 1)
+
+    assert_that(is_animated_gif(data)).is_false()
+    with pytest.raises(GifError, match="too many pixels"):
+        decode_gif(data)
+
+
+def test_decode_rechecks_each_frame_when_the_descriptor_walk_is_bypassed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gif, "_check_descriptors", lambda data: None)
+    monkeypatch.setattr(gif, "MAX_RASTER_PIXELS", 40 * 40)
+    big = grown_gif((2, 2), [(2, 2), (41, 41)])
+    with pytest.raises(GifError, match="too large"):
+        decode_gif(big)
+
+    monkeypatch.setattr(gif, "MAX_RASTER_PIXELS", 10**9)
+    monkeypatch.setattr(gif, "MAX_GIF_PIXELS", 41 * 41 + 3)
+    with pytest.raises(GifError, match="too many pixels"):
+        decode_gif(big)
+
+
+def test_a_frame_that_grows_slightly_past_the_logical_screen_still_plays() -> None:
+    data = grown_gif((16, 16), [(16, 16), (20, 18), (16, 16)])
+
+    frames = decode_gif(data)
+
+    assert_that(is_animated_gif(data)).is_true()
+    assert_that([f.image.size for f in frames]).is_equal_to([(16, 16), (20, 18), (20, 18)])
+    assert_that([f.delay_ms for f in frames]).is_equal_to([100] * 3)
+
+
+def test_300_frames_of_480_square_decode_within_the_budget() -> None:
+    data = grown_gif((480, 480), [(480, 480)] * gif.MAX_GIF_FRAMES)
+
+    frames = decode_gif(data)
+
+    assert_that(is_animated_gif(data)).is_true()
+    assert_that(frames).is_length(gif.MAX_GIF_FRAMES)
+    assert_that(frames[0].image.size).is_equal_to((144, 144))
+
+
+def test_a_truncated_gif_is_left_for_the_decoder_to_report() -> None:
+    data = grown_gif((8, 8), [(8, 8)] * 3)
+
+    with pytest.raises(GifError):
+        decode_gif(data[: len(data) - 12])
