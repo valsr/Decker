@@ -20,7 +20,6 @@ from decker.client.events import (
     KeyDisplayStatesUpdatedEvent,
     PagesUpdatedEvent,
     ProfilesUpdatedEvent,
-    ServerDisconnectedEvent,
 )
 from decker.client.ui_state_store import UiStateStore
 from decker.client.views.dashboard import DashboardView, _confirm_delete_page
@@ -1118,7 +1117,7 @@ class TestProfiles:  # pylint: disable=protected-access
         spy._pick_button.click()
         assert_that(spy._picking).is_true()
 
-        view.handle_event(ServerDisconnectedEvent("lost"))
+        view.on_server_disconnected()
 
         assert_that(spy._picking).is_false()
         spy.close()

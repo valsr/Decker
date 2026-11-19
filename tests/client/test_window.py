@@ -11,22 +11,39 @@ from PyQt6.QtWidgets import QMessageBox
 
 from decker.client.context import AppContext
 from decker.client.events import (
+    AppRulesUpdatedEvent,
+    DetectionStatusEvent,
     DeviceListUpdatedEvent,
     OpenUrlRequestedEvent,
     PagesUpdatedEvent,
     PluginInstallFinishedEvent,
     PluginLoadFailedEvent,
     PluginUpdatesAvailableEvent,
+    ProfilesUpdatedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
+    WindowFocusedEvent,
+    WindowPickedEvent,
 )
 from decker.client.events.event_manager import EventManager
 from decker.client.ui_state_store import UiStateStore
 from decker.client.view_name import ViewName
+from decker.client.views.dashboard import DASHBOARD_EVENTS
 from decker.client.widgets import plugins_tab
 from decker.client.widgets.plugins_tab import refresh_install_allowed
-from decker.client.window import MainWindow, _should_close_to_tray
-from decker.common.model import DevicePages, PageInfo
+from decker.client.window import ACTIVE_VIEW_EVENTS, MainWindow, _should_close_to_tray
+from decker.common.model import (
+    AppRule,
+    DefaultRule,
+    DeviceHardwareInfo,
+    DevicePages,
+    DeviceProfiles,
+    DeviceRules,
+    MatchCondition,
+    PageInfo,
+    ProfileInfo,
+    WindowInfo,
+)
 
 
 @pytest.fixture
@@ -577,3 +594,99 @@ class TestUpdateToast:
 
         assert_that(threads).is_length(1)
         assert_that(threads[0]).is_not_equal_to(threading.get_ident())
+
+
+_FIREFOX = WindowInfo("firefox", "normal", "Mozilla", "/usr/bin/firefox", "firefox.desktop", 7)
+
+
+@pytest.fixture
+def live_window(qapp, connection_manager, tmp_path):  # pylint: disable=unused-argument,redefined-outer-name
+    """A MainWindow with real views, driven through the EventManager queue like the running app."""
+    AppContext._instance = None  # pylint: disable=protected-access
+    EventManager.reset()
+    win = MainWindow(connection_manager, ui_state_store=UiStateStore(tmp_path / "config.db"))
+    AppContext.get().connection_manager = connection_manager
+    AppContext.get().active_device = DeviceHardwareInfo(
+        id="dev1", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15
+    )
+    connection_manager.call.return_value = True
+    win.switch_to(ViewName.DASHBOARD)
+    yield win
+    win.close()
+
+
+def _push(*events) -> None:
+    for event in events:
+        EventManager.get().push(event)
+    EventManager.get().drain_and_dispatch()
+
+
+class TestAppProfileEventsReachTheDashboard:  # pylint: disable=protected-access
+    def _open_spy(self, win):
+        dashboard = win._views[ViewName.DASHBOARD]
+        _push(
+            ProfilesUpdatedEvent(DeviceProfiles("dev1", [ProfileInfo(0, "Default", "")], 0)),
+            DetectionStatusEvent("active", "", "kwin", True, None),
+        )
+        dashboard._on_edit_profile(0)
+        dialog = dashboard._profiles_dialog
+        dialog._spy_button.click()
+        return dashboard, dialog, dialog._spy
+
+    def test_rules_status_focus_and_pick_update_the_open_dialog_and_spy(self, live_window):
+        _, dialog, spy = self._open_spy(live_window)
+        rule = AppRule("r1", "Browser", True, [MatchCondition("window_class", "equals", "firefox")], 0)
+
+        _push(AppRulesUpdatedEvent(DeviceRules("dev1", [rule], DefaultRule())))
+        assert_that(dialog._rule_list.count()).is_equal_to(1)
+
+        _push(DetectionStatusEvent("active", "", "x11", False, None))
+        assert_that(dialog._status_label.text()).contains("x11")
+
+        spy._follow.setChecked(True)
+        _push(WindowFocusedEvent(_FIREFOX))
+        assert_that(spy._values["window_class"].text()).is_equal_to("firefox")
+
+        spy.set_status(DetectionStatusEvent("active", "", "kwin", True, None))
+        spy._pick_button.click()
+        _push(WindowPickedEvent(WindowInfo("konsole", pid=9)))
+        assert_that(spy._values["window_class"].text()).is_equal_to("konsole")
+        spy.close()
+        dialog.close()
+
+    def test_events_while_another_view_is_active_are_not_lost(self, live_window):
+        live_window.switch_to(ViewName.DEVICE)
+        rule = AppRule("r1", "Browser", True, [], 0)
+
+        _push(
+            AppRulesUpdatedEvent(DeviceRules("dev1", [rule], DefaultRule())),
+            DetectionStatusEvent("active", "", "kwin", True, None),
+        )
+
+        dashboard = live_window._views[ViewName.DASHBOARD]
+        assert_that(dashboard._rules.rules).is_length(1)
+        assert_that(dashboard._detection.backend).is_equal_to("kwin")
+
+    def test_disconnect_resets_an_open_pick_and_switches_to_connecting(self, live_window):
+        _, dialog, spy = self._open_spy(live_window)
+        spy._pick_button.click()
+        assert_that(spy._picking).is_true()
+
+        _push(ServerDisconnectedEvent("lost"))
+
+        assert_that(spy._picking).is_false()
+        assert_that(live_window._active).is_equal_to(ViewName.CONNECTING)
+        spy.close()
+        dialog.close()
+
+    def test_every_event_the_dashboard_handles_is_forwarded(self, live_window):
+        import inspect  # pylint: disable=import-outside-toplevel
+        import re  # pylint: disable=import-outside-toplevel
+
+        source = inspect.getsource(live_window._views[ViewName.DASHBOARD].handle_event)
+        handled = set(re.findall(r"isinstance\(event, (\w+)\)", source))
+        forwarded = {t.__name__ for t in (*ACTIVE_VIEW_EVENTS, *DASHBOARD_EVENTS)}
+
+        assert_that(handled - forwarded).is_empty()
+        subscribed = EventManager.get()._subscribers
+        assert_that([t for t in DASHBOARD_EVENTS if not subscribed[t]]).is_empty()
