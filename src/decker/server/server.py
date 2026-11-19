@@ -26,6 +26,7 @@ from decker.server.page_controller import PageController
 from decker.server.pages import PageStore
 from decker.server.plugin_installer import PluginInstaller
 from decker.server.plugins import PluginManager
+from decker.server.reconfigure import RESTART_EXIT_CODE, ReconfigurePolicy
 from decker.server.repositories import RepositoryStore
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
@@ -304,6 +305,7 @@ class ServerProcess:
             page_controller=page_controller,
             event_bus=EventBus(),
             server=None,
+            reconfigure_policy=ReconfigurePolicy(self._app_context.allow_client_reconfiguration),
         )
 
         ctx = self._context
@@ -365,4 +367,6 @@ class ServerProcess:
             ctx.update_checker.stop()
             for manager in reversed(managers):
                 self._try_destroy_manager(manager)
+        if ctx.restart_requested:
+            sys.exit(RESTART_EXIT_CODE)
         # Normal return -> subprocess exits with code 0 (intentional stop)

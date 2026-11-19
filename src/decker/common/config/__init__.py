@@ -263,3 +263,8 @@ def unset(path: str) -> None:
 def load_memory(data: dict[str, Any]) -> None:
     """Populate the memory (highest-priority) layer with runtime overrides."""
     _config.load_memory(data)
+
+
+def reload() -> None:
+    """Re-read the defaults and user layers from disk (another process may have changed the user file)."""
+    _config.load()

@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import time
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -1160,3 +1161,106 @@ def _catalog(entry: CatalogEntry) -> dict:
     )
 
     return _catalog_item(entry, None, _LINUX_KDE)
+
+
+class TestServerSettingsRpcs:
+    @pytest.fixture()
+    def settings_service(self, store, manager, isolated_config):
+        from decker.server.reconfigure import ReconfigurePolicy
+
+        ctx = _make_context(manager, store)
+        ctx.server = MagicMock()
+        ctx.reconfigure_policy = ReconfigurePolicy([])
+        DeckerService.configure_context(ctx)
+        svc = DeckerService()
+        svc._peer_host = "203.0.113.5"  # pylint: disable=protected-access
+        return svc, ctx
+
+    @staticmethod
+    def _wait_closed(ctx) -> bool:
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            if ctx.server.close.called:
+                return True
+            time.sleep(0.02)
+        return False
+
+    def test_settings_are_readable_by_everyone(self, settings_service):
+        svc, ctx = settings_service
+        from decker.server.reconfigure import ReconfigurePolicy
+
+        ctx.reconfigure_policy = ReconfigurePolicy(None)
+        result = json.loads(svc.server_settings())
+
+        assert_that(result["port"]).is_equal_to(18861)
+        assert_that(result["reconfigurable"]).is_false()
+        assert_that(result["last_apply_error"]).is_none()
+
+    def test_reconfigurable_reflects_the_peer(self, settings_service):
+        svc, ctx = settings_service
+        from decker.server.reconfigure import ReconfigurePolicy
+
+        ctx.reconfigure_policy = ReconfigurePolicy(["10.0.0.5"])
+        svc._peer_host = "10.0.0.5"  # pylint: disable=protected-access
+        assert_that(json.loads(svc.server_settings())["reconfigurable"]).is_true()
+        svc._peer_host = "10.0.0.6"  # pylint: disable=protected-access
+        assert_that(json.loads(svc.server_settings())["reconfigurable"]).is_false()
+
+    def test_set_is_rejected_when_the_flag_is_absent(self, settings_service, isolated_config):
+        svc, ctx = settings_service
+        from decker.server.reconfigure import ReconfigurePolicy
+
+        ctx.reconfigure_policy = ReconfigurePolicy(None)
+        result = json.loads(svc.server_settings_set(json.dumps({"port": 19000})))
+
+        assert_that(result["ok"]).is_false()
+        assert_that(result["error"]).contains("--allow-client-reconfiguration")
+        assert_that(isolated_config.get_as("server.port", int)).is_equal_to(18861)
+        assert_that(ctx.restart_requested).is_false()
+
+    def test_set_rejects_invalid_values_without_writing(self, settings_service, isolated_config):
+        svc, ctx = settings_service
+        result = json.loads(svc.server_settings_set(json.dumps({"port": 0})))
+
+        assert_that(result["ok"]).is_false()
+        assert_that(isolated_config.get_as("server.port", int)).is_equal_to(18861)
+        assert_that(ctx.restart_requested).is_false()
+
+    def test_set_applies_the_stop_flag_live_without_a_restart(self, settings_service, isolated_config):
+        svc, ctx = settings_service
+        result = json.loads(svc.server_settings_set(json.dumps({"stop_when_last_client_leaves": True})))
+
+        assert_that(result).is_equal_to({"ok": True, "restarting": False, "error": None})
+        assert_that(isolated_config.get_as("server.stop_when_last_client_leaves", bool)).is_true()
+        assert_that(ctx.restart_requested).is_false()
+        ctx.server.close.assert_not_called()
+
+    def test_set_port_requests_a_restart(self, settings_service, isolated_config):
+        svc, ctx = settings_service
+        result = json.loads(svc.server_settings_set(json.dumps({"port": 19000})))
+
+        assert_that(result).is_equal_to({"ok": True, "restarting": True, "error": None})
+        assert_that(isolated_config.get_as("server.port", int)).is_equal_to(19000)
+        assert_that(ctx.restart_requested).is_true()
+        assert_that(self._wait_closed(ctx)).is_true()
+
+    def test_a_second_set_while_a_restart_is_pending_is_rejected(self, settings_service):
+        svc, _ = settings_service
+        svc.server_settings_set(json.dumps({"port": 19000}))
+        result = json.loads(svc.server_settings_set(json.dumps({"port": 19001})))
+
+        assert_that(result["ok"]).is_false()
+        assert_that(result["error"]).contains("restart")
+
+    def test_non_json_input_is_an_error(self, settings_service):
+        svc, _ = settings_service
+        assert_that(json.loads(svc.server_settings_set("not json"))["ok"]).is_false()
+
+    def test_the_last_apply_error_is_reported_and_cleared_by_a_new_apply(self, settings_service, isolated_config):
+        svc, _ = settings_service
+        isolated_config.set("server.last_apply_error", "port 19000 is in use")
+        assert_that(json.loads(svc.server_settings())["last_apply_error"]).is_equal_to("port 19000 is in use")
+
+        svc.server_settings_set(json.dumps({"stop_when_last_client_leaves": True}))
+
+        assert_that(json.loads(svc.server_settings())["last_apply_error"]).is_none()

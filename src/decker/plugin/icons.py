@@ -5,14 +5,13 @@ from pathlib import Path
 
 from decker.common import config
 
-_DEFAULT_MAX_ICON_BYTES = 4 * 1024 * 1024
 # Elgato manifests name icons without an extension; @2x is the high-resolution variant.
 _CANDIDATE_SUFFIXES = ("", ".svg", "@2x.png", ".png")
 
 
 def max_icon_bytes() -> int:
     """Return the library's maximum image file size in bytes (`icons.max_file_size`)."""
-    return int(config.get_as_or_default("icons.max_file_size", int, _DEFAULT_MAX_ICON_BYTES))
+    return config.get_as("icons.max_file_size", int)
 
 
 def resolve_icon(plugin_dir: Path, icon: str | None) -> Path | None:

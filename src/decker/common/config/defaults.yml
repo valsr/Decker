@@ -17,10 +17,6 @@ server:
   # Shut the server down (and the monitor with it) once the last client has disconnected for a while.
   stop_when_last_client_leaves: false
 
-icons:
-  # Largest image file (bytes) the icon library accepts: imports, pack icons, GIFs and plugin icons.
-  max_file_size: 4194304
-
 client:
   server_host: localhost
   server_port: 18861
@@ -40,6 +36,8 @@ icons:
   # Icon theme for the System Icons library (an installed freedesktop theme name).
   # Empty: use the desktop's current theme (GTK or KDE settings), else Adwaita.
   system_theme: ""
+  # Largest image file (bytes) the icon library accepts: imports, pack icons, GIFs and plugin icons.
+  max_file_size: 4194304
 animation:
   # Animate keys whose icon is an animated GIF; false shows each GIF's first frame only.
   enabled: true
