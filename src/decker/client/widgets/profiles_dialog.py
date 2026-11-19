@@ -243,6 +243,11 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         if self._spy is not None:
             self._spy.on_focused(window)
 
+    def on_disconnected(self) -> None:
+        """The server connection dropped: abandon any open Window Spy pick or capture."""
+        if self._spy is not None:
+            self._spy.reset()
+
     def on_picked(self, window: WindowInfo | None) -> None:
         """Forward a finished pick to the Window Spy when it is open."""
         if self._spy is not None:
