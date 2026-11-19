@@ -25,8 +25,10 @@ Every `server.health_check_interval` seconds (default 5) it runs one round of ch
    `server.memory_limit` (default 1 GiB) the server is restarted. An unreadable value is treated as unknown, never as
    over the limit.
 
-A restart stops the child, resets the failure counter and starts a new child. If starting fails it is retried on the
-next round. There is no backoff and no maximum restart count today.
+A restart stops the child, resets the failure counter and starts a new child. Stopping the child (for a restart or
+when the monitor itself stops) asks the server to shut down through a shared event, waits `server.stop_timeout`
+seconds for it to exit on its own, then terminates it and, if that fails, kills it. If starting fails it is retried on
+the next round. There is no backoff and no maximum restart count today.
 
 The server itself has no self-healing logic; fault tolerance is entirely the monitor's job.
 
@@ -42,6 +44,7 @@ All under `server:` in `~/.decker/config.yaml` (defaults in `src/decker/common/c
 | `health_check_interval` | `5.0` | Seconds between monitor rounds |
 | `max_failed_heartbeats` | `2` | Consecutive failed heartbeats before a restart |
 | `memory_limit` | `1073741824` | Server memory limit in bytes |
+| `stop_timeout` | `10.0` | Seconds the monitor waits for the server to shut down after being asked to, before it terminates (then kills) the process |
 | `device_watch_interval` | `2.0` | How often the server checks its decks are still present |
 | `allow_remote_plugin_install` | `false` | Whether non-local clients may install or uninstall plugins |
 
@@ -72,7 +75,10 @@ poe cli stop        # stop the server (exit code 0); the monitor then exits too
 ## Platform notes
 
 - Memory is read with `psutil`, so the limit works on Linux, macOS and Windows.
-- On POSIX the monitor stops the server with a termination signal, so the server can shut its plugins down
-  gracefully. On Windows the child is ended with `multiprocessing`'s `terminate()` (a hard kill), so the signal handler
-  and graceful plugin shutdown do not run on monitor restarts there; plugins then rely on their stdin closing. See
-  [platform support](docs/platform-support.md).
+- The monitor stops the server in three steps on every OS: it sets a stop event that the server's watcher thread turns
+  into the same shutdown the SIGTERM handler performs (RPyC server closed, managers destroyed, plugins stopped), waits
+  `server.stop_timeout` seconds, then calls `terminate()` (SIGTERM on POSIX, `TerminateProcess` on Windows) and finally
+  `kill()`. A server that shuts down on request exits with code 0.
+- The terminate and kill fallbacks are hard kills on Windows, so the graceful plugin shutdown does not run in that
+  case. They can leave helper processes of executable plugins behind there; Windows Job Objects would fix that class
+  (follow-up, not implemented). See [platform support](docs/platform-support.md).
