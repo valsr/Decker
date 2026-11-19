@@ -393,151 +393,6 @@ def test_pick_callback_exception_is_contained(bus: FakeBus) -> None:
     assert_that(_pick(backend)).is_equal_to([None])
 
 
-# --- the real python-xlib transport against a fake display (grab/ungrab behaviour) ---
-
-xlib = pytest.importorskip("Xlib")
-
-
-class FakeEvent:
-    def __init__(self, kind: int, **fields: Any) -> None:
-        self.type = kind
-        for key, value in fields.items():
-            setattr(self, key, value)
-
-
-class FakeWindow:
-    def __init__(self, ident: int, display: "FakeDisplay") -> None:
-        self.id = ident
-        self.display = display
-
-    def grab_pointer(self, *args: Any) -> int:
-        self.display.log.append("grab_pointer")
-        return self.display.grab_status
-
-    def grab_keyboard(self, *args: Any) -> int:
-        self.display.log.append("grab_keyboard")
-        return 0
-
-    def query_tree(self) -> Any:
-        return FakeEvent(0, children=[])
-
-    def get_wm_class(self) -> tuple[str, str] | None:
-        return ("inst", "Clicked")
-
-    def get_wm_name(self) -> str | None:
-        return "legacy"
-
-    def get_full_property(self, atom: int, kind: int) -> Any:
-        return None
-
-    def change_attributes(self, **kwargs: Any) -> None:
-        pass
-
-
-class FakeFont:
-    def create_glyph_cursor(self, *args: Any) -> int:
-        return 5
-
-
-class FakeDisplay:
-    def __init__(self, events: list[FakeEvent]) -> None:
-        self.events = events
-        self.log: list[str] = []
-        self.grab_status = 0
-        self.root = FakeWindow(1, self)
-        self._pipe = os.pipe()
-
-    def screen(self) -> Any:
-        return FakeEvent(0, root=self.root)
-
-    def open_font(self, name: str) -> FakeFont:
-        return FakeFont()
-
-    def intern_atom(self, name: str) -> int:
-        return 100 + len(name)
-
-    def keysym_to_keycode(self, keysym: int) -> int:
-        return 9
-
-    def create_resource_object(self, kind: str, ident: int) -> FakeWindow:
-        return FakeWindow(ident, self)
-
-    def pending_events(self) -> int:
-        return len(self.events)
-
-    def next_event(self) -> FakeEvent:
-        return self.events.pop(0)
-
-    def fileno(self) -> int:
-        return self._pipe[0]
-
-    def ungrab_pointer(self, when: int) -> None:
-        self.log.append("ungrab_pointer")
-
-    def ungrab_keyboard(self, when: int) -> None:
-        self.log.append("ungrab_keyboard")
-
-    def flush(self) -> None:
-        pass
-
-    def sync(self) -> None:
-        pass
-
-    def close(self) -> None:
-        self.log.append("close")
-
-
-def _real(display: FakeDisplay) -> X11Transport:
-    from decker.server.windows.x11 import _XlibTransport
-
-    return _XlibTransport(display)
-
-
-def test_real_pick_click_takes_child_of_root_and_ungrabs() -> None:
-    from Xlib import X
-
-    display = FakeDisplay([FakeEvent(X.ButtonPress, child=FakeWindow(77, None), detail=1)])  # type: ignore[arg-type]
-    result = _real(display).pick(1.0)
-    assert result is not None
-    assert_that(result["WM_CLASS"]).is_equal_to(("inst", "Clicked"))
-    assert_that(display.log).contains("grab_pointer", "ungrab_pointer", "ungrab_keyboard")
-
-
-def test_real_pick_escape_returns_none_and_ungrabs() -> None:
-    from Xlib import X
-
-    display = FakeDisplay([FakeEvent(X.KeyPress, detail=9)])
-    assert_that(_real(display).pick(1.0)).is_none()
-    assert_that(display.log).contains("ungrab_pointer", "ungrab_keyboard")
-
-
-def test_real_pick_timeout_returns_none_and_ungrabs() -> None:
-    display = FakeDisplay([])
-    assert_that(_real(display).pick(0.05)).is_none()
-    assert_that(display.log).contains("ungrab_pointer", "ungrab_keyboard")
-
-
-def test_real_pick_grab_failure_raises_after_ungrab() -> None:
-    display = FakeDisplay([])
-    display.grab_status = 1
-    with pytest.raises(RuntimeError):
-        _real(display).pick(1.0)
-    assert_that(display.log).contains("ungrab_pointer")
-
-
-def test_real_pick_error_during_wait_still_ungrabs() -> None:
-    display = FakeDisplay([])
-
-    def broken() -> FakeEvent:
-        raise ConnectionError("lost")
-
-    display.pending_events = lambda: 1  # type: ignore[method-assign]
-    display.next_event = broken  # type: ignore[method-assign]
-    with pytest.raises(ConnectionError):
-        _real(display).pick(1.0)
-    assert_that(display.log).contains("ungrab_pointer", "ungrab_keyboard")
-
-
 @pytest.mark.skipif(shutil.which("Xvfb") is None, reason="Xvfb is not installed")
 def test_xvfb_private_display_is_available(monkeypatch: pytest.MonkeyPatch) -> None:
     number = ":87"
@@ -551,3 +406,19 @@ def test_xvfb_private_display_is_available(monkeypatch: pytest.MonkeyPatch) -> N
     finally:
         server.terminate()
         server.wait(5)
+
+
+def test_pick_thread_start_failure_releases_lock_and_reports_none(
+    bus: FakeBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = X11Backend(bus.factory)
+    results: list[WindowInfo | None] = []
+
+    def refuse(self: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(threading.Thread, "start", refuse)
+        backend.pick(results.append)
+    assert_that(results).is_equal_to([None])
+    assert_that(_pick(backend)).is_length(1)

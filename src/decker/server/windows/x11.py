@@ -20,6 +20,7 @@ _POLL_INTERVAL = 0.25
 _TYPE_PREFIX = "_NET_WM_WINDOW_TYPE_"
 _KNOWN_TYPES = {"normal", "dialog", "utility", "dock", "splash", "menu", "toolbar"}
 _XC_CROSSHAIR = 34
+_PICK_BUTTONS = (1, 2, 3)
 
 _log = logging.getLogger(__name__)
 
@@ -49,14 +50,14 @@ def _executable(pid: int) -> str:
         return ""
     try:
         return os.path.basename(psutil.Process(pid).exe())
-    except psutil.Error:
+    except (psutil.Error, OSError):
         return ""
 
 
 def _window_type(atoms: Any) -> str:
     for atom in atoms or ():
-        name = str(atom).removeprefix(_TYPE_PREFIX).lower() if str(atom).startswith(_TYPE_PREFIX) else ""
-        if name in _KNOWN_TYPES:
+        name = str(atom).removeprefix(_TYPE_PREFIX).lower()
+        if str(atom).startswith(_TYPE_PREFIX) and name in _KNOWN_TYPES:
             return name
     return "normal"
 
@@ -169,7 +170,7 @@ class _XlibTransport:  # pylint: disable=missing-function-docstring
         while True:
             while display.pending_events():
                 event = display.next_event()
-                if event.type == X.ButtonPress:
+                if event.type == X.ButtonPress and event.detail in _PICK_BUTTONS:
                     return self._clicked(event.child)
                 if event.type == X.KeyPress and event.detail == escape:
                     return None
@@ -292,7 +293,12 @@ class X11Backend:
         if not self._pick_lock.acquire(blocking=False):  # pylint: disable=consider-using-with
             on_result(None)
             return
-        threading.Thread(target=self._run_pick, args=(on_result,), name="x11-pick", daemon=True).start()
+        try:
+            threading.Thread(target=self._run_pick, args=(on_result,), name="x11-pick", daemon=True).start()
+        except Exception:  # pylint: disable=broad-exception-caught
+            _log.exception("cannot start the window pick thread")
+            self._pick_lock.release()
+            on_result(None)
 
     def _run_pick(self, on_result: Callable[[WindowInfo | None], None]) -> None:
         result: WindowInfo | None = None
