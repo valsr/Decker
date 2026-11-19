@@ -48,8 +48,11 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libhidapi-dev libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
       - if: runner.os == 'macOS'
-        run: brew install hidapi cairo
+        run: |
+          brew install hidapi cairo
+          echo "DYLD_FALLBACK_LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
       - if: runner.os == 'Windows'
+        id: msys
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -57,7 +60,7 @@ jobs:
           path-type: inherit
           install: mingw-w64-x86_64-cairo mingw-w64-x86_64-hidapi
       - if: runner.os == 'Windows'
-        run: echo "C:\\msys64\\mingw64\\bin" >> "$GITHUB_PATH"
+        run: echo "${{ steps.msys.outputs.msys2-location }}/mingw64/bin" >> "$GITHUB_PATH"
         shell: bash
       - uses: astral-sh/setup-uv@v6
       - uses: ./.github/actions/setup-poetry
