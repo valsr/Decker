@@ -20,6 +20,16 @@ def _no_system_icon_themes(tmp_path_factory: pytest.TempPathFactory, monkeypatch
     monkeypatch.setenv("XDG_DATA_DIRS", str(empty / "share"))
 
 
+def marker_reason(marker: pytest.Mark | None, default: str) -> str:
+    """Return a marker's reason, given positionally or as ``reason=``."""
+    if marker is not None:
+        if marker.args:
+            return str(marker.args[0])
+        if "reason" in marker.kwargs:
+            return str(marker.kwargs["reason"])
+    return default
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Skip tests marked for a platform the suite is not running on."""
     rules = (
@@ -32,4 +42,4 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             for item in items:
                 if marker in item.keywords:
                     own = item.get_closest_marker(marker)
-                    item.add_marker(pytest.mark.skip(reason=own.args[0] if own and own.args else reason))
+                    item.add_marker(pytest.mark.skip(reason=marker_reason(own, reason)))
