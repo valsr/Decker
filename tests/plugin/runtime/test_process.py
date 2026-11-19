@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
+import psutil
 import pytest
 from assertpy import assert_that
 
@@ -171,3 +172,39 @@ def test_exit_is_reported_even_when_a_helper_keeps_the_pipes_open(make: Callable
     h = make("leaves_helper.py")
     h.proc.start()
     assert_that(wait_for(lambda: h.exits == [0], timeout=8)).is_true()
+
+
+def test_process_starts_stops_and_kills_a_normal_child(make: Callable[[str], Harness]) -> None:
+    h = make("echo_ready.py")
+    h.proc.start()
+    assert_that(h.proc.is_running).is_true()
+    h.proc.stop(timeout=3.0)
+    assert_that(h.proc.is_running).is_false()
+    stubborn = make("ignore_shutdown.py")
+    stubborn.proc.start()
+    stubborn.proc.stop(timeout=0.3)
+    assert_that(stubborn.proc.is_running).is_false()
+
+
+@pytest.mark.windows_only("plugin runtime (docs/platform-support.md): Job Objects reach helpers of an exited leader")
+def test_helper_is_killed_when_the_plugin_leader_exits(tmp_path: Path) -> None:
+    pid_file = tmp_path / "helper.pid"
+    exits: list[int] = []
+    proc = PluginProcess(
+        "test.plugin",
+        [sys.executable, str(FIXTURES / "leaves_helper_then_exits.py"), str(pid_file)],
+        FIXTURES,
+        {"PATH": os.environ.get("PATH", "")},
+        lambda _message: None,
+        exits.append,
+    )
+    proc.start()
+    try:
+        assert_that(wait_for(pid_file.exists)).is_true()
+        assert_that(wait_for(lambda: bool(pid_file.read_text()))).is_true()
+        helper = int(pid_file.read_text())
+        assert_that(psutil.pid_exists(helper)).is_true()
+        assert_that(wait_for(lambda: len(exits) == 1, timeout=10)).is_true()
+        assert_that(wait_for(lambda: not psutil.pid_exists(helper))).is_true()
+    finally:
+        proc.stop(timeout=0.3)

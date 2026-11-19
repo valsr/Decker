@@ -69,6 +69,7 @@ class PluginProcess:
             stderr=subprocess.PIPE,
             **processes.group_popen_kwargs(),
         )
+        processes.adopt(proc)
         self._proc = proc
         assert proc.stdout is not None and proc.stderr is not None
         readers = [
