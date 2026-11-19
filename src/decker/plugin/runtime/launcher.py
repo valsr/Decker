@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 
+from decker.plugin.environment import venv_python
 from decker.plugin.manifest import RuntimeSpec
 
 
@@ -14,7 +15,7 @@ def launch_command(plugin_dir: Path, runtime: RuntimeSpec) -> list[str]:
         raise ValueError(f"entry '{runtime.entry}' resolves outside the plugin directory")
     if runtime.type == "executable":
         return [str(plugin_dir / runtime.entry)]
-    python = str(plugin_dir / ".venv/bin/python")
+    python = str(venv_python(plugin_dir))
     return [python, "-m", "decker_plugin_sdk", str(plugin_dir / runtime.entry)]
 
 

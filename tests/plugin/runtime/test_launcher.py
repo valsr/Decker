@@ -3,13 +3,14 @@ from pathlib import Path
 import pytest
 from assertpy import assert_that
 
+from decker.plugin.environment import venv_python
 from decker.plugin.manifest import RuntimeSpec
 from decker.plugin.runtime.launcher import launch_command, launch_env
 
 
 def test_python_uses_plugin_venv_uses_plugin_venv(tmp_path: Path) -> None:
     cmd = launch_command(tmp_path, RuntimeSpec("python", "main.py"))
-    assert_that(cmd[0]).is_equal_to(str(tmp_path / ".venv/bin/python"))
+    assert_that(cmd[0]).is_equal_to(str(venv_python(tmp_path)))
     assert_that(cmd[1:3]).is_equal_to(["-m", "decker_plugin_sdk"])
 
 
@@ -33,3 +34,11 @@ def test_env_is_minimal_and_has_sdk_path(tmp_path: Path, monkeypatch: pytest.Mon
     assert_that(env["PYTHONUNBUFFERED"]).is_equal_to("1")
     assert_that(env["PYTHONPATH"]).is_equal_to(str(tmp_path))
     assert_that(launch_env(None)).does_not_contain_key("PYTHONPATH")
+
+
+def test_launch_argv_uses_the_interpreter_in_a_directory_with_spaces(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "my plugins" / "p"
+    plugin_dir.mkdir(parents=True)
+    cmd = launch_command(plugin_dir, RuntimeSpec("python", "main.py"))
+    assert_that(cmd[0]).is_equal_to(str(venv_python(plugin_dir)))
+    assert_that(cmd[-1]).is_equal_to(str(plugin_dir / "main.py"))

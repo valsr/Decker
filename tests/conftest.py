@@ -3,12 +3,29 @@ from pathlib import Path
 
 import pytest
 
+from decker.plugin.manifest import RuntimeSpec
+from decker.server import plugins as plugins_module
+
 
 @pytest.fixture(autouse=True)
 def _isolated_sdk_dir(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep PluginManager.create from staging the SDK into the real home directory."""
     sdk_root: Path = tmp_path_factory.mktemp("sdk")
     monkeypatch.setattr("decker.common.paths.sdk", lambda: sdk_root)
+
+
+@pytest.fixture(autouse=True)
+def _run_py_entries_through_the_interpreter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows cannot execute a `.py` plugin entry directly, so test plugins run via the interpreter there."""
+    if sys.platform != "win32":
+        return
+    original = plugins_module.launch_command
+
+    def launch(plugin_dir: Path, runtime: RuntimeSpec) -> list[str]:
+        argv = original(plugin_dir, runtime)
+        return [sys.executable, *argv] if runtime.type == "executable" and argv[0].endswith(".py") else argv
+
+    monkeypatch.setattr(plugins_module, "launch_command", launch)
 
 
 @pytest.fixture(autouse=True)

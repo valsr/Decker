@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING, Any
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 
 from decker.common.version import is_compatible
-from decker.plugin.environment import EnvironmentBuildError, build_environment
+from decker.plugin.environment import (
+    EnvironmentBuildError,
+    build_environment,
+    venv_python,
+)
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import PluginManifest
 from decker.plugin.package import (
@@ -255,7 +259,7 @@ class PluginInstaller:
             raise PluginInstallError(str(exc)) from exc
         if not (staging / runtime.entry).is_file():
             raise PluginInstallError(f"runtime entry '{runtime.entry}' is missing from the package")
-        if runtime.type == "python" and not (staging / ".venv" / "bin" / "python").exists():
+        if runtime.type == "python" and not venv_python(staging).exists():
             raise PluginInstallError("the plugin environment has no Python interpreter")
 
     @staticmethod
