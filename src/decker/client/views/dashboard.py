@@ -29,6 +29,7 @@ from decker.client.events import (
     KeyDisplayStatesUpdatedEvent,
     PagesUpdatedEvent,
     ProfilesUpdatedEvent,
+    ServerDisconnectedEvent,
     WindowFocusedEvent,
     WindowPickedEvent,
 )
@@ -151,6 +152,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
                 self._profiles_dialog.set_status(event)
         elif isinstance(event, WindowFocusedEvent) and self._profiles_dialog is not None:
             self._profiles_dialog.on_focused(event.window)
+        elif isinstance(event, ServerDisconnectedEvent) and self._profiles_dialog is not None:
+            self._profiles_dialog.on_disconnected()
         elif isinstance(event, WindowPickedEvent) and self._profiles_dialog is not None:
             self._profiles_dialog.on_picked(event.window)
         return None

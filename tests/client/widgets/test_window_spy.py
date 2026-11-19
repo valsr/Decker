@@ -59,6 +59,11 @@ def _value(spy: WindowSpyDialog, field: str) -> str:
     return spy._values[field].text()
 
 
+def _pick(spy: WindowSpyDialog, window: WindowInfo | None) -> None:
+    spy._pick_button.click()
+    spy.on_picked(window)
+
+
 def _tick(spy: WindowSpyDialog, times: int) -> None:
     for _ in range(times):
         spy._tick_timer.timeout.emit()
@@ -71,6 +76,7 @@ def test_pick_button_calls_window_pick_and_shows_result(spy, picker):
     assert_that(spy._pick_button.isEnabled()).is_false()
     assert_that(spy._message.text()).contains("Click a window").contains("Escape")
 
+    spy._pick_button.click()
     spy.on_picked(_KONSOLE)
 
     assert_that(_value(spy, "window_class")).is_equal_to("konsole")
@@ -89,7 +95,7 @@ def test_refused_pick_shows_message_and_reenables(qapp):
 
 
 def test_cancelled_pick_keeps_previous_window(spy):
-    spy.on_picked(_KONSOLE)
+    _pick(spy, _KONSOLE)
     spy._pick_button.click()
 
     spy.on_picked(None)
@@ -149,7 +155,7 @@ def test_follow_ignores_own_pid(spy):
 
 def test_unsupported_fields_greyed(spy):
     spy.set_status(_status(backend="windows"))
-    spy.on_picked(_KONSOLE)
+    _pick(spy, _KONSOLE)
 
     assert_that(_value(spy, "desktop_file")).is_equal_to("not available on this system")
     assert_that(spy._values["desktop_file"].isEnabled()).is_false()
@@ -163,11 +169,11 @@ def test_disabled_with_reason_when_unavailable(spy):
     assert_that(spy._pick_button.isEnabled()).is_false()
     assert_that(spy._capture_button.isEnabled()).is_false()
     assert_that(spy._follow.isEnabled()).is_false()
-    assert_that(spy._message.text()).contains("no portal")
+    assert_that(spy._status_label.text()).contains("no portal")
 
 
 def test_copy_button_copies_value(spy):
-    spy.on_picked(_KONSOLE)
+    _pick(spy, _KONSOLE)
 
     spy._copy_buttons["executable"].click()
 
@@ -179,7 +185,7 @@ def test_create_rule_button_emits_window(spy):
     spy.create_rule.connect(got.append)
     assert_that(spy._create_button.isEnabled()).is_false()
 
-    spy.on_picked(_KONSOLE)
+    _pick(spy, _KONSOLE)
     spy._create_button.click()
 
     assert_that(got).is_equal_to([_KONSOLE])
@@ -201,6 +207,105 @@ def test_rule_from_window_empty_class_has_no_condition():
 
     assert_that(rule.name).is_equal_to("New rule")
     assert_that(rule.conditions).is_empty()
+
+
+def test_status_leaving_active_resets_pick_and_returning_reenables(spy):
+    spy._pick_button.click()
+    assert_that(spy._picking).is_true()
+
+    spy.set_status(_status(state="unavailable", reason="no portal"))
+    assert_that(spy._picking).is_false()
+    assert_that(spy._message.text()).is_equal_to("")
+    assert_that(spy._status_label.text()).contains("no portal")
+
+    spy.set_status(_status())
+    assert_that(spy._pick_button.isEnabled()).is_true()
+    assert_that(spy._status_label.text()).is_equal_to("")
+
+
+def test_status_unavailable_ends_capture(spy):
+    spy.set_status(_status(pick=False))
+    spy._capture_button.click()
+    _tick(spy, 3)
+
+    spy.set_status(_status(state="unavailable", pick=False))
+    spy.set_status(_status(pick=False))
+    spy.on_focused(_KONSOLE)
+
+    assert_that(_value(spy, "window_class")).is_equal_to("")
+
+
+def test_pick_safety_timer_resets_a_pick_without_result(spy):
+    spy._pick_button.click()
+
+    spy._pick_timer.timeout.emit()
+
+    assert_that(spy._picking).is_false()
+    assert_that(spy._message.text()).is_equal_to("Pick timed out")
+    assert_that(spy._pick_button.isEnabled()).is_true()
+
+
+def test_pick_safety_interval_is_injectable_and_defaults_to_75_s(qapp, picker):
+    assert_that(WindowSpyDialog(picker, OWN_PID)._pick_timer.interval()).is_equal_to(75000)
+    assert_that(WindowSpyDialog(picker, OWN_PID, pick_timeout_ms=5)._pick_timer.interval()).is_equal_to(5)
+
+
+def test_reset_clears_pick_and_capture(spy):
+    spy._pick_button.click()
+
+    spy.reset()
+
+    assert_that(spy._picking).is_false()
+    assert_that(spy._pick_button.isEnabled()).is_true()
+
+
+def test_closing_mid_countdown_cancels_capture(spy):
+    spy.set_status(_status(pick=False))
+    spy._capture_button.click()
+    _tick(spy, 1)
+
+    spy.close()
+    spy.show()
+    spy.on_focused(_KONSOLE)
+
+    assert_that(_value(spy, "window_class")).is_equal_to("")
+    assert_that(spy._tick_timer.isActive()).is_false()
+    assert_that(spy._capture_button.isEnabled()).is_true()
+
+
+def test_closing_abandons_pick_and_ignores_late_result(spy):
+    spy._pick_button.click()
+
+    spy.close()
+    spy.show()
+    spy.on_picked(_KONSOLE)
+
+    assert_that(_value(spy, "window_class")).is_equal_to("")
+    assert_that(spy._pick_timer.isActive()).is_false()
+
+
+def test_late_pick_result_does_not_stop_a_running_capture(spy):
+    spy.set_status(_status(pick=False))
+    spy._capture_button.click()
+    _tick(spy, 3)
+
+    spy.on_picked(_DIALOG)
+
+    assert_that(_value(spy, "window_class")).is_equal_to("")
+    spy.on_focused(_KONSOLE)
+    assert_that(_value(spy, "window_class")).is_equal_to("konsole")
+
+
+def test_cancel_result_without_open_pick_shows_no_message(spy):
+    spy.on_picked(None)
+
+    assert_that(spy._message.text()).is_equal_to("")
+
+
+def test_unknown_pid_is_blank(spy):
+    _pick(spy, WindowInfo("konsole"))
+
+    assert_that(_value(spy, "pid")).is_equal_to("")
 
 
 class _Api:
@@ -243,6 +348,7 @@ def test_create_rule_signal_opens_new_rule_in_dialog(qapp):
     assert spy is not None
     dialog._spy_button.click()
     assert_that(dialog._spy).is_same_as(spy)
+    spy._pick_button.click()
     dialog.on_picked(_DIALOG)
     spy._create_button.click()
     dialog.set_rules(DeviceRules("dev1", list(api.rules), DefaultRule()))  # the server's event arrives later
@@ -252,3 +358,15 @@ def test_create_rule_signal_opens_new_rule_in_dialog(qapp):
     assert_that(dialog._editor.rule().conditions[0].value).is_equal_to("firefox")
     spy.close()
     dialog.close()
+
+
+def test_status_return_keeps_unrelated_messages(spy):
+    spy._pick_button.click()
+    spy.on_picked(None)
+
+    spy.set_status(_status(state="unavailable", reason="x"))
+    spy._message.setText("Pick cancelled")
+    spy.set_status(_status())
+
+    assert_that(spy._message.text()).is_equal_to("Pick cancelled")
+    assert_that(spy._status_label.text()).is_equal_to("")

@@ -20,6 +20,7 @@ from decker.client.events import (
     KeyDisplayStatesUpdatedEvent,
     PagesUpdatedEvent,
     ProfilesUpdatedEvent,
+    ServerDisconnectedEvent,
 )
 from decker.client.ui_state_store import UiStateStore
 from decker.client.views.dashboard import DashboardView, _confirm_delete_page
@@ -1104,6 +1105,23 @@ class TestProfiles:  # pylint: disable=protected-access
         assert_that(dialog.isVisible()).is_true()
         assert_that(dialog.isModal()).is_false()
         assert_that(dialog._name_edit.text()).is_equal_to("Work")
+        dialog.close()
+
+    def test_disconnect_resets_an_open_window_pick(self, qapp, tmp_path):
+        view, _cm = self._view(tmp_path)
+        view._page_tabs.profile_selector.edit_requested.emit(2)
+        dialog = _open_dialog(view)
+        view.handle_event(DetectionStatusEvent("active", "", "kwin", True, None))
+        dialog._spy_button.click()
+        spy = dialog._spy
+        assert spy is not None
+        spy._pick_button.click()
+        assert_that(spy._picking).is_true()
+
+        view.handle_event(ServerDisconnectedEvent("lost"))
+
+        assert_that(spy._picking).is_false()
+        spy.close()
         dialog.close()
 
     def test_edit_profile_reuses_the_open_dialog(self, qapp, tmp_path):
