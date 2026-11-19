@@ -214,3 +214,39 @@ def test_font_face_returns_the_face_of_the_resolved_file(tmp_path: Path, monkeyp
 
     assert_that(fonts.font_face(path or "", "Beta")).is_equal_to(1)
     assert_that(fonts.font_face(str(fonts.BUNDLED_REGULAR), "Beta")).is_equal_to(0)
+
+
+def _no_os_fonts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(fonts, "_fc_match", lambda _pattern: ("/usr/share/fonts/other/Arial.ttf", False, 0))
+    monkeypatch.setattr(fonts, "font_directories", lambda: [tmp_path])
+
+
+@pytest.mark.parametrize(
+    ("family", "bold", "italic", "file_name"),
+    [
+        ("DejaVu Serif", True, False, "DejaVuSerif-Bold.ttf"),
+        ("DejaVu Sans Mono", False, True, "DejaVuSansMono-Oblique.ttf"),
+        ("DejaVu Serif Condensed", False, False, "DejaVuSerifCondensed.ttf"),
+        ("DejaVu Serif Condensed", True, True, "DejaVuSerifCondensed-BoldItalic.ttf"),
+        ("DejaVu Sans Condensed", True, False, "DejaVuSansCondensed-Bold.ttf"),
+        ("DejaVu Sans Condensed", False, True, "DejaVuSansCondensed-Oblique.ttf"),
+        ("dejavu SERIF", False, True, "DejaVuSerif-Italic.ttf"),
+        ("DejaVu Sans", True, True, "DejaVuSans-BoldOblique.ttf"),
+    ],
+)
+def test_bundled_families_resolve_when_the_os_lacks_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, family: str, bold: bool, italic: bool, file_name: str
+) -> None:
+    _no_os_fonts(monkeypatch, tmp_path)
+
+    path, real_bold = fonts.font_file(family, bold=bold, italic=italic)
+
+    assert_that(path).is_equal_to(str(fonts.BUNDLED_FONT_DIR / file_name))
+    assert_that(real_bold).is_equal_to(bold)
+    assert_that(fonts.font_face(str(path), family, bold=bold, italic=italic)).is_equal_to(0)
+
+
+def test_an_unrelated_family_still_uses_fc_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_os_fonts(monkeypatch, tmp_path)
+
+    assert_that(fonts.font_file("Arial")).is_equal_to(("/usr/share/fonts/other/Arial.ttf", False))
