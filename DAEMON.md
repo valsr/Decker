@@ -1,262 +1,78 @@
-> **Not implemented.** The server currently has no `--daemon` option; this document describes a planned design. See docs/platform-support.md.
+# Decker server monitor
 
-# Decker Daemon Mode
+> Earlier versions of this document described a `--daemon` mode (`python -m decker --daemon`, a `DaemonManager`, and
+> client commands such as `start`). None of that exists any more. The server has no `--daemon` option and no `start`
+> RPC. Its supervision is done by the **server monitor**, which `poe server` (`python -m decker`) always starts. This
+> file keeps its old name so existing links still work.
 
-This document describes the daemon mode functionality added to the Decker server application.
+## What runs
 
-## Overview
+`poe server` launches the **server monitor**, which spawns the **server** as a child process and supervises it. The
+server runs headlessly: it talks to the Stream Deck hardware and serves RPyC on `server.host`:`server.port` (default
+`localhost:18861`). Clients (the GUI, `poe cli`) connect to that port. The server is already running when a client
+connects, which is why there is no `start` RPC.
 
-The Decker application now supports running in daemon mode with automatic health monitoring and restart capabilities. When running in daemon mode, the application:
+## What the monitor does
 
-1. Starts an RPyC server that manages the main application
-2. Monitors the application health using heartbeat checks
-3. Automatically restarts the application if it becomes unresponsive
-4. Provides a client interface for controlling the application remotely
+Every `server.health_check_interval` seconds (default 5) it runs one round of checks:
 
-## Features
+1. **Process alive.** If the child has exited with **code 0** (the `stop` RPC does that) the shutdown was intentional:
+   the monitor exits cleanly and does not restart it. Any other exit is a crash and the server is restarted.
+2. **Heartbeat.** It calls the server's `heartbeat` RPC. A missing or unhealthy answer counts as a failure; a good
+   answer resets the counter. After `server.max_failed_heartbeats` (default 2) consecutive failures the server is
+   restarted.
+3. **Memory.** It reads the server's resident memory with `psutil` (`decker.common.processes.rss_bytes`). Above
+   `server.memory_limit` (default 1 GiB) the server is restarted. An unreadable value is treated as unknown, never as
+   over the limit.
 
-### Daemon Mode
-- **Health Monitoring**: Sends heartbeat commands every 2 seconds (configurable)
-- **Auto-restart**: Restarts the application after 2 consecutive failed heartbeats (configurable)
-- **Process Management**: Manages the application lifecycle in a separate process
-- **Remote Control**: Allows starting/stopping the application via RPyC
+A restart stops the child, resets the failure counter and starts a new child. If starting fails it is retried on the
+next round. There is no backoff and no maximum restart count today.
 
-### Command Line Options
+The server itself has no self-healing logic; fault tolerance is entirely the monitor's job.
 
-#### Daemon Mode
-```bash
-# Start in daemon mode with default settings
-python -m decker --daemon
+## Settings
 
-# Start with custom settings
-python -m decker --daemon --port 18861 --heartbeat-interval 2.0 --max-failed-heartbeats 2
+All under `server:` in `~/.decker/config.yaml` (defaults in `src/decker/common/config/defaults.yml`):
 
-# Start with verbose logging
-python -m decker --daemon --verbose --verbose
-```
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `host` | `localhost` | Interface the RPyC server listens on. There is no authentication; keep it on localhost unless remote clients are needed |
+| `port` | `18861` | RPyC port |
+| `startup_wait` | `5.0` | Seconds the monitor waits after spawning the server to see that its process stays alive |
+| `health_check_interval` | `5.0` | Seconds between monitor rounds |
+| `max_failed_heartbeats` | `2` | Consecutive failed heartbeats before a restart |
+| `memory_limit` | `1073741824` | Server memory limit in bytes |
+| `device_watch_interval` | `2.0` | How often the server checks its decks are still present |
+| `allow_remote_plugin_install` | `false` | Whether non-local clients may install or uninstall plugins |
 
-#### Normal Mode
-```bash
-# Start in normal mode (default)
-python -m decker
+## Command line
 
-# Start with verbose logging
-python -m decker --verbose
-```
+`python -m decker` (or `poe server`) accepts:
 
-#### Command Line Arguments
+| Option | Meaning |
+|--------|---------|
+| `-v`, `--verbose` | More logging: once for INFO, twice for DEBUG (the default is WARNING) |
+| `--prefix DIR` | Locate the `.decker` folder under `DIR` instead of the user's home directory |
+| `--device ID_OR_PATH` | Device ID or USB path to use; the server fails to start if the device is not found |
+| `--reset-device-data` | Clear persisted key images and labels before starting (for the target device if `--device` is set) |
+| `--version` | Print the version |
 
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--daemon` | flag | False | Run in daemon mode |
-| `--port` | int | 18861 | Port for RPyC server |
-| `--heartbeat-interval` | float | 2.0 | Time between heartbeats (seconds) |
-| `--max-failed-heartbeats` | int | 2 | Max failed heartbeats before restart |
-| `--verbose` / `-v` | count | 0 | Increase logging verbosity |
+Everything else is set in the configuration file above.
 
-## Client Utilities
-
-A client utility is provided to interact with the daemon:
-
-```bash
-# Check daemon status
-python -m decker.client status
-
-# Send heartbeat
-python -m decker.client heartbeat
-
-# Start application via daemon
-python -m decker.client start
-
-# Stop application via daemon
-python -m decker.client stop
-
-# Use custom port
-python -m decker.client --port 18862 status
-```
-
-## Poetry Tasks
-
-New poetry tasks have been added for convenience:
+## Controlling it
 
 ```bash
-# Start in daemon mode
-poetry run poe daemon
-
-# Use client utilities
-poetry run poe client status
-poetry run poe client heartbeat
-poetry run poe client start
-poetry run poe client stop
+poe server          # start the monitor and the server
+poe client          # GUI client
+poe cli list        # list the server's RPC commands
+poe cli status      # call one
+poe cli stop        # stop the server (exit code 0); the monitor then exits too
 ```
 
-## Architecture
+## Platform notes
 
-### Components
-
-1. **DaemonManager**: Main daemon controller that manages the server process and health monitoring
-2. **ServerProcess**: Manages the RPyC server in a separate process
-3. **DeckerService**: RPyC service that provides the API for controlling the application
-4. **Application**: Enhanced with lifecycle management for daemon operation
-
-### Health Monitoring
-
-The daemon uses a heartbeat mechanism to monitor application health:
-
-1. Every `heartbeat_interval` seconds, the daemon sends a heartbeat to the server
-2. If a heartbeat fails, the failure counter increments
-3. If `max_failed_heartbeats` consecutive failures occur, the server is restarted
-4. Successful heartbeats reset the failure counter
-
-### Process Management
-
-- The daemon runs the RPyC server in a separate process using `multiprocessing`
-- The server process can be started, stopped, and restarted independently
-- Proper signal handling ensures graceful shutdown
-
-## API Reference
-
-### DeckerService (RPyC)
-
-The RPyC service exposes the following methods:
-
-#### `exposed_start_application() -> bool`
-Start the Decker application.
-- Returns: `True` if started successfully, `False` otherwise
-
-#### `exposed_stop_application() -> bool`
-Stop the Decker application.
-- Returns: `True` if stopped successfully, `False` otherwise
-
-#### `exposed_heartbeat() -> dict[str, Any]`
-Process a heartbeat request.
-- Returns: Dictionary with status information
-
-#### `exposed_get_status() -> dict[str, Any]`
-Get the current status of the service.
-- Returns: Dictionary with detailed status information
-
-### DaemonManager
-
-#### `start_daemon() -> bool`
-Start the daemon with health monitoring.
-- Returns: `True` if started successfully, `False` otherwise
-
-#### `stop_daemon() -> bool`
-Stop the daemon.
-- Returns: `True` if stopped successfully, `False` otherwise
-
-#### `get_status() -> dict[str, Any]`
-Get the current daemon status.
-- Returns: Dictionary with daemon status information
-
-## Configuration
-
-Daemon settings can be configured via:
-
-1. Command line arguments (highest priority)
-2. Configuration file (future enhancement)
-3. Default values
-
-### Default Configuration
-
-```python
-PORT = 18861
-HEARTBEAT_INTERVAL = 2.0  # seconds
-MAX_FAILED_HEARTBEATS = 2
-```
-
-## Examples
-
-### Basic Daemon Usage
-
-```bash
-# Terminal 1: Start daemon
-python -m decker --daemon --verbose
-
-# Terminal 2: Interact with daemon
-python -m decker.client status
-python -m decker.client start
-python -m decker.client heartbeat
-python -m decker.client stop
-```
-
-### Custom Configuration
-
-```bash
-# Start daemon with custom settings
-python -m decker --daemon \
-    --port 19000 \
-    --heartbeat-interval 1.0 \
-    --max-failed-heartbeats 3 \
-    --verbose --verbose
-
-# Use client with custom port
-python -m decker.client --port 19000 status
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Port already in use**: Change the port using `--port` argument
-2. **Connection refused**: Ensure daemon is running and accessible
-3. **Application won't start**: Check logs for GUI/display issues
-
-### Logging
-
-Use verbose flags to increase logging detail:
-- `-v`: INFO level logging
-- `-vv`: DEBUG level logging
-
-### Monitoring
-
-Check daemon status regularly:
-```bash
-python -m decker.client status
-```
-
-This shows:
-- Daemon running status
-- Server running status
-- Server process ID
-- Failed heartbeat count
-- Configuration settings
-
-## Development
-
-### Running Tests
-
-```bash
-# Run all tests
-poetry run poe test
-
-# Run specific server tests
-python -m pytest tests/test_server.py -v
-```
-
-### Demonstration
-
-Use the demonstration script to see the daemon in action:
-
-```bash
-# Demonstrate daemon mode
-python demo.py daemon
-
-# Demonstrate normal mode
-python demo.py normal
-
-# Demonstrate both modes
-python demo.py both
-```
-
-## Future Enhancements
-
-Planned improvements include:
-
-1. **Configuration File Support**: Load settings from TOML configuration
-2. **Metrics Collection**: Track application performance metrics
-3. **Log Rotation**: Automatic log file management
-4. **Service Integration**: systemd/Windows service support
-5. **Health Checks**: More sophisticated health monitoring
-6. **Clustering**: Multiple daemon instances with load balancing
+- Memory is read with `psutil`, so the limit works on Linux, macOS and Windows.
+- On POSIX the monitor stops the server with a termination signal, so the server can shut its plugins down
+  gracefully. On Windows the child is ended with `multiprocessing`'s `terminate()` (a hard kill), so the signal handler
+  and graceful plugin shutdown do not run on monitor restarts there; plugins then rely on their stdin closing. See
+  [platform support](docs/platform-support.md).
