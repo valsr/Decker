@@ -46,6 +46,10 @@ QComboBox:focus {
     border-color: $accent_line;
 }
 
+QLineEdit[invalid="true"] {
+    border-color: $error;
+}
+
 QLineEdit:disabled,
 QSpinBox:disabled,
 QComboBox:disabled {
