@@ -73,6 +73,42 @@ jobs:
             report.xml
             coverage.xml
 
+  test-distro:
+    name: test (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: fedora
+            image: fedora:latest
+            experimental: false
+          - distro: arch
+            image: archlinux:latest
+            experimental: true
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - if: matrix.distro == 'fedora'
+        run: dnf install -y git python3.14 hidapi cairo mesa-libEGL mesa-libGL libxkbcommon fontconfig dbus-libs uv
+      - if: matrix.distro == 'arch'
+        run: pacman -Syu --noconfirm git python hidapi cairo libglvnd libxkbcommon fontconfig dbus uv
+      - uses: actions/checkout@v7
+      - run: |
+          uv tool install --python 3.14 poetry
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: poetry install
+      - run: poetry run pytest -rs --junitxml=report.xml --cov-report xml:coverage.xml --cov=decker tests
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-reports-${{ matrix.distro }}
+          path: |
+            report.xml
+            coverage.xml
+
   build:
     runs-on: ubuntu-latest
     needs: [format, pylint, mypy, test]
