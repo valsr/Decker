@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 
@@ -8,6 +9,7 @@ import psutil
 import pytest
 from assertpy import assert_that
 
+from decker.common import processes
 from decker.common.processes import (
     group_popen_kwargs,
     kill_tree,
@@ -30,13 +32,32 @@ def _spawn(code: str) -> subprocess.Popen[bytes]:
     )
 
 
+def _is_gone(pid: int) -> bool:
+    if not psutil.pid_exists(pid):
+        return True
+    try:
+        return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True
+
+
 def _wait_gone(pid: int, timeout: float = 5.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not psutil.pid_exists(pid):
+        if _is_gone(pid):
             return True
         time.sleep(0.05)
-    return not psutil.pid_exists(pid)
+    return _is_gone(pid)
+
+
+def _read_pid(proc: subprocess.Popen[bytes], timeout: float = 10.0) -> int:
+    assert proc.stdout is not None
+    result: list[bytes] = []
+    reader = threading.Thread(target=lambda: result.append(proc.stdout.readline()), daemon=True)  # type: ignore[union-attr]
+    reader.start()
+    reader.join(timeout)
+    assert result, "child did not report a pid in time"
+    return int(result[0])
 
 
 @pytest.fixture(name="procs")
@@ -44,6 +65,7 @@ def _procs() -> Iterator[list[subprocess.Popen[bytes]]]:
     started: list[subprocess.Popen[bytes]] = []
     yield started
     for proc in started:
+        kill_tree(proc)
         if proc.poll() is None:
             proc.kill()
         proc.wait()
@@ -51,11 +73,24 @@ def _procs() -> Iterator[list[subprocess.Popen[bytes]]]:
             proc.stdout.close()
 
 
-def test_kill_tree_stops_the_process_and_its_grandchild(procs: list[subprocess.Popen[bytes]]) -> None:
+@pytest.fixture(name="strays")
+def _strays() -> Iterator[list[int]]:
+    pids: list[int] = []
+    yield pids
+    for pid in pids:
+        try:
+            psutil.Process(pid).kill()
+        except psutil.Error:
+            pass
+
+
+def test_kill_tree_stops_the_process_and_its_grandchild(
+    procs: list[subprocess.Popen[bytes]], strays: list[int]
+) -> None:
     parent = _spawn(_PARENT)
     procs.append(parent)
-    assert parent.stdout is not None
-    grandchild = int(parent.stdout.readline())
+    grandchild = _read_pid(parent)
+    strays.append(grandchild)
     kill_tree(parent)
     parent.wait(timeout=5)
     assert_that(_wait_gone(parent.pid)).is_true()
@@ -97,3 +132,28 @@ def test_group_popen_kwargs_starts_a_new_session_on_posix() -> None:
 def test_group_popen_kwargs_creates_a_process_group_on_windows() -> None:
     flags = group_popen_kwargs()["creationflags"]
     assert_that(flags & subprocess.CREATE_NEW_PROCESS_GROUP).is_true()  # type: ignore[attr-defined,unused-ignore]
+
+
+@pytest.mark.parametrize("terminate", [True, False])
+def test_walk_tree_never_looks_up_a_pid_after_the_leader_exited(
+    procs: list[subprocess.Popen[bytes]], monkeypatch: pytest.MonkeyPatch, terminate: bool
+) -> None:
+    proc = _spawn("pass")
+    procs.append(proc)
+    proc.wait(timeout=5)
+    lookups: list[int] = []
+    monkeypatch.setattr(processes, "_lookup", lambda pid: lookups.append(pid))
+    processes._walk_tree(proc, terminate)  # pylint: disable=protected-access
+    assert_that(lookups).is_empty()
+
+
+def test_walk_tree_kills_a_live_leader_and_its_grandchild(
+    procs: list[subprocess.Popen[bytes]], strays: list[int]
+) -> None:
+    parent = _spawn(_PARENT)
+    procs.append(parent)
+    grandchild = _read_pid(parent)
+    strays.append(grandchild)
+    processes._walk_tree(parent, False)  # pylint: disable=protected-access
+    parent.wait(timeout=5)
+    assert_that(_wait_gone(grandchild)).is_true()

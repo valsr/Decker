@@ -1,7 +1,5 @@
 """Tests for the server monitor — focuses on the internal state-machine logic."""
 
-import os
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
