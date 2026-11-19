@@ -80,6 +80,7 @@ poe cli stop        # stop the server (exit code 0); the monitor then exits too
   `server.stop_timeout` seconds, then calls `terminate()` (SIGTERM on POSIX, `TerminateProcess` on Windows) and finally
   `kill()`. A server that shuts down on request exits with code 0.
 - The terminate and kill fallbacks are hard kills on Windows, so the graceful plugin shutdown does not run in that
-  case. Each Windows plugin process lives in a kill-on-close Job Object, so helpers of executable
-  plugins are still killed there, and also when the server itself is hard-killed (a helper spawned before the process
-  is assigned to its job could escape; if a job cannot be created only the psutil process walk is used). See [platform support](docs/platform-support.md).
+  case. Each Windows plugin process lives in a kill-on-close Job Object, so helpers of executable plugins are still
+  killed there, and also when the server itself is hard-killed (a helper spawned before the process is assigned to its
+  job could escape; if a job cannot be created only the psutil process walk is used). See
+  [platform support](docs/platform-support.md).

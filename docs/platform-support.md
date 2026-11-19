@@ -51,14 +51,13 @@ pass there).
 Footnotes:
 
 1. CI ran the RPC service layer (with real stores on sqlite), the monitor logic and `decker.common.processes` (process
-   groups, tree kill, memory read via psutil, so no `/proc` is needed) on all three OSes. On Windows the psutil tree walk
-   (used when no job object is available) does not clean up orphaned helpers once the leader has exited (the pid may
-   be recycled). The real server child was
-   also started, stopped gracefully (exit code 0) and restarted by the monitor on Linux, Windows and macOS (integration
-   tests in `tests/server/test_server_process.py`, run 44460424393; they skip when a Stream Deck is attached). Not
-   covered: the graceful shutdown of plugin processes during such a stop end to end (no plugin is installed in those
-   tests; the supervisor tests only cover stopping plugin processes at unit level), hardware access, a full
-   `poe server` run, memory-limit restarts of a long-lived server, and `poe cli` against a live server.
+   groups, tree kill, memory read via psutil, so no `/proc` is needed) on all three OSes. On Windows the psutil tree
+   walk (the fallback) does not clean up orphaned helpers once the leader has exited (the pid may be recycled). The real
+   server child was also started, stopped gracefully (exit code 0) and restarted by the monitor on Linux, Windows and
+   macOS (integration tests in `tests/server/test_server_process.py`, run 44460424393; they skip when a Stream Deck is
+   attached). Not covered: the graceful shutdown of plugin processes during such a stop end to end (no plugin is
+   installed in those tests; the supervisor tests only cover stopping plugin processes at unit level), hardware access,
+   a full `poe server` run, memory-limit restarts of a long-lived server, and `poe cli` against a live server.
 2. The README documents `libhidapi` setup for Debian/Ubuntu, Fedora and Arch and a conventional udev rule; the udev
    steps are not verified on every distribution, and other distributions need their own package name.
 3. The README documents hidapi and Cairo installation for Windows (MSYS2) and macOS (Homebrew) as the CI runners
@@ -69,26 +68,25 @@ Footnotes:
 5. GNOME has no system tray by default, and the behaviour there is untested. The tray is not covered by CI on any OS.
 6. Plugin children start in their own process group (`CREATE_NEW_PROCESS_GROUP` on Windows, a new session elsewhere).
    They are stopped by a recursive psutil kill on Windows and by `os.killpg` (SIGTERM/SIGKILL) on the process group
-   elsewhere; on Windows terminate then kill are both hard kills (`TerminateProcess`). On Windows each plugin
-   process (runtime and the `uv`/venv build subprocesses) is also adopted into its own Job Object with
-   `KILL_ON_JOB_CLOSE` right after it is spawned (`decker.common._winjob`, private). Killing the tree terminates the job,
-   which reaches helpers of an already-exited leader, and the supervisor kills the tree once the leader exits, so
-   helpers die with it. Terminate stays a psutil walk. The server child itself is not in a job, but its plugins' job
-   handles close when the server dies (hard kill included), so the OS kills their trees. If a job cannot be created or
-   assigned this is logged at debug level and the psutil walk is the only mechanism. A helper spawned in the short
-   window between spawn and assignment can escape the job. The real-job behaviour is covered by `windows_only` tests
-   that the Windows CI run has to prove. The monitor
-   stops the server on every OS by setting a stop event, which makes the server run its normal shutdown (including
-   stopping plugins); only if the server is still alive after `server.stop_timeout` does it fall back to `terminate()`
-   (SIGTERM on POSIX, `TerminateProcess` on Windows) and then `kill()`. Plugins stopped through that fallback on Windows
-   rely on stdin EOF instead of a graceful stop. The launcher uses the plugin venv's interpreter (`Scripts\python.exe` on
-   Windows, `bin/python` elsewhere), and on Windows it passes only a minimal environment plus the Windows system
-   variables (`SYSTEMROOT`, `TEMP`, ...); a test starts a real interpreter with that environment on every OS. CI ran the
-   real `uv venv` build tests (`test_build_creates_venv_with_server_python_when_no_spec` and
-   `test_build_installs_requirements`) on Windows and macOS as well as Linux (run 44454336780: all passed, none skipped),
-   plus real plugin child processes, the watchdog and orphan checks. `test_venv_is_built_relocatable` uses a fake `uv`
-   and only checks the arguments. Builds that fetch from a network index are not covered (the requirements test uses a
-   local wheel).
+   elsewhere; on Windows terminate then kill are both hard kills (`TerminateProcess`). On Windows each plugin process
+   (runtime and the `uv`/venv build subprocesses) is also adopted into its own Job Object with `KILL_ON_JOB_CLOSE` right
+   after it is spawned (`decker.common._winjob`, private). Killing the tree terminates the job, which reaches helpers of
+   an already-exited leader, and the supervisor kills the tree once the leader exits, so helpers die with it. Terminate
+   stays a psutil walk (the fallback). The server child itself is not in a job, but its plugins' job handles close when
+   the server dies (hard kill included), so the OS kills their trees. If a job cannot be created or assigned this is
+   logged at debug level and the psutil walk is the only mechanism. A helper spawned in the short window between spawn
+   and assignment can escape the job. The real-job behaviour is covered by `windows_only` tests that ran and passed on
+   the Windows runner (run 44551225429, none skipped). The monitor stops the server on every OS by setting a stop event,
+   which makes the server run its normal shutdown (including stopping plugins); only if the server is still alive after
+   `server.stop_timeout` does it fall back to `terminate()` (SIGTERM on POSIX, `TerminateProcess` on Windows) and then
+   `kill()`. Plugins stopped through that fallback on Windows rely on stdin EOF instead of a graceful stop. The launcher
+   uses the plugin venv's interpreter (`Scripts\python.exe` on Windows, `bin/python` elsewhere), and on Windows it
+   passes only a minimal environment plus the Windows system variables (`SYSTEMROOT`, `TEMP`, ...); a test starts a real
+   interpreter with that environment on every OS. CI ran the real `uv venv` build tests
+   (`test_build_creates_venv_with_server_python_when_no_spec` and `test_build_installs_requirements`) on Windows and
+   macOS as well as Linux (run 44454336780: all passed, none skipped), plus real plugin child processes, the watchdog
+   and orphan checks. `test_venv_is_built_relocatable` uses a fake `uv` and only checks the arguments. Builds that fetch
+   from a network index are not covered (the requirements test uses a local wheel).
 7. CI ran package read/extract (including zip path safety per OS), install, uninstall and repository RPCs against local
    fixtures. Live repository fetches and update checks over the network are not covered.
 8. Fonts resolve in this order: `fc-match` when present, an index of the OS font folders, then the bundled DejaVu
