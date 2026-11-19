@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 PAGES_CHANGED_EVENT = "pages_changed"
 PROFILES_CHANGED_EVENT = "profiles_changed"
+_APP_RULES_CHANGED_EVENT = "app_rules_changed"
 
 
 class PageController(Manager):
@@ -158,7 +159,11 @@ class PageController(Manager):
             for page_id in store.delete_profile(device_id, profile_id):
                 self._ctx.key_assignment_store.delete_page(device_id, page_id)
                 self._ctx.device_state_store.delete_page_state(device_id, page_id)
+            rules = self._ctx.app_rule_store
+            rules_changed = rules is not None and rules.profile_deleted(device_id, profile_id)
         self._notify(device_id, profiles=True)
+        if rules_changed:
+            self._notify_rules(device_id)
         return True
 
     def clone_profile(self, device_id: str, profile_id: int) -> ProfileInfo | None:
@@ -216,7 +221,11 @@ class PageController(Manager):
             self._ctx.key_assignment_store.delete_page(device_id, page_id)
             self._ctx.device_state_store.delete_page_state(device_id, page_id)
             self._ctx.page_store.delete_page(device_id, page_id)
+            rules = self._ctx.app_rule_store
+            rules_changed = rules is not None and rules.page_deleted(device_id, page_id)
         self._notify(device_id)
+        if rules_changed:
+            self._notify_rules(device_id)
         return True
 
     def _in_active_profile(self, device_id: str, page_id: str) -> bool:
@@ -260,3 +269,6 @@ class PageController(Manager):
         if profiles:
             self._ctx.event_bus.push(PROFILES_CHANGED_EVENT, payload)
         self._ctx.plugin_manager.refresh_page_dependent(device_id)
+
+    def _notify_rules(self, device_id: str) -> None:
+        self._ctx.event_bus.push(_APP_RULES_CHANGED_EVENT, json.dumps({"device_id": device_id}))
