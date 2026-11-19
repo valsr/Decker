@@ -48,6 +48,7 @@ from decker.client.views import (
     ErrorView,
     ReconnectWaitingOverlay,
 )
+from decker.client.views.dashboard import DASHBOARD_EVENTS
 from decker.client.widgets.plugins_tab import (
     PACKAGE_SUFFIX,
     install_allowed,
@@ -63,6 +64,16 @@ _DRAIN_INTERVAL_MS = 16
 _INITIAL_VIEW_RECHECK_MS = 50
 _TOAST_DURATION_MS = 4000
 _ACTION_TOAST_DURATION_MS = 20000
+
+
+ACTIVE_VIEW_EVENTS: tuple[type, ...] = (
+    DeviceListUpdatedEvent,
+    ActionListUpdatedEvent,
+    KeyDisplayStatesUpdatedEvent,
+    KeyEvent,
+    PagesUpdatedEvent,
+    ProfilesUpdatedEvent,
+)
 
 
 class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
@@ -240,17 +251,16 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         em.subscribe(OpenUrlRequestedEvent, self._on_open_url_requested)
         em.subscribe(PluginInstallFinishedEvent, self._on_plugin_install_finished)
         em.subscribe(PluginUpdatesAvailableEvent, self._on_updates_available)
-        for event_type in (
-            DeviceListUpdatedEvent,
-            ActionListUpdatedEvent,
-            KeyDisplayStatesUpdatedEvent,
-            KeyEvent,
-            PagesUpdatedEvent,
-            ProfilesUpdatedEvent,
-        ):
+        for event_type in ACTIVE_VIEW_EVENTS:
             em.subscribe(event_type, self._forward_to_active_view)
+        for event_type in DASHBOARD_EVENTS:
+            em.subscribe(event_type, self._forward_to_dashboard)
+
+    def _forward_to_dashboard(self, event: Any) -> bool | None:
+        return self._views[ViewName.DASHBOARD].handle_event(event)
 
     def _on_server_disconnected(self, _event: ServerDisconnectedEvent) -> bool:
+        self._views[ViewName.DASHBOARD].on_server_disconnected()
         if self._active != ViewName.CONNECTING:
             self._last_view = self._active
         self.switch_to(ViewName.CONNECTING)

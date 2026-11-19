@@ -29,7 +29,6 @@ from decker.client.events import (
     KeyDisplayStatesUpdatedEvent,
     PagesUpdatedEvent,
     ProfilesUpdatedEvent,
-    ServerDisconnectedEvent,
     WindowFocusedEvent,
     WindowPickedEvent,
 )
@@ -58,6 +57,15 @@ _SIDEBAR_COLLAPSED_KEY = "sidebar_collapsed"
 # while keeping a long-lived view (e.g. a clock key with a new id every cycle) from growing without limit.
 _ANIMATION_CACHE_BYTES = 32 * 1024 * 1024
 _EMPTY_CACHE_LIMIT = 256  # animation ids the server had no image for; tiny, so bounded by count only
+
+
+# Events only the dashboard consumes; MainWindow forwards them to it even while another view is active.
+DASHBOARD_EVENTS: tuple[type, ...] = (
+    AppRulesUpdatedEvent,
+    DetectionStatusEvent,
+    WindowFocusedEvent,
+    WindowPickedEvent,
+)
 
 
 class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
@@ -152,11 +160,13 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
                 self._profiles_dialog.set_status(event)
         elif isinstance(event, WindowFocusedEvent) and self._profiles_dialog is not None:
             self._profiles_dialog.on_focused(event.window)
-        elif isinstance(event, ServerDisconnectedEvent) and self._profiles_dialog is not None:
-            self._profiles_dialog.on_disconnected()
         elif isinstance(event, WindowPickedEvent) and self._profiles_dialog is not None:
             self._profiles_dialog.on_picked(event.window)
         return None
+
+    def on_server_disconnected(self) -> None:
+        if self._profiles_dialog is not None:
+            self._profiles_dialog.on_disconnected()
 
     def save_state(self) -> None:
         """Persist splitter sizes and sidebar-collapsed state to config.db."""

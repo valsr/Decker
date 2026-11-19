@@ -31,3 +31,6 @@ class BaseView(QWidget, metaclass=_ViewMeta):  # pylint: disable=invalid-metacla
 
     def save_state(self) -> None:
         """Persist any view-owned UI state before the window closes. No-op by default."""
+
+    def on_server_disconnected(self) -> None:
+        """The server connection dropped, whichever view is active. No-op by default."""
