@@ -113,7 +113,7 @@ def try_open_device(device: StreamDeck) -> bool:
     return device.is_open()
 
 
-class Device:  # pylint: disable=too-many-instance-attributes
+class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """Maintains an open connection to a single Stream Deck and routes image pushes."""
 
     def __init__(
@@ -130,6 +130,7 @@ class Device:  # pylint: disable=too-many-instance-attributes
         self._writer: KeyWriter | None = None
         self._adaptive: AdaptiveConfig | None = None  # set when animation is enabled; writes then use the writer
         self._closed: bool = False
+        self._gated: bool = False  # while set, content writes only update the caches; the hardware is left alone
 
     @property
     def key_count(self) -> int:
@@ -255,8 +256,28 @@ class Device:  # pylint: disable=too-many-instance-attributes
         with self._writer_lock:
             return self._adaptive is not None and not self._closed
 
+    def set_write_gate(self, gated: bool) -> None:
+        """Hold back (True) or allow (False) content writes; closing the gate leaves every key to be redrawn."""
+        self._gated = gated
+        if gated:
+            self.stop_animations()
+        for tracker in self._key_trackers.values():
+            tracker.shown = _UNKNOWN  # whatever the hardware shows is no longer what was last drawn here
+
+    def set_brightness(self, percent: int) -> None:
+        """Set the deck brightness (0-100), reopening a closed deck like other writes."""
+        try:
+            self._try_open()
+            if self._closed:
+                raise DeckNotOpenedError(self.path)
+            self._device.set_brightness(max(0, min(100, int(percent))))
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.error("Device.set_brightness failed for %s: %s", self.id, exc)
+
     def play_animation(self, key_index: int, spec: AnimationSpec) -> None:
         """Animate the key with spec once its frames are built; the poster already on the key stays until then."""
+        if self._gated:
+            return  # the spec is cached by the caller; show_page restarts it once the gate opens
         writer = self._key_writer()
         if writer is None:
             return
@@ -311,33 +332,55 @@ class Device:  # pylint: disable=too-many-instance-attributes
         # False: not confirmed in time; the write may still land, so the caller must not trust what the key shows.
         return writer.submit_static(key_index, native)
 
+    def _render(self, image: bytes) -> tuple[bytes | None, bytes]:
+        """Return (PNG of the scaled key image or None when the bytes are not renderable, bytes for the deck)."""
+        pil_image = self._renderer.render_bytes(image, self._device.KEY_PIXEL_WIDTH, self._device.KEY_PIXEL_HEIGHT)
+        if pil_image is None:
+            return None, image
+        scaled = PILHelper.create_scaled_key_image(self._device, pil_image)
+        buf = io.BytesIO()
+        scaled.save(buf, format="PNG")
+        return buf.getvalue(), PILHelper.to_native_key_format(self._device, scaled)
+
     def set_image_bytes(self, key_index: int, image: bytes) -> None:
         """Render image bytes (SVG/PNG/JPEG) and push to the hardware key."""
         try:
-            pil_image = self._renderer.render_bytes(image, self._device.KEY_PIXEL_WIDTH, self._device.KEY_PIXEL_HEIGHT)
+            png, native = self._render(image)
             tracker = self._key_trackers.setdefault(key_index, _KeyTracker())
             shown: object = _UNKNOWN
-            if pil_image is not None:
-                scaled = PILHelper.create_scaled_key_image(self._device, pil_image)
-                buf = io.BytesIO()
-                scaled.save(buf, format="PNG")
-                shown = tracker.image = buf.getvalue()
-                if shown == tracker.shown:
+            if png is not None:
+                shown = tracker.image = png
+                if not self._gated and shown == tracker.shown:
                     return  # the key already shows exactly this
-                native = PILHelper.to_native_key_format(self._device, scaled)
-            else:
-                native = image
+            if self._gated:
+                return
             tracker.shown = _UNKNOWN
             if self._write_static(key_index, native):
                 tracker.shown = shown
         except Exception as exc:  # pylint: disable=broad-except
             logging.error("Device.set_image_bytes failed for %s[%d]: %s", self.id, key_index, exc)
 
+    def write_overlay(self, images: list[bytes] | None) -> bool:
+        """Write one image per key (None blanks all) ignoring the gate; True only if every write was confirmed."""
+        try:
+            confirmed = True
+            for key_index in range(self.key_count):
+                tracker = self._key_trackers.setdefault(key_index, _KeyTracker())
+                native = None if images is None else self._render(images[key_index])[1]
+                tracker.shown = _UNKNOWN  # an overlay is not page content: the page must be redrawn over it
+                confirmed = self._write_static(key_index, native) and confirmed
+            return confirmed
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.error("Device.write_overlay failed for %s: %s", self.id, exc)
+            return False
+
     def clear_key_image(self, key_index: int) -> None:
         """Blank the hardware key and forget its cached rendered image."""
         try:
             tracker = self._key_trackers.setdefault(key_index, _KeyTracker())
             tracker.image = None
+            if self._gated:
+                return
             if tracker.shown is None:
                 return  # already blank
             tracker.shown = _UNKNOWN

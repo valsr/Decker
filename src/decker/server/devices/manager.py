@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 _KeyEventCallback = Callable[[str, int, bool], None]  # (device_id, key_index, pressed)
 
+_DeviceHook = Callable[[str], None]  # called with the device id
+
 ANIMATION_ENABLED_DEFAULT: bool = True
 ANIMATION_BUDGET_PERCENT_DEFAULT: float = 75.0
 ANIMATION_CACHE_MB_DEFAULT: int = 64
@@ -64,7 +66,7 @@ class DeviceNotOpened(Exception):
         super().__init__(f"Unable to open device at {path}")
 
 
-class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
+class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """Opens Stream Deck devices on first request and caches one Device instance per device ID."""
 
     def __init__(self, on_key_event: _KeyEventCallback) -> None:
@@ -81,6 +83,10 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
         self._factory: AnimationFactory | None = None
         self._animation_enabled: bool = ANIMATION_ENABLED_DEFAULT
         self._animation_budget: float = ANIMATION_BUDGET_PERCENT_DEFAULT / 100
+        self._activity_hook: _DeviceHook | None = None
+        self._wake_hook: _DeviceHook | None = None
+        self._overlay: set[str] = set()  # devices whose hardware is held back for the screensaver
+        self._swallow_release: set[tuple[str, int]] = set()  # keys whose press woke the deck
 
     def create(self, context: "ServerContext") -> None:
         """Wire the state store, active-page lookup and animation settings; devices are opened by open_device()."""
@@ -318,8 +324,77 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
             current = self._devices.get(device.device_id) is device
         if not current:
             return  # a stale handle of a dropped Device must not deliver presses for its reopened successor
+        device_id = device.device_id
+        self._call_hook(self._activity_hook, device_id)
+        if self._gate_key_event(device_id, key_index, pressed):
+            return
         device.on_key_event(key_index, pressed)
-        self._on_key_event_cb(device.device_id, key_index, pressed)
+        self._on_key_event_cb(device_id, key_index, pressed)
+
+    def _gate_key_event(self, device_id: str, key_index: int, pressed: bool) -> bool:
+        """Return True when the event is swallowed (overlay shown, or the release of the press that woke the deck)."""
+        key = (device_id, key_index)
+        with self._lock:
+            if device_id in self._overlay:
+                wake = pressed and key not in self._swallow_release
+                if pressed:
+                    self._swallow_release.add(key)
+                else:
+                    self._swallow_release.discard(key)
+                swallowed = True
+            else:
+                wake = False
+                swallowed = not pressed and key in self._swallow_release
+                if not pressed:
+                    self._swallow_release.discard(key)
+        if wake:
+            self._call_hook(self._wake_hook, device_id)
+        return swallowed
+
+    @staticmethod
+    def _call_hook(hook: _DeviceHook | None, device_id: str) -> None:
+        if hook is None:
+            return
+        try:
+            hook(device_id)
+        except Exception:  # pylint: disable=broad-except
+            logging.exception("DeviceManager: key event hook failed for %s", device_id)
+
+    def set_activity_hook(self, hook: _DeviceHook | None) -> None:
+        """Call hook(device_id) for every key event of a current device, swallowed or not."""
+        self._activity_hook = hook
+
+    def set_wake_hook(self, hook: _DeviceHook | None) -> None:
+        """Call hook(device_id) on the first press of a key while the overlay is active."""
+        self._wake_hook = hook
+
+    def set_overlay(self, device_id: str, active: bool) -> None:
+        """Hold back (or release) hardware content writes and key events for a device; caches keep updating."""
+        with self._lock:
+            if active:
+                self._overlay.add(device_id)
+            else:
+                self._overlay.discard(device_id)
+            device = self._devices.get(device_id)
+        if device is not None:
+            device.set_write_gate(active)
+
+    def overlay_active(self, device_id: str) -> bool:
+        """Whether the device is currently covered by the overlay."""
+        with self._lock:
+            return device_id in self._overlay
+
+    def set_brightness(self, device_id: str, percent: int) -> None:
+        """Set an open device's brightness (0-100); opens nothing that is not already reachable."""
+        device = self.open_device(device_id)
+        if device is not None:
+            device.set_brightness(percent)
+
+    def write_overlay(self, device_id: str, images: list[bytes] | None) -> bool:
+        """Write one PNG per key (None blanks every key) ignoring the gate; False if the device or a write fails."""
+        with self._lock:
+            device = self._devices.get(device_id)
+        return device is not None and device.write_overlay(images)
 
     def _on_device_closed(self, device: Device) -> None:
         # Identity, not id: a stale Device reporting late must never evict the reopened Device for the same serial.
@@ -405,6 +480,8 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
                 lambda _, key_index, pressed, dev=device: self._on_hw_key_event(dev, key_index, pressed)
             )
             self._devices[device.device_id] = device
+            if device.device_id in self._overlay:
+                device.set_write_gate(True)
 
         state = DeviceState(
             device.device_id, self._state_store, device.get_key_state, self._page_resolver(device.device_id)
