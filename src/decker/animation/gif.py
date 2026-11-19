@@ -7,7 +7,7 @@ from typing import Callable, NamedTuple
 
 from PIL import Image, ImageSequence
 
-from decker.plugin.icons import MAX_ICON_BYTES
+from decker.plugin.icons import max_icon_bytes
 
 MAX_RASTER_PIXELS = 4096 * 4096  # per-frame canvas cap, shared with the static asset renderer
 MAX_GIF_FRAMES = 300
@@ -45,8 +45,8 @@ def is_gif(data: bytes) -> bool:
 
 
 def is_animated_gif(data: bytes) -> bool:
-    """Return True for a decodable GIF of at most MAX_ICON_BYTES, 2 to MAX_GIF_FRAMES frames and within the budget."""
-    if not is_gif(data) or len(data) > MAX_ICON_BYTES:
+    """Return True for a decodable GIF of at most max_icon_bytes(), 2 to MAX_GIF_FRAMES frames and within the budget."""
+    if not is_gif(data) or len(data) > max_icon_bytes():
         return False
     try:
         walk = _check_descriptors(data)
@@ -235,8 +235,8 @@ def decode_gif(data: bytes, transform: Callable[[Image.Image], Image.Image] | No
     """
     apply = transform or _shrink
     try:
-        if len(data) > MAX_ICON_BYTES:
-            raise GifError(f"GIF is larger than {MAX_ICON_BYTES} bytes")
+        if len(data) > max_icon_bytes():
+            raise GifError(f"GIF is larger than {max_icon_bytes()} bytes")
         if not is_gif(data):
             raise GifError("not a GIF")
         # The walk runs before Pillow opens anything: Image.open already seeks to frame 0, which grows the canvas.

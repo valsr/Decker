@@ -541,7 +541,7 @@ def test_compose_key_face_of_anything_but_an_animated_gif_is_static(image: bytes
 
 def test_compose_key_face_of_gif_bytes_over_the_icon_size_cap_is_static(monkeypatch: pytest.MonkeyPatch) -> None:
     gif = make_gif(3)
-    monkeypatch.setattr(gif_module, "MAX_ICON_BYTES", len(gif) - 1)
+    monkeypatch.setattr(gif_module, "max_icon_bytes", lambda: len(gif) - 1)
 
     face = compose_key_face(_appearance(), gif, "")
 

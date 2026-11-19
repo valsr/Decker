@@ -8,7 +8,7 @@ from typing import Any
 from PIL import Image, UnidentifiedImageError
 
 from decker.animation.gif import MAX_RASTER_PIXELS, GifError, decode_gif, is_gif
-from decker.plugin.icons import MAX_ICON_BYTES
+from decker.plugin.icons import max_icon_bytes
 
 ICON_SIZE = 144
 _FITS = ("center", "stretch")
@@ -69,8 +69,8 @@ def _encode(image: Image.Image) -> bytes:
 
 
 def _check_size(data: bytes) -> None:
-    if len(data) > MAX_ICON_BYTES:
-        raise ImageImportError(f"image is larger than {MAX_ICON_BYTES} bytes")
+    if len(data) > max_icon_bytes():
+        raise ImageImportError(f"image is larger than {max_icon_bytes()} bytes")
 
 
 def _convert_gif(data: bytes, options: ImportOptions) -> tuple[bytes, str]:

@@ -15,6 +15,10 @@ server:
   # How long (seconds) a stopping server gets to shut down on request before it is terminated.
   stop_timeout: 10.0
 
+icons:
+  # Largest image file (bytes) the icon library accepts: imports, pack icons, GIFs and plugin icons.
+  max_file_size: 4194304
+
 client:
   server_host: localhost
   server_port: 18861

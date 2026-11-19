@@ -3,9 +3,16 @@
 import logging
 from pathlib import Path
 
-MAX_ICON_BYTES = 4 * 1024 * 1024
+from decker.common import config
+
+_DEFAULT_MAX_ICON_BYTES = 4 * 1024 * 1024
 # Elgato manifests name icons without an extension; @2x is the high-resolution variant.
 _CANDIDATE_SUFFIXES = ("", ".svg", "@2x.png", ".png")
+
+
+def max_icon_bytes() -> int:
+    """Return the library's maximum image file size in bytes (`icons.max_file_size`)."""
+    return int(config.get_as_or_default("icons.max_file_size", int, _DEFAULT_MAX_ICON_BYTES))
 
 
 def resolve_icon(plugin_dir: Path, icon: str | None) -> Path | None:
@@ -24,13 +31,13 @@ def resolve_icon(plugin_dir: Path, icon: str | None) -> Path | None:
 
 
 def read_icon(plugin_dir: Path, icon: str | None) -> bytes | None:
-    """Return the icon's bytes, or None if it cannot be found, read, or exceeds MAX_ICON_BYTES."""
+    """Return the icon's bytes, or None if it cannot be found, read, or exceeds max_icon_bytes()."""
     path = resolve_icon(plugin_dir, icon)
     if path is None:
         return None
     try:
-        if path.stat().st_size > MAX_ICON_BYTES:
-            logging.warning("Ignoring icon %s: larger than %d bytes", path, MAX_ICON_BYTES)
+        if path.stat().st_size > max_icon_bytes():
+            logging.warning("Ignoring icon %s: larger than %d bytes", path, max_icon_bytes())
             return None
         return path.read_bytes()
     except OSError as exc:

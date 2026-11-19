@@ -164,7 +164,7 @@ def test_a_small_gif_keeps_its_canvas_size() -> None:
 
 def test_gif_bytes_over_the_icon_size_cap_are_not_animated(monkeypatch: pytest.MonkeyPatch) -> None:
     data = _make_gif([_solid((255, 0, 0)), _solid((0, 255, 0))], duration=100)
-    monkeypatch.setattr(gif, "MAX_ICON_BYTES", len(data) - 1)
+    monkeypatch.setattr(gif, "max_icon_bytes", lambda: len(data) - 1)
 
     assert_that(is_animated_gif(data)).is_false()
     with pytest.raises(GifError, match="larger than"):

@@ -9,7 +9,7 @@ from decker.asset.iconpack import IconPackRegistry
 from decker.asset.systemicons import SystemIcons
 from decker.asset.usericons import USER_PACK_ID, USER_PLUGIN_NAME, UserIcons
 from decker.common.icon_ref import DECKER_ICON_REF
-from decker.plugin.icons import MAX_ICON_BYTES
+from decker.plugin.icons import max_icon_bytes
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import PluginManifest
 
@@ -99,7 +99,7 @@ def test_read_icon_rejects_symlink_escape(tmp_path):
 
 def test_read_icon_rejects_oversized(tmp_path):
     _pack(tmp_path)
-    (tmp_path / "pack" / "big.png").write_bytes(b"x" * (MAX_ICON_BYTES + 1))
+    (tmp_path / "pack" / "big.png").write_bytes(b"x" * (max_icon_bytes() + 1))
     registry = IconPackRegistry()
     registry.register(_plugin(tmp_path))
     assert_that(registry.read_icon("com.t.p.icons", "big.png")).is_none()
@@ -200,7 +200,7 @@ def test_read_ref_rejects_bad_references(tmp_path, ref):
 
 def test_read_ref_respects_size_cap(tmp_path):
     registry = _registry(tmp_path)
-    (tmp_path / "pack" / "big.png").write_bytes(b"x" * (MAX_ICON_BYTES + 1))
+    (tmp_path / "pack" / "big.png").write_bytes(b"x" * (max_icon_bytes() + 1))
     assert_that(registry.read_ref("pack:com.t.p.icons/big.png")).is_none()
 
 

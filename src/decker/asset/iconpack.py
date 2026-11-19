@@ -11,7 +11,7 @@ from typing import Any
 from decker.asset.systemicons import PACK_PREFIX, SystemIcons
 from decker.asset.usericons import USER_PACK_ID, UserIcons
 from decker.common.icon_ref import DECKER_ICON_REF, parse_icon_ref
-from decker.plugin.icons import MAX_ICON_BYTES
+from decker.plugin.icons import max_icon_bytes
 from decker.plugin.loader import InstalledPlugin
 
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg"})
@@ -124,7 +124,7 @@ class IconPackRegistry:
             logging.warning("Refusing icon %r of pack %s: not an image inside the pack", name, pack_id)
             return None
         try:
-            if not path.is_file() or path.stat().st_size > MAX_ICON_BYTES:
+            if not path.is_file() or path.stat().st_size > max_icon_bytes():
                 return None
             return path.read_bytes()
         except OSError as exc:

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from decker.common import config
-from decker.plugin.icons import MAX_ICON_BYTES
+from decker.plugin.icons import max_icon_bytes
 
 SYSTEM_PLUGIN_ID = "decker.system"
 SYSTEM_PLUGIN_NAME = "System Icons"
@@ -366,7 +366,7 @@ class SystemIcons:
         within = _inside(resolved, [_resolved(d) for d in self._search_dirs])
         if resolved.suffix.lower() not in IMAGE_SUFFIXES or not resolved.is_file() or not within:
             return None
-        return resolved.read_bytes() if resolved.stat().st_size <= MAX_ICON_BYTES else None
+        return resolved.read_bytes() if resolved.stat().st_size <= max_icon_bytes() else None
 
     def _snapshot(self) -> ThemeIndex:
         """The current index. The theme is re-checked at most every ``recheck_s`` seconds, by one thread at a time;
