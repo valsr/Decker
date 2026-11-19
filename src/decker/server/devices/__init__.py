@@ -131,6 +131,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         self._adaptive: AdaptiveConfig | None = None  # set when animation is enabled; writes then use the writer
         self._closed: bool = False
         self._gated: bool = False  # while set, content writes only update the caches; the hardware is left alone
+        # Held across "check the gate, then submit", so no write slips onto the hardware after the gate closes.
+        self._gate_lock: threading.Lock = threading.Lock()
 
     @property
     def key_count(self) -> int:
@@ -258,11 +260,12 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
     def set_write_gate(self, gated: bool) -> None:
         """Hold back (True) or allow (False) content writes; closing the gate leaves every key to be redrawn."""
-        self._gated = gated
+        with self._gate_lock:  # waits for a write that passed the gate check; later ones see the new value
+            self._gated = gated
+            for tracker in list(self._key_trackers.values()):
+                tracker.shown = _UNKNOWN  # whatever the hardware shows is no longer what was last drawn here
         if gated:
             self.stop_animations()
-        for tracker in self._key_trackers.values():
-            tracker.shown = _UNKNOWN  # whatever the hardware shows is no longer what was last drawn here
 
     def set_brightness(self, percent: int) -> None:
         """Set the deck brightness (0-100), reopening a closed deck like other writes."""
@@ -276,13 +279,14 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
     def play_animation(self, key_index: int, spec: AnimationSpec) -> None:
         """Animate the key with spec once its frames are built; the poster already on the key stays until then."""
-        if self._gated:
-            return  # the spec is cached by the caller; show_page restarts it once the gate opens
-        writer = self._key_writer()
-        if writer is None:
-            return
-        self._key_trackers.setdefault(key_index, _KeyTracker()).shown = _UNKNOWN  # frames will replace the poster
-        writer.play_spec(key_index, spec, poster_written=True)
+        with self._gate_lock:
+            if self._gated:
+                return  # the spec is cached by the caller; show_page restarts it once the gate opens
+            writer = self._key_writer()
+            if writer is None:
+                return
+            self._key_trackers.setdefault(key_index, _KeyTracker()).shown = _UNKNOWN  # frames replace the poster
+            writer.play_spec(key_index, spec, poster_written=True)
 
     def stop_animations(self) -> None:
         """Stop every key's animation (each keeps its last frame), waiting up to 1 s for a frame write under way.
@@ -347,16 +351,15 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         try:
             png, native = self._render(image)
             tracker = self._key_trackers.setdefault(key_index, _KeyTracker())
-            shown: object = _UNKNOWN
             if png is not None:
-                shown = tracker.image = png
-                if not self._gated and shown == tracker.shown:
-                    return  # the key already shows exactly this
-            if self._gated:
-                return
-            tracker.shown = _UNKNOWN
-            if self._write_static(key_index, native):
-                tracker.shown = shown
+                tracker.image = png
+            shown: object = _UNKNOWN if png is None else png
+            with self._gate_lock:
+                if self._gated or (png is not None and shown == tracker.shown):
+                    return  # held back, or the key already shows exactly this
+                tracker.shown = _UNKNOWN
+                if self._write_static(key_index, native):
+                    tracker.shown = shown
         except Exception as exc:  # pylint: disable=broad-except
             logging.error("Device.set_image_bytes failed for %s[%d]: %s", self.id, key_index, exc)
 
@@ -379,13 +382,12 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         try:
             tracker = self._key_trackers.setdefault(key_index, _KeyTracker())
             tracker.image = None
-            if self._gated:
-                return
-            if tracker.shown is None:
-                return  # already blank
-            tracker.shown = _UNKNOWN
-            if self._write_static(key_index, None):
-                tracker.shown = None
+            with self._gate_lock:
+                if self._gated or tracker.shown is None:
+                    return  # held back, or already blank
+                tracker.shown = _UNKNOWN
+                if self._write_static(key_index, None):
+                    tracker.shown = None
         except Exception as exc:  # pylint: disable=broad-except
             logging.error("Device.clear_key_image failed for %s[%d]: %s", self.id, key_index, exc)
 
