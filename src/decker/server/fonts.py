@@ -12,9 +12,9 @@ from pathlib import Path
 
 from PIL import ImageFont
 
-_ASSET_FONTS = Path(__file__).resolve().parent.parent / "assets" / "fonts"
-BUNDLED_REGULAR: Path = _ASSET_FONTS / "DejaVuSans.ttf"
-BUNDLED_BOLD: Path = _ASSET_FONTS / "DejaVuSans-Bold.ttf"
+BUNDLED_FONT_DIR: Path = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+BUNDLED_REGULAR: Path = BUNDLED_FONT_DIR / "DejaVuSans.ttf"
+BUNDLED_BOLD: Path = BUNDLED_FONT_DIR / "DejaVuSans-Bold.ttf"
 
 _BOLD_WEIGHT = 180  # fontconfig weight at or above which a face counts as really bold (FC_WEIGHT_BOLD is 200)
 _FONT_SUFFIXES = {".ttf", ".otf", ".ttc"}
