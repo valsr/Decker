@@ -3,10 +3,12 @@
 import json
 import logging
 import multiprocessing
+import multiprocessing.synchronize
 import signal
 import socket
 import sys
-from typing import Any
+import threading
+from typing import Any, Protocol
 
 from rpyc.utils.server import ThreadedServer
 
@@ -42,6 +44,61 @@ class NoDelayThreadedServer(ThreadedServer):
         super()._authenticate_and_serve_client(sock)
 
 
+class Closable(Protocol):  # pylint: disable=too-few-public-methods
+    """Something that can be asked to stop serving."""
+
+    def close(self) -> None:
+        """Stop serving."""
+
+
+class ShutdownGate:
+    """Remembers a shutdown request so one that arrives before the server exists still takes effect."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._requested = False
+        self._server: Closable | None = None
+
+    def request(self) -> None:
+        """Record a shutdown request and close the attached server, if any."""
+        with self._lock:
+            self._requested = True
+            server, self._server = self._server, None
+        if server is not None:
+            server.close()
+
+    def attach(self, server: Closable) -> bool:
+        """Attach the server; returns True (after closing it) if a shutdown was already requested."""
+        with self._lock:
+            if not self._requested:
+                self._server = server
+                return False
+        server.close()
+        return True
+
+
+def stop_process(
+    process: multiprocessing.Process,
+    stop_event: multiprocessing.synchronize.Event,
+    grace: float,
+    terminate_wait: float = 5.0,
+) -> str:
+    """Set the stop event, wait `grace`, then terminate, then kill; returns "graceful", "terminated" or "killed"."""
+    stop_event.set()
+    process.join(timeout=grace)
+    if not process.is_alive():
+        return "graceful"
+    logging.warning("Server process did not stop on request, terminating")
+    process.terminate()
+    process.join(timeout=terminate_wait)
+    if not process.is_alive():
+        return "terminated"
+    logging.warning("Server process did not terminate gracefully, killing")
+    process.kill()
+    process.join()
+    return "killed"
+
+
 class ServerProcess:
     """Spawns and owns the RPyC server subprocess."""
 
@@ -53,6 +110,8 @@ class ServerProcess:
         self._process: multiprocessing.Process | None = None
         self._context: ServerContext | None = None
         self._app_context = app_context
+        self._stop_event: multiprocessing.synchronize.Event = multiprocessing.Event()
+        self._gate = ShutdownGate()
 
     def start(self) -> bool:
         """Spawn the RPyC server subprocess.
@@ -66,6 +125,7 @@ class ServerProcess:
 
         try:
             logging.info("Starting RPyC server on port %d", self.port)
+            self._stop_event.clear()
             self._process = multiprocessing.Process(target=self._run_server, daemon=False)
             self._process.start()
             self._process.join(timeout=self._startup_wait)
@@ -96,14 +156,8 @@ class ServerProcess:
 
         try:
             logging.info("Stopping RPyC server (pid %d)", self._process.pid or -1)
-            self._process.terminate()
-            self._process.join(timeout=5)
-
-            if self._process.is_alive():
-                logging.warning("Server process did not terminate gracefully, killing")
-                self._process.kill()
-                self._process.join()
-
+            timeout = float(config.get_as_or_default("server.stop_timeout", float, 10.0))
+            stop_process(self._process, self._stop_event, timeout)
             logging.info("RPyC server stopped")
             self._process = None
             return True
@@ -190,11 +244,17 @@ class ServerProcess:
     def _signal_handler(self, signum: int, _: Any) -> None:
         """Graceful shutdown: close the RPyC server."""
         logging.info("Received signal %d, shutting down", signum)
-        if self._context and self._context.server:
-            self._context.server.close()
+        self._gate.request()
+
+    def _watch_stop_event(self) -> None:
+        self._stop_event.wait()
+        logging.info("Stop requested, shutting down")
+        self._gate.request()
 
     def _run_server(self) -> None:
         """Entry point for the server subprocess. Runs RPyC in the main thread."""
+        self._gate = ShutdownGate()
+        threading.Thread(target=self._watch_stop_event, name="stop-watcher", daemon=True).start()
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
@@ -272,11 +332,13 @@ class ServerProcess:
             protocol_config={"allow_public_attrs": True},
         )
         self._context.server = server
+        stop_requested = self._gate.attach(server)
         DeckerService.configure_context(self._context)
         logging.info("RPyC server listening on %s:%d", self.host, self.port)
         try:
-            ctx.update_checker.start()
-            server.start()
+            if not stop_requested:
+                ctx.update_checker.start()
+                server.start()
         finally:
             ctx.update_checker.stop()
             for manager in reversed(managers):

@@ -12,6 +12,8 @@ server:
   device_watch_interval: 2.0
   # Plugin install/uninstall is normally limited to clients on the server's own machine.
   allow_remote_plugin_install: false
+  # How long (seconds) a stopping server gets to shut down on request before it is terminated.
+  stop_timeout: 10.0
 
 client:
   server_host: localhost
