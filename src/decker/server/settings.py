@@ -34,8 +34,8 @@ def read_settings() -> ServerSettings:
     return ServerSettings(
         port=config.get_as("server.port", int),
         memory_limit=config.get_as("server.memory_limit", int),
-        icon_max_file_size=config.get_as_or_default("icons.max_file_size", int, 4 * _MIB),
-        stop_when_last_client_leaves=config.get_as_or_default("server.stop_when_last_client_leaves", bool, False),
+        icon_max_file_size=config.get_as("icons.max_file_size", int),
+        stop_when_last_client_leaves=config.get_as("server.stop_when_last_client_leaves", bool),
     )
 
 

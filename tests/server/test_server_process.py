@@ -1,5 +1,6 @@
 """Integration tests that run the real server child process (the monitor tests mock ServerProcess)."""
 
+import json
 import multiprocessing
 import socket
 import time
@@ -14,6 +15,7 @@ from decker.common import paths as decker_paths
 from decker.common.api import ApiHandler
 from decker.common.context import ServerAppContext
 from decker.server.monitor import ServerMonitor
+from decker.server.reconfigure import RESTART_EXIT_CODE
 from decker.server.server import ServerProcess
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
 
@@ -116,6 +118,31 @@ def test_graceful_stop_of_the_real_server_exits_with_code_zero(server: ServerPro
 
     assert_that(child.is_alive()).is_false()
     assert_that(child.exitcode).is_equal_to(0)
+
+
+def test_a_restart_needing_settings_change_makes_the_real_server_exit_with_the_restart_code(
+    tmp_path: Path, port: int
+) -> None:
+    app_context = ServerAppContext(prefix=tmp_path, allow_client_reconfiguration=[])
+    server = ServerProcess(port, 1.0, app_context, host="127.0.0.1")
+    original = config.get_as("server.memory_limit", int)
+    api = ApiHandler(host="127.0.0.1", port=port, timeout=5.0)
+    try:
+        assert_that(server.start()).is_true()
+        _wait_healthy(port, server)
+        child = _child(server)
+
+        reply = api.request("server_settings_set", json.dumps({"memory_limit": 256 * 1024 * 1024}))
+        child.join(timeout=_STOP_TIMEOUT)
+
+        assert_that(json.loads(reply)["restarting"]).is_true()
+        assert_that(child.is_alive()).is_false()
+        assert_that(child.exitcode).is_equal_to(RESTART_EXIT_CODE)
+    finally:
+        api.close()
+        server.stop()
+        config.reload()
+        config.set("server.memory_limit", original)
 
 
 def test_stop_right_after_start_still_ends_the_process(tmp_path: Path, port: int) -> None:

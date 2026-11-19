@@ -45,6 +45,7 @@ from decker.plugin.target import ActionTarget
 from decker.server.key_assignments import KeyAssignment
 from decker.server.plugin_installer import PluginInstallError
 from decker.server.repositories import CatalogEntry, RepositoryError, RepositoryStore
+from decker.server.settings import SettingsError, read_settings, validate, write_settings
 from decker.server.update_checker import UpdateChecker
 
 if TYPE_CHECKING:
@@ -174,13 +175,41 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             logging.error("Server reference not configured")
             return False
 
-        def _shutdown() -> None:
-            time.sleep(0.1)
-            self._context.server.close()  # type: ignore[union-attr]
-
-        threading.Thread(target=_shutdown, daemon=True).start()
-        logging.info("Server shutdown scheduled")
+        self._schedule_shutdown()
         return True
+
+    @exposed
+    def server_settings(self) -> str:
+        """Return the editable server settings plus whether this client may change them, as JSON."""
+        values = read_settings().to_dict()
+        values["reconfigurable"] = self._reconfigure_allowed()
+        values["last_apply_error"] = config.get_or_default("server.last_apply_error", "") or None
+        return json.dumps(values)
+
+    @exposed
+    def server_settings_set(self, values_json: str) -> str:
+        """Change server settings (JSON object of changed values); restart-needing changes restart the server."""
+        error = self._settings_change_error()
+        values: object = None
+        if error is None:
+            try:
+                values = json.loads(values_json)
+            except ValueError:
+                error = "settings must be a JSON object"
+        if error is None and not isinstance(values, dict):
+            error = "settings must be a JSON object"
+        if error is None:
+            try:
+                restart = write_settings(validate(values))  # type: ignore[arg-type]
+            except SettingsError as exc:
+                error = str(exc)
+        if error is not None:
+            return json.dumps({"ok": False, "restarting": False, "error": error})
+        config.unset("server.last_apply_error")
+        if restart:
+            self._context.restart_requested = True  # type: ignore[union-attr]
+            self._schedule_shutdown()
+        return json.dumps({"ok": True, "restarting": restart, "error": None})
 
     @exposed
     def heartbeat(self) -> str:
@@ -887,6 +916,26 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _schedule_shutdown(self) -> None:
+        def _shutdown() -> None:
+            time.sleep(0.1)
+            self._context.server.close()  # type: ignore[union-attr]
+
+        threading.Thread(target=_shutdown, daemon=True).start()
+        logging.info("Server shutdown scheduled")
+
+    def _reconfigure_allowed(self) -> bool:
+        return self._context is not None and self._context.reconfigure_policy.allows(self._peer_host)
+
+    def _settings_change_error(self) -> str | None:
+        if self._context is None or self._context.server is None:
+            return "server is not ready"
+        if not self._reconfigure_allowed():
+            return "reconfiguration is not allowed (start the server with --allow-client-reconfiguration)"
+        if self._context.restart_requested:
+            return "a restart is already pending"
+        return None
 
     def _install_allowed(self) -> bool:
         return _is_loopback(self._peer_host) or config.get_as_or_default(
