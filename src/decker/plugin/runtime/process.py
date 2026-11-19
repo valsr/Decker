@@ -1,15 +1,14 @@
 """Server-side wrapper around one plugin child process."""
 
 import logging
-import os
 import queue
-import signal
 import subprocess
 import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import IO
 
+from decker.common import processes
 from decker.plugin.protocol import (
     MAX_LINE_BYTES,
     Message,
@@ -68,7 +67,7 @@ class PluginProcess:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            start_new_session=True,
+            **processes.group_popen_kwargs(),
         )
         self._proc = proc
         assert proc.stdout is not None and proc.stderr is not None
@@ -103,36 +102,28 @@ class PluginProcess:
             return
         except subprocess.TimeoutExpired:
             pass
-        self._signal_group(signal.SIGTERM)
+        self._terminate_group()
         try:
             proc.wait(timeout=timeout)
             return
         except subprocess.TimeoutExpired:
             pass
-        self._signal_group(signal.SIGKILL)
+        self._kill_group()
         proc.wait()
 
-    def _signal_group(self, sig: int) -> None:
-        proc = self._proc
-        if proc is None:
-            return
-        try:
-            os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            pass
+    def _terminate_group(self) -> None:
+        if self._proc is not None:
+            processes.terminate_tree(self._proc)
+
+    def _kill_group(self) -> None:
+        if self._proc is not None:
+            processes.kill_tree(self._proc)
 
     def rss_bytes(self) -> int | None:
-        """Resident set size of the child from /proc, or None if unavailable."""
-        if not self.is_running:
+        """Resident set size of the child, or None if unavailable."""
+        if not self.is_running or self.pid is None:
             return None
-        try:
-            with open(f"/proc/{self.pid}/status", encoding="ascii", errors="replace") as status:
-                for line in status:
-                    if line.startswith("VmRSS:"):
-                        return int(line.split()[1]) * 1024
-        except (OSError, ValueError, IndexError):
-            return None
-        return None
+        return processes.rss_bytes(self.pid)
 
     def _write_loop(self, proc: subprocess.Popen[bytes]) -> None:
         stdin = proc.stdin
@@ -192,7 +183,7 @@ class PluginProcess:
         # A helper the plugin left behind can keep the pipes open forever; do not wait for it.
         for reader in readers:
             reader.join(timeout=_READER_JOIN_SECONDS)
-        self._signal_group(signal.SIGKILL)
+        self._kill_group()
         try:
             self._on_exit(returncode)
         except Exception:  # pylint: disable=broad-exception-caught
