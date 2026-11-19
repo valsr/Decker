@@ -64,7 +64,7 @@ jobs:
         shell: bash
       - uses: astral-sh/setup-uv@v6
       - uses: ./.github/actions/setup-poetry
-      - run: poetry run pytest --junitxml=report.xml --cov-report xml:coverage.xml --cov=decker tests
+      - run: poetry run pytest -rs --junitxml=report.xml --cov-report xml:coverage.xml --cov=decker tests
       - uses: actions/upload-artifact@v7
         if: always()
         with:
