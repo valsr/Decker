@@ -103,6 +103,8 @@ Server-side validation clamps nothing silently: out-of-range or unknown values a
   and also swallow that key's matching release so a stale up never reaches a page.
 - **Brightness:** `Device.set_brightness(percent)` calls the deck. Normal brightness is applied when a device is opened
   or reopened and on settings change; the screensaver value only while active.
+- **Server shutdown while active:** a normal stop wakes every active device (normal brightness, active page). A crash
+  cannot: the deck keeps showing the last thing written, at screensaver brightness, until a server starts again.
 - **Reopen while active** (hot-plug): the deck comes back awake with normal brightness; the engine treats it as
   activity (deactivates, resets the deadline).
 - **Interaction with other features:** profile/page switches (manual, plugin or app rule) while active only change
