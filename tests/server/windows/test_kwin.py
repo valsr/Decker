@@ -49,6 +49,8 @@ class FakeTransport:
     def poll(self, timeout: float) -> str | None:
         if self.incoming:
             return self.incoming.pop(0)
+        if self.bus.poll_error is not None:
+            raise self.bus.poll_error
         threading.Event().wait(min(timeout, 0.01))
         return None
 
@@ -63,6 +65,7 @@ class FakeBus:
         self.results: dict[str, tuple[Any, ...]] = {"loadScript": (7,)}
         self.errors: dict[str, Exception] = {}
         self.connect_error: Exception | None = None
+        self.poll_error: Exception | None = None
         self.transports: list[FakeTransport] = []
         self.query: Any = lambda transport: (_variants(PICK),)
 
@@ -142,6 +145,79 @@ def test_start_delivers_focus_events(bus: FakeBus) -> None:
     backend.stop()
     assert_that(got).is_length(1)
     assert_that(got[0].window_class).is_equal_to("org.kde.dolphin")
+
+
+def test_listener_failure_calls_on_failure_once(bus: FakeBus) -> None:
+    failures: list[Exception] = []
+    called = threading.Event()
+
+    def on_failure(exc: Exception) -> None:
+        failures.append(exc)
+        called.set()
+
+    bus.poll_error = OSError("socket gone")
+    backend = KWinBackend(bus.factory)
+    backend.start(lambda info: None, on_failure)
+    assert_that(called.wait(2)).is_true()
+    backend.stop()
+    assert_that(failures).is_length(1)
+    assert_that(failures[0]).is_same_as(bus.poll_error)
+
+
+def test_restart_after_listener_failure_succeeds(bus: FakeBus) -> None:
+    called = threading.Event()
+    bus.poll_error = OSError("socket gone")
+    backend = KWinBackend(bus.factory)
+    backend.start(lambda info: None, lambda exc: called.set())
+    assert_that(called.wait(2)).is_true()
+    bus.poll_error = None
+    backend.stop()
+    backend.start(lambda info: None)
+    backend.stop()
+    assert_that([e[0] for e in bus.log].count("loadScript")).is_equal_to(2)
+
+
+def test_normal_stop_does_not_call_on_failure(bus: FakeBus) -> None:
+    failures: list[Exception] = []
+    backend = KWinBackend(bus.factory)
+    backend.start(lambda info: None, failures.append)
+    backend.stop()
+    threading.Event().wait(0.1)
+    assert_that(failures).is_empty()
+
+
+def test_stop_from_listener_thread_does_not_raise(bus: FakeBus) -> None:
+    backend = KWinBackend(bus.factory)
+    errors: list[BaseException] = []
+    done = threading.Event()
+
+    def on_change(info: WindowInfo) -> None:
+        try:
+            backend.stop()
+        except BaseException as exc:  # pylint: disable=broad-exception-caught
+            errors.append(exc)
+        done.set()
+
+    backend.start(on_change)
+    bus.transports[0].incoming.append(json.dumps(FOCUS["native_wayland"]))
+    assert_that(done.wait(2)).is_true()
+    assert_that(errors).is_empty()
+
+
+def test_absurd_pid_does_not_kill_listener(bus: FakeBus) -> None:
+    got: list[WindowInfo] = []
+    seen = threading.Event()
+
+    def on_change(info: WindowInfo) -> None:
+        got.append(info)
+        seen.set()
+
+    backend = KWinBackend(bus.factory)
+    backend.start(on_change)
+    bus.transports[0].incoming.extend(['{"pid": 1e999}', json.dumps(FOCUS["native_wayland"])])
+    assert_that(seen.wait(2)).is_true()
+    backend.stop()
+    assert_that(got).is_length(1)
 
 
 def test_stop_unloads_script_releases_name_and_never_raises(bus: FakeBus) -> None:

@@ -24,8 +24,10 @@ class WindowBackend(Protocol):
         """Report whether the backend can run here."""
         ...
 
-    def start(self, on_change: Callable[[WindowInfo], None]) -> None:
-        """Begin reporting focus changes."""
+    def start(
+        self, on_change: Callable[[WindowInfo], None], on_failure: Callable[[Exception], None] | None = None
+    ) -> None:
+        """Begin reporting; call on_failure(exc) once, from the backend's thread, if the source dies after start."""
         ...
 
     def stop(self) -> None:

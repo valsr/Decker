@@ -19,7 +19,9 @@ class UnsupportedBackend:
         """Report the fixed status given at construction."""
         return self._status
 
-    def start(self, on_change: Callable[[WindowInfo], None]) -> None:  # pylint: disable=unused-argument
+    def start(  # pylint: disable=unused-argument
+        self, on_change: Callable[[WindowInfo], None], on_failure: Callable[[Exception], None] | None = None
+    ) -> None:
         """Do nothing."""
         return None
 
