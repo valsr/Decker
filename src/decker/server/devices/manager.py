@@ -86,6 +86,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._activity_hook: _DeviceHook | None = None
         self._wake_hook: _DeviceHook | None = None
         self._overlay: set[str] = set()  # devices whose hardware is held back for the screensaver
+        self._overlay_lock = threading.Lock()  # serialises set_overlay so manager and device gates cannot disagree
         self._swallow_release: set[tuple[str, int]] = set()  # keys whose press woke the deck
 
     def create(self, context: "ServerContext") -> None:
@@ -171,6 +172,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             with self._lock:
                 if self._devices.get(device.device_id) is device:
                     del self._devices[device.device_id]
+                    self._forget_swallowed(device.device_id)
             device.close()  # releases the stale handle; errors are logged by Device.close
         return lost
 
@@ -335,18 +337,13 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Return True when the event is swallowed (overlay shown, or the release of the press that woke the deck)."""
         key = (device_id, key_index)
         with self._lock:
-            if device_id in self._overlay:
-                wake = pressed and key not in self._swallow_release
-                if pressed:
-                    self._swallow_release.add(key)
-                else:
-                    self._swallow_release.discard(key)
-                swallowed = True
-            else:
-                wake = False
-                swallowed = not pressed and key in self._swallow_release
-                if not pressed:
-                    self._swallow_release.discard(key)
+            overlay = device_id in self._overlay
+            wake = overlay and pressed
+            swallowed = overlay or (not pressed and key in self._swallow_release)
+            if overlay and pressed:
+                self._swallow_release.add(key)
+            else:  # a normal press or any release ends the swallow, so a stale entry can never eat a later release
+                self._swallow_release.discard(key)
         if wake:
             self._call_hook(self._wake_hook, device_id)
         return swallowed
@@ -370,14 +367,15 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def set_overlay(self, device_id: str, active: bool) -> None:
         """Hold back (or release) hardware content writes and key events for a device; caches keep updating."""
-        with self._lock:
-            if active:
-                self._overlay.add(device_id)
-            else:
-                self._overlay.discard(device_id)
-            device = self._devices.get(device_id)
-        if device is not None:
-            device.set_write_gate(active)
+        with self._overlay_lock:
+            with self._lock:
+                if active:
+                    self._overlay.add(device_id)
+                else:
+                    self._overlay.discard(device_id)
+                device = self._devices.get(device_id)
+            if device is not None:
+                device.set_write_gate(active)
 
     def overlay_active(self, device_id: str) -> bool:
         """Whether the device is currently covered by the overlay."""
@@ -396,11 +394,15 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             device = self._devices.get(device_id)
         return device is not None and device.write_overlay(images)
 
+    def _forget_swallowed(self, device_id: str) -> None:
+        self._swallow_release = {key for key in self._swallow_release if key[0] != device_id}  # caller holds _lock
+
     def _on_device_closed(self, device: Device) -> None:
         # Identity, not id: a stale Device reporting late must never evict the reopened Device for the same serial.
         with self._lock:
             if self._devices.get(device.device_id) is device:
                 del self._devices[device.device_id]
+                self._forget_swallowed(device.device_id)
         device.close()  # outside the lock; idempotent, and never joins its own writer thread
 
     def opened_device_ids(self) -> list[str]:
@@ -445,6 +447,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             if self._devices.get(device.device_id) is device:
                 device.close()
                 del self._devices[device.device_id]
+                self._forget_swallowed(device.device_id)
                 return True
         return False
 
@@ -479,9 +482,10 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             deck.set_key_callback(
                 lambda _, key_index, pressed, dev=device: self._on_hw_key_event(dev, key_index, pressed)
             )
-            self._devices[device.device_id] = device
+            self._forget_swallowed(device.device_id)
             if device.device_id in self._overlay:
-                device.set_write_gate(True)
+                device.set_write_gate(True)  # before it is published, so no write can slip in
+            self._devices[device.device_id] = device
 
         state = DeviceState(
             device.device_id, self._state_store, device.get_key_state, self._page_resolver(device.device_id)
