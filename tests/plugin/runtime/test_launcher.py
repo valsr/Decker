@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -42,3 +45,41 @@ def test_launch_argv_uses_the_interpreter_in_a_directory_with_spaces(tmp_path: P
     cmd = launch_command(plugin_dir, RuntimeSpec("python", "main.py"))
     assert_that(cmd[0]).is_equal_to(str(venv_python(plugin_dir)))
     assert_that(cmd[-1]).is_equal_to(str(plugin_dir / "main.py"))
+
+
+_WINDOWS_VARS = (
+    "SYSTEMROOT",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "TEMP",
+    "TMP",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "COMSPEC",
+    "PATHEXT",
+)
+
+
+def test_windows_env_carries_system_variables_without_inventing_any(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = {"PATH": "C:\\bin", "SYSTEMROOT": "C:\\Windows", "TEMP": "C:\\t", "COMSPEC": "cmd.exe", "SECRET": "x"}
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(os, "environ", fake)
+    env = launch_env(None)
+    assert_that(env).contains_entry({"SYSTEMROOT": "C:\\Windows"}, {"TEMP": "C:\\t"}, {"COMSPEC": "cmd.exe"})
+    assert_that(env).does_not_contain_key("SECRET", "USERPROFILE", "APPDATA", "PATHEXT")
+
+
+def test_posix_env_does_not_carry_windows_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    for name in _WINDOWS_VARS:
+        monkeypatch.setenv(name, "x")
+    assert_that(launch_env(None)).does_not_contain_key(*_WINDOWS_VARS)
+
+
+def test_a_real_interpreter_starts_with_the_launch_env() -> None:
+    code = "import socket, ssl, asyncio, tempfile, pathlib; pathlib.Path.home(); tempfile.gettempdir(); print('ok')"
+    result = subprocess.run(
+        [sys.executable, "-c", code], env=launch_env(None), capture_output=True, text=True, timeout=60, check=False
+    )
+    assert_that(result.stdout.strip()).described_as(result.stderr).is_equal_to("ok")

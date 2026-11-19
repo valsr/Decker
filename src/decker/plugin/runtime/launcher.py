@@ -1,6 +1,7 @@
 """Build the command line and environment used to launch a plugin process."""
 
 import os
+import sys
 from pathlib import Path
 
 from decker.plugin.environment import venv_python
@@ -19,6 +20,20 @@ def launch_command(plugin_dir: Path, runtime: RuntimeSpec) -> list[str]:
     return [python, "-m", "decker_plugin_sdk", str(plugin_dir / runtime.entry)]
 
 
+_WINDOWS_VARS = (
+    "SYSTEMROOT",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "TEMP",
+    "TMP",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "COMSPEC",
+    "PATHEXT",
+)
+
+
 def launch_env(sdk_path: Path | None) -> dict[str, str]:
     """Return a minimal environment for a plugin process."""
     env = {
@@ -27,6 +42,8 @@ def launch_env(sdk_path: Path | None) -> dict[str, str]:
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "PYTHONUNBUFFERED": "1",
     }
+    if sys.platform == "win32":
+        env.update({name: os.environ[name] for name in _WINDOWS_VARS if name in os.environ})
     if sdk_path is not None:
         env["PYTHONPATH"] = str(sdk_path)
     return env
