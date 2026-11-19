@@ -123,12 +123,14 @@ def test_rss_bytes_of_a_missing_pid_is_none(procs: list[subprocess.Popen[bytes]]
     assert_that(rss_bytes(proc.pid)).is_none()
 
 
-@pytest.mark.posix_only
+@pytest.mark.posix_only("plugin runtime and server monitor (docs/platform-support.md): start_new_session is POSIX-only")
 def test_group_popen_kwargs_starts_a_new_session_on_posix() -> None:
     assert_that(group_popen_kwargs()).is_equal_to({"start_new_session": True})
 
 
-@pytest.mark.windows_only
+@pytest.mark.windows_only(
+    "plugin runtime and server monitor (docs/platform-support.md): CREATE_NEW_PROCESS_GROUP is Windows-only"
+)
 def test_group_popen_kwargs_creates_a_process_group_on_windows() -> None:
     flags = group_popen_kwargs()["creationflags"]
     assert_that(flags & subprocess.CREATE_NEW_PROCESS_GROUP).is_true()  # type: ignore[attr-defined,unused-ignore]

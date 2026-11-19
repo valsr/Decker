@@ -413,7 +413,7 @@ class TestSystemIcons:
         assert_that(icons.read_icon("decker.system.places", "folder")).is_equal_to(b"png")
 
     @pytest.mark.linux_only(
-        "System Icons are Linux-only (docs/platform-support.md): symlinks need privilege on Windows"
+        "System Icons are Linux-only (docs/platform-support.md): the symlinked-icon check runs on the Linux theme tree"
     )
     def test_a_symlink_to_an_image_inside_the_icon_dirs_is_served(self, tree: Path) -> None:
         target = tree / "other-theme" / "real.svg"
