@@ -52,7 +52,7 @@ class EventBus:
     def push_filtered(self, event_type: str, make_payload: Callable[[bool], str]) -> None:
         """Push to every client the payload made for its own loopback flag."""
         with self._lock:
-            clients = [(conn, self._loopback.get(conn, True)) for conn in self._clients]
+            clients = [(conn, self._loopback.get(conn, False)) for conn in self._clients]
         dead: list[Any] = []
         for conn, loopback in clients:
             try:
