@@ -250,9 +250,9 @@ class ServerProcess:
             ctx.window_watcher = build_window_watcher(ctx, select_backend(os.environ, sys.platform))
             ctx.window_watcher.start()
             engine = ctx.app_rule_engine
-            for info in ctx.device_manager.list_devices():
-                if info.id is not None and engine is not None:
-                    engine.evaluate_device(info.id)
+            for device_id in ctx.device_manager.opened_device_ids():
+                if engine is not None:
+                    engine.evaluate_device(device_id)
         except Exception as exc:  # pylint: disable=broad-except
             logging.warning("Window detection could not start: %s", exc)
 

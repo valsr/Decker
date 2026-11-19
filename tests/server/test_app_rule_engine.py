@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -32,11 +31,8 @@ def context(tmp_path):
     device_manager = MagicMock()
     device_manager.show_page.return_value = True
     device_manager.get_device_state.return_value.has_image.return_value = False
-    device_manager.list_devices.return_value = [
-        SimpleNamespace(id=DEV),
-        SimpleNamespace(id=DEV2),
-        SimpleNamespace(id=None),
-    ]
+    device_manager.opened_device_ids.return_value = [DEV, DEV2]
+    device_manager.list_devices.side_effect = AssertionError("the engine must not touch the hardware")
     ctx = ServerContext(
         device_manager=device_manager,
         plugin_manager=MagicMock(),
@@ -198,3 +194,28 @@ def test_devices_are_independent(context):
 
     assert_that(_active(context, DEV)).is_equal_to(p1)
     assert_that(_active(context, DEV2)).is_equal_to(0)
+
+
+def test_on_focus_never_enumerates_hardware(context):
+    context.app_rule_engine.on_focus(FIREFOX)
+
+    cast(MagicMock, context.device_manager.list_devices).assert_not_called()
+
+
+def test_device_id_source_failure_is_contained(context):
+    context.device_manager.opened_device_ids.side_effect = OSError("enumerate failed")
+
+    context.app_rule_engine.on_focus(FIREFOX)  # must not raise
+
+
+def test_failed_apply_is_retried_on_the_same_target(context):
+    profile = _profile(context)
+    context.app_rule_store.add_rule(DEV, _rule("firefox", profile))
+    real = context.page_controller.activate_profile
+    context.page_controller.activate_profile = MagicMock(side_effect=RuntimeError("boom"))
+
+    context.app_rule_engine.on_focus(FIREFOX)
+    context.page_controller.activate_profile = real
+    context.app_rule_engine.on_focus(FIREFOX)
+
+    assert_that(_active(context)).is_equal_to(profile)

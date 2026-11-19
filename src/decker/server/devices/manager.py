@@ -209,6 +209,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
     def _evaluate_rules(self, device_id: str) -> None:
         engine = self._context.app_rule_engine if self._context is not None else None
         if engine is not None:
+            engine.forget_device(device_id)  # a reopened deck shows its restored page, not the rule's target
             engine.evaluate_device(device_id)
 
     def _forget_rules(self, device_id: str) -> None:
@@ -326,6 +327,11 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
             if self._devices.get(device.device_id) is device:
                 del self._devices[device.device_id]
         device.close()  # outside the lock; idempotent, and never joins its own writer thread
+
+    def opened_device_ids(self) -> list[str]:
+        """Ids of the devices that are open right now; touches no hardware."""
+        with self._lock:
+            return list(self._devices)
 
     def list_devices(self) -> list[DeviceHardwareInfo]:
         """Return hardware info for all connected Stream Deck devices, even if not yet opened."""

@@ -43,6 +43,7 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
         self._on_status = on_status
         self._timings = timings or WatcherTimings()
         self._lock = threading.RLock()
+        self._evaluate_lock = threading.Lock()  # serialises on_window calls; never held with _lock across a callback
         self._state = "unavailable"
         self._reason = "not started"
         self._running = False
@@ -137,13 +138,21 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
                 return
             self._launching = True
             stopper = self._stopper
-        if stopper is not None:
-            stopper.join(timeout=5)
         try:
+            self._join_stopper(stopper)
             self._launch_backend()
         finally:
             with self._lock:
                 self._launching = False
+
+    @staticmethod
+    def _join_stopper(stopper: threading.Thread | None) -> None:
+        if stopper is None:
+            return
+        try:
+            stopper.join(timeout=5)
+        except RuntimeError:  # never started: nothing to wait for
+            LOGGER.debug("window backend stopper was never started")
 
     def _launch_backend(self) -> None:
         try:
@@ -180,9 +189,9 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
         if in_thread:
             # the failure may come from the backend's own thread, which must not stop itself
             stopper = threading.Thread(target=self._stop_backend, daemon=True)
+            stopper.start()
             with self._lock:
                 self._stopper = stopper
-            stopper.start()
         else:
             self._stop_backend()
         self._set_state("unavailable", str(exc) or type(exc).__name__)
@@ -226,13 +235,14 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
             self._fail(exc)
 
     def _evaluate(self) -> None:
-        with self._lock:
-            window, self._pending = self._pending, None
-            if window is None or not self._running:
-                return
-        try:
-            self._on_window(window)
+        with self._evaluate_lock:
             with self._lock:
-                self._attempts = 0
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            self._fail(exc)
+                window, self._pending = self._pending, None
+                if window is None or not self._running:
+                    return
+            try:
+                self._on_window(window)
+                with self._lock:
+                    self._attempts = 0
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                self._fail(exc)
