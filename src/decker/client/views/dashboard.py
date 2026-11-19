@@ -23,6 +23,8 @@ from decker.client.context import AppContext
 from decker.client.events import (
     ActionListUpdatedEvent,
     AppEvent,
+    AppRulesUpdatedEvent,
+    DetectionStatusEvent,
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     PagesUpdatedEvent,
@@ -34,9 +36,15 @@ from decker.client.widgets.action_config_panel import ActionConfigPanel
 from decker.client.widgets.button_grid import ButtonGridWidget
 from decker.client.widgets.icon_edit import IconEdit
 from decker.client.widgets.page_tab_bar import PageTabBar
-from decker.client.widgets.profile_edit_dialog import ProfileEditDialog
+from decker.client.widgets.profiles_dialog import ProfilesDialog
 from decker.client.widgets.sidebar import SidebarWidget
-from decker.common.model import DeviceHardwareInfo, DevicePages, DeviceProfiles
+from decker.common.model import (
+    DeviceHardwareInfo,
+    DevicePages,
+    DeviceProfiles,
+    DeviceRules,
+    PageInfo,
+)
 
 _DEFAULT_SIDEBAR_WIDTH = 240
 
@@ -62,6 +70,9 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._last_expanded_sidebar_width = _DEFAULT_SIDEBAR_WIDTH
         self._pages: DevicePages | None = None  # the active device's pages, from the server
         self._profiles: DeviceProfiles | None = None  # the active device's profiles, from the server
+        self._rules: DeviceRules | None = None  # the active device's app rules, from the server
+        self._detection: DetectionStatusEvent | None = None  # the server's window detection status
+        self._profiles_dialog: ProfilesDialog | None = None  # the open non-modal profiles and rules dialog
         self._devices: list[DeviceHardwareInfo] = []
         self._selected_key: int | None = None
         self._key_images: dict[int, str] = {}  # last composed image per key, to seed the editor preview
@@ -129,6 +140,12 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             self._on_pages_updated(event.pages)
         elif isinstance(event, ProfilesUpdatedEvent):
             self._on_profiles_updated(event.profiles)
+        elif isinstance(event, AppRulesUpdatedEvent):
+            self._on_rules_updated(event.rules)
+        elif isinstance(event, DetectionStatusEvent):
+            self._detection = event
+            if self._profiles_dialog is not None:
+                self._profiles_dialog.set_status(event)
         return None
 
     def save_state(self) -> None:
@@ -220,6 +237,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._grid.build(device.keys if device is not None else [])
         self._pages = None
         self._profiles = None
+        self._rules = None
+        self._close_profiles_dialog()
         self._render_page_tabs()
         self._render_profiles()
         cm = AppContext.get().connection_manager
@@ -361,6 +380,15 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             return
         self._profiles = profiles
         self._render_profiles()
+        if self._profiles_dialog is not None:
+            self._profiles_dialog.set_profiles(profiles)
+
+    def _on_rules_updated(self, rules: DeviceRules) -> None:
+        if rules.device_id != AppContext.get().active_device_id:
+            return
+        self._rules = rules
+        if self._profiles_dialog is not None:
+            self._profiles_dialog.set_rules(rules)
 
     def _render_profiles(self) -> None:
         selector = self._page_tabs.profile_selector
@@ -386,21 +414,35 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._page_call("profile_rename", profile_id, name)
 
     def _on_edit_profile(self, profile_id: int) -> None:
+        cm = AppContext.get().connection_manager
         profiles = self._profiles
-        profile = next((p for p in profiles.profiles if p.profile_id == profile_id), None) if profiles else None
-        if profiles is None or profile is None:
+        if profiles is None or cm is None:
             return
-        dialog = ProfileEditDialog(profile, can_delete=len(profiles.profiles) > 1, parent=self)
-        dialog.exec()
-        if dialog.outcome == "save":
-            if dialog.name() != profile.name:
-                self._page_call("profile_rename", profile_id, dialog.name())
-            if dialog.icon() != profile.icon:
-                self._page_call("profile_set_icon", profile_id, dialog.icon())
-        elif dialog.outcome == "delete":
-            self._page_call("profile_delete", profile_id)
-        elif dialog.outcome == "clone":
-            self._page_call("profile_clone", profile_id)
+        if self._profiles_dialog is None:
+            dialog = ProfilesDialog(self._page_call, cm, self._pages_for_profile, parent=self)
+            dialog.set_profiles(profiles)
+            if self._rules is not None:
+                dialog.set_rules(self._rules)
+            if self._detection is not None:
+                dialog.set_status(self._detection)
+            self._profiles_dialog = dialog
+        self._profiles_dialog.select_profile(profile_id)
+        self._profiles_dialog.show()
+        self._profiles_dialog.raise_()
+        self._profiles_dialog.activateWindow()
+
+    def _close_profiles_dialog(self) -> None:
+        dialog, self._profiles_dialog = self._profiles_dialog, None
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+
+    def _pages_for_profile(self, profile_id: int) -> list[PageInfo]:
+        raw = self._page_call("pages_list", profile_id)
+        try:
+            return [PageInfo(str(p["page_id"]), str(p["name"])) for p in json.loads(raw)["pages"]] if raw else []
+        except (ValueError, TypeError, KeyError):
+            return []
 
     def _reset_key_selection(self) -> None:
         self._key_slots = {}

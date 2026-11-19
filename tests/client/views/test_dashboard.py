@@ -14,6 +14,8 @@ from decker.client.call_bridge import CallBridge
 from decker.client.context import AppContext
 from decker.client.events import (
     ActionListUpdatedEvent,
+    AppRulesUpdatedEvent,
+    DetectionStatusEvent,
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     PagesUpdatedEvent,
@@ -21,11 +23,16 @@ from decker.client.events import (
 )
 from decker.client.ui_state_store import UiStateStore
 from decker.client.views.dashboard import DashboardView, _confirm_delete_page
+from decker.client.widgets.profiles_dialog import ProfilesDialog
 from decker.common.model import (
+    AppRule,
+    DefaultRule,
     DeviceHardwareInfo,
     DevicePages,
     DeviceProfiles,
+    DeviceRules,
     KeyInfo,
+    MatchCondition,
     PageInfo,
     ProfileInfo,
 )
@@ -1011,6 +1018,11 @@ _PROFILES = DeviceProfiles(
 )
 
 
+def _open_dialog(view: DashboardView) -> ProfilesDialog:
+    assert view._profiles_dialog is not None  # pylint: disable=protected-access
+    return view._profiles_dialog  # pylint: disable=protected-access
+
+
 class TestProfiles:  # pylint: disable=protected-access
     def setup_method(self):
         AppContext._instance = None
@@ -1082,69 +1094,91 @@ class TestProfiles:  # pylint: disable=protected-access
 
         cm.call.assert_called_once_with("profile_rename", "dev1", 2, "Games")
 
-    def _edit(self, view, monkeypatch, outcome, name="Work", icon=""):
-        made: list = []
-
-        class _Dialog:
-            def __init__(self, profile, can_delete, parent=None):  # pylint: disable=unused-argument
-                self.outcome = outcome
-                self.created = (profile, can_delete)
-                made.append(self)
-
-            def exec(self):
-                return 1
-
-            def name(self):
-                return name
-
-            def icon(self):
-                return icon
-
-        monkeypatch.setattr("decker.client.views.dashboard.ProfileEditDialog", _Dialog)
-        view._page_tabs.profile_selector.edit_requested.emit(2)
-        return made[-1]
-
-    def test_edit_saves_changed_name_and_icon_only(
-        self, qapp, tmp_path, monkeypatch
-    ):  # pylint: disable=unused-argument
-        view, cm = self._view(tmp_path)
-
-        dialog = self._edit(view, monkeypatch, "save", name="Games", icon="decker:logo")
-
-        assert_that(dialog.created).is_equal_to((ProfileInfo(2, "Work", ""), True))
-        assert_that([c.args for c in cm.call.call_args_list]).is_equal_to(
-            [("profile_rename", "dev1", 2, "Games"), ("profile_set_icon", "dev1", 2, "decker:logo")]
-        )
-
-    def test_edit_without_changes_calls_nothing(self, qapp, tmp_path, monkeypatch):  # pylint: disable=unused-argument
-        view, cm = self._view(tmp_path)
-
-        self._edit(view, monkeypatch, "save", name="Work", icon="")
-
-        cm.call.assert_not_called()
-
-    def test_edit_delete_and_clone(self, qapp, tmp_path, monkeypatch):  # pylint: disable=unused-argument
-        view, cm = self._view(tmp_path)
-
-        self._edit(view, monkeypatch, "delete")
-        self._edit(view, monkeypatch, "clone")
-        self._edit(view, monkeypatch, "")
-
-        assert_that([c.args for c in cm.call.call_args_list]).is_equal_to(
-            [("profile_delete", "dev1", 2), ("profile_clone", "dev1", 2)]
-        )
-
-    def test_edit_of_the_last_profile_cannot_delete(
-        self, qapp, tmp_path, monkeypatch
-    ):  # pylint: disable=unused-argument
+    def test_edit_profile_entry_opens_profiles_dialog_on_that_profile(self, qapp, tmp_path):
         view, _cm = self._view(tmp_path)
+
+        view._page_tabs.profile_selector.edit_requested.emit(2)
+
+        dialog = _open_dialog(view)
+        assert_that(dialog).is_not_none()
+        assert_that(dialog.isVisible()).is_true()
+        assert_that(dialog.isModal()).is_false()
+        assert_that(dialog._name_edit.text()).is_equal_to("Work")
+        dialog.close()
+
+    def test_edit_profile_reuses_the_open_dialog(self, qapp, tmp_path):
+        view, _cm = self._view(tmp_path)
+
+        view._page_tabs.profile_selector.edit_requested.emit(2)
+        first = _open_dialog(view)
+        view._page_tabs.profile_selector.edit_requested.emit(0)
+
+        assert_that(view._profiles_dialog).is_same_as(first)
+        assert_that(first._name_edit.text()).is_equal_to("Default")
+        first.close()
+
+    def test_dialog_profile_actions_go_through_page_call(self, qapp, tmp_path):
+        view, cm = self._view(tmp_path)
+        view._page_tabs.profile_selector.edit_requested.emit(2)
+
+        _open_dialog(view)._clone_button.click()
+
+        cm.call.assert_called_with("profile_clone", "dev1", 2)
+        _open_dialog(view).close()
+
+    def test_dialog_follows_rule_status_and_profile_events(self, qapp, tmp_path):
+        view, _cm = self._view(tmp_path)
+        view._page_tabs.profile_selector.edit_requested.emit(2)
+        dialog = _open_dialog(view)
+        rule = AppRule("r1", "Web", True, [MatchCondition("window_class", "equals", "x")], 0)
+
+        view.handle_event(AppRulesUpdatedEvent(rules=DeviceRules("dev1", [rule], DefaultRule())))
+        view.handle_event(DetectionStatusEvent("active", "", "kwin", True, None))
         view.handle_event(
-            ProfilesUpdatedEvent(profiles=DeviceProfiles("dev1", [ProfileInfo(2, "Work", "")], active_profile_id=2))
+            ProfilesUpdatedEvent(profiles=DeviceProfiles("dev1", [ProfileInfo(2, "Renamed", "")], active_profile_id=2))
         )
 
-        dialog = self._edit(view, monkeypatch, "")
+        assert_that(dialog._rule_list.count()).is_equal_to(1)
+        assert_that(dialog._status_label.text()).contains("active")
+        assert_that(dialog._name_edit.text()).is_equal_to("Renamed")
+        dialog.close()
 
-        assert_that(dialog.created[1]).is_false()
+    def test_rules_and_status_seen_before_opening_are_shown(self, qapp, tmp_path):
+        view, _cm = self._view(tmp_path)
+        rule = AppRule("r1", "Web", True, [MatchCondition("window_class", "equals", "x")], 0)
+        view.handle_event(AppRulesUpdatedEvent(rules=DeviceRules("dev1", [rule], DefaultRule())))
+        view.handle_event(DetectionStatusEvent("active", "", "kwin", True, None))
+
+        view._page_tabs.profile_selector.edit_requested.emit(2)
+
+        assert_that(_open_dialog(view)._rule_list.count()).is_equal_to(1)
+        assert_that(_open_dialog(view)._status_label.text()).contains("kwin")
+        _open_dialog(view).close()
+
+    def test_pages_for_the_dialog_come_from_pages_list_of_that_profile(self, qapp, tmp_path):
+        view, cm = self._view(tmp_path)
+        cm.call.return_value = json.dumps({"pages": [{"page_id": "w1", "name": "Mail"}]})
+
+        pages = view._pages_for_profile(2)
+
+        cm.call.assert_called_once_with("pages_list", "dev1", 2)
+        assert_that(pages).is_equal_to([PageInfo("w1", "Mail")])
+
+    def test_pages_for_profile_survive_a_failed_call(self, qapp, tmp_path):
+        view, cm = self._view(tmp_path)
+        cm.call.return_value = None
+
+        assert_that(view._pages_for_profile(2)).is_empty()
+
+    def test_switching_device_closes_the_dialog(self, qapp, tmp_path):
+        view, _cm = self._view(tmp_path)
+        view._page_tabs.profile_selector.edit_requested.emit(2)
+        dialog = _open_dialog(view)
+
+        view._on_device_selected(_D2)
+
+        assert_that(dialog.isVisible()).is_false()
+        assert_that(view._profiles_dialog).is_none()
 
     def test_switching_device_hides_the_selector(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view, _cm = self._view(tmp_path)
