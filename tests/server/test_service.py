@@ -33,9 +33,13 @@ def _make_target(device_id="dev1", key_index=0, plugin="com.p", action="com.p.a"
     )
 
 
+_PAGE_STORES: list[PageStore] = []
+
+
 def _make_context(plugin_manager: MagicMock, store: KeyAssignmentStore, device_manager=None) -> ServerContext:
     """A context with real page and key stores (sharing one database) and mocked hardware/plugins."""
     page_store = PageStore(db_path=store._db_path)  # pylint: disable=protected-access
+    _PAGE_STORES.append(page_store)
     controller = PageController()
     dm = device_manager or MagicMock()
     dm.show_page.return_value = True
@@ -67,6 +71,8 @@ def store():
         s = KeyAssignmentStore(db_path=Path(tmpdir) / "test.db")
         s.create(MagicMock())
         yield s
+        while _PAGE_STORES:  # Windows cannot delete the database while another connection to it is open
+            _PAGE_STORES.pop().destroy()
         s.destroy()
 
 
@@ -982,6 +988,7 @@ class TestKeyMoveAndCopyAreAllOrNothing:
 
 
 class TestSystemIconRpcs:
+    @pytest.mark.linux_only("System Icons are Linux-only (docs/platform-support.md): no packs are served elsewhere")
     def test_system_icons_are_listed_and_served_over_the_icon_pack_rpcs(self, store, manager, tmp_path):
         from decker.asset.iconpack import IconPackRegistry
         from decker.asset.systemicons import SystemIcons
