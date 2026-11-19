@@ -80,7 +80,7 @@ def test_font_directories_per_platform(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.setenv("WINDIR", str(tmp_path / "win"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setenv("XDG_DATA_DIRS", f"{tmp_path / 'd1'}:{tmp_path / 'd2'}")
+    monkeypatch.setenv("XDG_DATA_DIRS", os.pathsep.join([str(tmp_path / "d1"), str(tmp_path / "d2")]))
 
     monkeypatch.setattr(sys, "platform", "win32")
     assert_that(fonts.font_directories()).contains(
