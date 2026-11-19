@@ -9,7 +9,7 @@ from PIL import Image, UnidentifiedImageError
 
 from decker.animation.gif import MAX_RASTER_PIXELS, GifError, check_gif_bounds, is_gif
 from decker.asset.tint import tint_svg
-from decker.plugin.icons import MAX_ICON_BYTES
+from decker.plugin.icons import max_icon_bytes
 
 _SVG_SNIFF_BYTES = 64 * 1024
 
@@ -22,13 +22,13 @@ def _guard_gif(source: Path | io.BytesIO) -> None:
     """Refuse a GIF whose block structure would stall Pillow's open (a comment flood); other inputs pass through."""
     if isinstance(source, Path):
         with source.open("rb") as handle:
-            data = handle.read(MAX_ICON_BYTES + 1)
+            data = handle.read(max_icon_bytes() + 1)
     else:
         data = source.getvalue()
     if not is_gif(data):
         return
     try:
-        if len(data) > MAX_ICON_BYTES:
+        if len(data) > max_icon_bytes():
             raise GifError("GIF is too large to read")
         check_gif_bounds(data)
     except GifError as exc:

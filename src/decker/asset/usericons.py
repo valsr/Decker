@@ -17,7 +17,7 @@ from decker.asset.iconresize import (
 )
 from decker.asset.svgcheck import validate_svg
 from decker.common.paths import user_icons
-from decker.plugin.icons import MAX_ICON_BYTES
+from decker.plugin.icons import max_icon_bytes
 
 USER_PACK_ID = "decker.user"
 USER_PLUGIN_ID = "decker.user"
@@ -81,7 +81,7 @@ class UserIcons:
             return None
         path = self.directory / name
         try:
-            if path.stat().st_size > MAX_ICON_BYTES:
+            if path.stat().st_size > max_icon_bytes():
                 return None
             return path.read_bytes()
         except OSError:
@@ -114,8 +114,8 @@ class UserIcons:
 
     def preview(self, data: bytes, options: ImportOptions) -> bytes:
         """Return what the icon would look like (SVG unchanged, rasters as a 144x144 PNG); writes nothing."""
-        if len(data) > MAX_ICON_BYTES:
-            raise ImageImportError(f"image is larger than {MAX_ICON_BYTES} bytes")
+        if len(data) > max_icon_bytes():
+            raise ImageImportError(f"image is larger than {max_icon_bytes()} bytes")
         if _is_svg(data):
             validate_svg(data)
             return data
@@ -144,8 +144,8 @@ class UserIcons:
 
     @staticmethod
     def _prepare(data: bytes, options: ImportOptions) -> tuple[bytes, str]:
-        if len(data) > MAX_ICON_BYTES:
-            raise ImageImportError(f"image is larger than {MAX_ICON_BYTES} bytes")
+        if len(data) > max_icon_bytes():
+            raise ImageImportError(f"image is larger than {max_icon_bytes()} bytes")
         if _is_svg(data):
             validate_svg(data)
             return data, "svg"

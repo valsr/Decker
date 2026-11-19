@@ -10,7 +10,7 @@ from PIL import Image
 
 from decker.asset.iconresize import ImageImportError, ImportOptions
 from decker.asset.usericons import ImportResult, UserIcons, normalize_id
-from decker.plugin.icons import MAX_ICON_BYTES
+from decker.plugin.icons import max_icon_bytes
 
 
 def test_normalize_id_lowercases_and_replaces_runs_of_other_characters() -> None:
@@ -84,7 +84,7 @@ def test_default_directory_follows_the_home(tmp_path: Path, monkeypatch: pytest.
 
 
 def test_read_icon_refuses_oversized_files(tmp_path: Path) -> None:
-    (tmp_path / "big.png").write_bytes(b"x" * (MAX_ICON_BYTES + 1))
+    (tmp_path / "big.png").write_bytes(b"x" * (max_icon_bytes() + 1))
     assert_that(UserIcons(tmp_path).read_icon("big.png")).is_none()
 
 
@@ -140,7 +140,7 @@ def test_import_refuses_blank_names(tmp_path: Path) -> None:
 
 
 def test_import_refuses_over_cap_and_leaves_no_files(tmp_path: Path) -> None:
-    result = UserIcons(tmp_path).import_icon("big", b"x" * (MAX_ICON_BYTES + 1), _OPTIONS)
+    result = UserIcons(tmp_path).import_icon("big", b"x" * (max_icon_bytes() + 1), _OPTIONS)
     assert_that(result.ok).is_false()
     assert_that(list(tmp_path.iterdir())).is_empty()
 
@@ -219,3 +219,16 @@ def test_preview_refuses_utf16_svg(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         UserIcons(tmp_path).preview(_UTF16_SVG, _OPTIONS)
     assert_that(list(tmp_path.iterdir())).is_empty()
+
+
+def test_import_rejects_images_over_the_configured_limit(tmp_path: Path) -> None:
+    from decker.common import config
+
+    try:
+        config.set("icons.max_file_size", 1024)
+        result = UserIcons(tmp_path).import_icon("big", b"x" * 2048, _OPTIONS)
+    finally:
+        config.unset("icons.max_file_size")
+
+    assert_that(result.ok).is_false()
+    assert_that(result.error).contains("1024")

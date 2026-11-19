@@ -2,7 +2,7 @@ from pathlib import Path
 
 from assertpy import assert_that
 
-from decker.plugin.icons import MAX_ICON_BYTES, read_icon, resolve_icon
+from decker.plugin.icons import max_icon_bytes, read_icon, resolve_icon
 
 
 class TestResolveIcon:
@@ -45,7 +45,7 @@ class TestReadIcon:
         assert_that(read_icon(tmp_path, "icon")).is_none()
 
     def test_oversized_icon_is_skipped(self, tmp_path):
-        (tmp_path / "big.png").write_bytes(b"x" * (MAX_ICON_BYTES + 1))
+        (tmp_path / "big.png").write_bytes(b"x" * (max_icon_bytes() + 1))
 
         assert_that(read_icon(tmp_path, "big")).is_none()
 
@@ -65,3 +65,17 @@ class TestReadIcon:
         monkeypatch.setattr(Path, "read_bytes", _fail)
 
         assert_that(read_icon(tmp_path, "icon")).is_none()
+
+
+def test_max_icon_bytes_default_is_4_mib() -> None:
+    assert_that(max_icon_bytes()).is_equal_to(4 * 1024 * 1024)
+
+
+def test_max_icon_bytes_follows_config() -> None:
+    from decker.common import config
+
+    try:
+        config.set("icons.max_file_size", 1024)
+        assert_that(max_icon_bytes()).is_equal_to(1024)
+    finally:
+        config.unset("icons.max_file_size")

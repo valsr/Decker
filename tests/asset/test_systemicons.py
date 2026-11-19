@@ -445,7 +445,7 @@ class TestSystemIcons:
     def test_files_over_the_size_limit_are_refused(self, tree: Path, monkeypatch) -> None:
         import decker.asset.systemicons as module
 
-        monkeypatch.setattr(module, "MAX_ICON_BYTES", 2)
+        monkeypatch.setattr(module, "max_icon_bytes", lambda: 2)
 
         assert_that(self._icons(tree).read_icon("decker.system.places", "folder")).is_none()
 
