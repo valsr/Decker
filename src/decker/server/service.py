@@ -22,10 +22,13 @@ from decker.common import config
 from decker.common.appearance_schema import APPEARANCE_KEYS
 from decker.common.icon_ref import DECKER_ICON_REF, parse_icon_ref
 from decker.common.model import (
+    AppRule,
+    DefaultRule,
     DeviceHardwareInfo,
     DevicePages,
     DeviceProfiles,
     KeyState,
+    MatchCondition,
     PageInfo,
     ProfileInfo,
 )
@@ -47,6 +50,11 @@ from decker.server.plugin_installer import PluginInstallError
 from decker.server.repositories import CatalogEntry, RepositoryError, RepositoryStore
 from decker.server.settings import apply_settings_request, read_settings
 from decker.server.update_checker import UpdateChecker
+from decker.server.window_wiring import (
+    WINDOW_PICKED_EVENT,
+    status_payload,
+    window_payload,
+)
 
 if TYPE_CHECKING:
     from decker.server.page_controller import PageController
@@ -62,6 +70,26 @@ def _peer_host(conn: Any) -> str | None:
     except Exception:  # pylint: disable=broad-except
         return None
     return host if isinstance(host, str) else None
+
+
+def _rule_from_wire(raw: Any) -> AppRule | None:
+    """Build an AppRule from an RPyC-passed dict; None when it is malformed."""
+    try:
+        fields = dict(raw)
+        conditions = [MatchCondition(str(c["field"]), str(c["op"]), str(c["value"])) for c in fields["conditions"]]
+        profile_id, page_id = fields["profile_id"], fields.get("page_id", "")
+        if isinstance(profile_id, bool) or not isinstance(profile_id, int) or not isinstance(page_id, str):
+            return None
+        return AppRule(
+            str(fields.get("rule_id", "")),
+            str(fields["name"]),
+            bool(fields["enabled"]),
+            conditions,
+            profile_id,
+            page_id,
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _is_loopback(host: str | None) -> bool:
@@ -151,13 +179,15 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         self._last_heartbeat: float = time.time()
         self._peer_host: str | None = None
         self._attached: bool = False
+        self._conn: Any = None
 
     def on_connect(self, conn: Any) -> None:
         """Handle client connection — register for server-push events."""
         logging.info("Client connected to Decker service")
         self._peer_host = _peer_host(conn)
+        self._conn = conn
         if self._context is not None:
-            self._context.event_bus.register(conn)
+            self._context.event_bus.register(conn, _is_loopback(self._peer_host))
 
     def on_disconnect(self, conn: Any) -> None:
         """Handle client disconnection — stop pushing events to this client."""
@@ -725,6 +755,80 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         if self._context is None:
             return None
         return self._context.page_controller.device_profiles(device_id)
+
+    @exposed
+    @api_response
+    def app_rules_list(self, device_id: str) -> Any:
+        """A device's app rules in priority order plus its default rule."""
+        controller = self._rule_controller()
+        return controller.rules(device_id) if controller is not None else None
+
+    @exposed
+    @api_response
+    def app_rule_add(self, device_id: str, rule: dict) -> AppRule | None:
+        """Append an app rule; returns the stored rule, or None when it is invalid."""
+        controller, parsed = self._rule_controller(), _rule_from_wire(rule)
+        return controller.add_rule(device_id, parsed) if controller is not None and parsed is not None else None
+
+    @exposed
+    @api_response
+    def app_rule_update(self, device_id: str, rule: dict) -> bool:
+        """Replace an app rule. Returns False for an invalid or unknown rule."""
+        controller, parsed = self._rule_controller(), _rule_from_wire(rule)
+        return controller is not None and parsed is not None and controller.update_rule(device_id, parsed)
+
+    @exposed
+    @api_response
+    def app_rule_delete(self, device_id: str, rule_id: str) -> bool:
+        """Delete an app rule. Returns False for an unknown rule."""
+        controller = self._rule_controller()
+        return controller is not None and controller.delete_rule(device_id, rule_id)
+
+    @exposed
+    @api_response
+    def app_rule_move(self, device_id: str, rule_id: str, position: int) -> bool:
+        """Move an app rule to a position in the priority order. Returns False for an unknown rule."""
+        controller = self._rule_controller()
+        valid = not isinstance(position, bool) and isinstance(position, int)
+        return controller is not None and valid and controller.move_rule(device_id, rule_id, position)
+
+    @exposed
+    @api_response
+    def app_default_rule_set(self, device_id: str, enabled: bool, profile_id: int, page_id: str) -> bool:
+        """Set the rule used when no app rule matches. Returns False for an invalid target."""
+        controller = self._rule_controller()
+        valid = not isinstance(profile_id, bool) and isinstance(profile_id, int) and isinstance(page_id, str)
+        return (
+            controller is not None
+            and valid
+            and controller.set_default_rule(device_id, DefaultRule(bool(enabled), profile_id, page_id))
+        )
+
+    @exposed
+    @api_response
+    def window_detection_status(self) -> dict[str, Any] | None:
+        """Whether focused-window detection works here and the last window (its title only for local callers)."""
+        watcher = self._context.window_watcher if self._context is not None else None
+        return status_payload(watcher.status(), _is_loopback(self._peer_host)) if watcher is not None else None
+
+    @exposed
+    @api_response
+    def window_pick(self) -> bool:
+        """Start a window pick; the result arrives later as a window_picked event for this client only."""
+        context, conn = self._context, self._conn
+        watcher = context.window_watcher if context is not None else None
+        if context is None or watcher is None or conn is None:
+            return False
+        loopback = _is_loopback(self._peer_host)
+
+        def deliver(window: Any) -> None:
+            payload = json.dumps({"window": window_payload(window, loopback)})
+            context.event_bus.push_to(conn, WINDOW_PICKED_EVENT, payload)
+
+        return watcher.pick(deliver)
+
+    def _rule_controller(self) -> Any:
+        return self._context.app_rule_controller if self._context is not None else None
 
     @exposed
     @api_response

@@ -380,6 +380,29 @@ class TestDeviceWatcher:
         assert_that(dm.get_device_state(device_id)).is_not_none()
         assert_that(self._pushed(context)).is_equal_to([("devices_changed", {"device_id": device_id})])
 
+    def test_a_new_device_is_evaluated_against_app_rules_after_restore(self, watched):
+        dm, context = watched
+        patcher = self._enumerate(self._deck())
+
+        dm.check_devices()
+        patcher.stop()
+
+        context.app_rule_engine.evaluate_device.assert_called_once_with(device_id_for_serial("ABC123"))
+
+    def test_a_lost_device_is_forgotten_by_the_app_rule_engine(self, watched):
+        dm, context = watched
+        deck = self._deck()
+        patcher = self._enumerate(deck)
+        dm.check_devices()
+        patcher.stop()
+        deck.get_serial_number.side_effect = OSError("gone")
+        patcher = self._enumerate()
+
+        dm.check_devices()
+        patcher.stop()
+
+        context.app_rule_engine.forget_device.assert_called_once_with(device_id_for_serial("ABC123"))
+
     def test_a_lost_device_that_is_already_back_in_the_same_pass_is_reopened_at_once(self, watched):
         dm, context = watched
         old = self._deck(path="/dev/hidraw3")
