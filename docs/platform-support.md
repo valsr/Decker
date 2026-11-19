@@ -31,22 +31,23 @@ Core functionality is expected at parity on every platform.
 
 | Feature | Linux (Arch/Plasma/Wayland) | Linux (Ubuntu/Debian/Fedora/GNOME) | Linux (other) | Windows | macOS |
 |---------|------|------|------|------|------|
-| Server and monitor | Yes | Not verified | Not verified | CI [1] | CI [1] |
+| Server and monitor | Yes | CI [13] | Not verified | CI [1] | CI [1] |
 | Hardware access (HID) | Yes | Not verified [2] | Not verified [2] | Not verified [3] | Not verified [3] |
-| GUI client | Yes | Not verified | Not verified | CI [4] | CI [4] |
+| GUI client | Yes | CI [13] | Not verified | CI [4] | CI [4] |
 | System tray | Yes | Not verified [5] | Not verified | Not verified | Not verified |
-| Plugin runtime (process isolation) | Yes | Not verified | Not verified | CI [6] | CI [6] |
-| Plugin install and repositories | Yes | Not verified | Not verified | CI [7] | CI [7] |
-| Key rendering and fonts | Yes | Not verified | Not verified | CI [8] | CI [8] |
-| System Icons | Yes | Not verified | Not verified | No (Linux-only) [9] | No (Linux-only) [9] |
-| User icon import | Yes | Not verified | Not verified | CI [10] | CI [10] |
-| GIF animations | Yes | Not verified | Not verified | CI | CI |
-| CLI | Yes | Not verified | Not verified | CI [11] | CI [11] |
+| Plugin runtime (process isolation) | Yes | CI [13] | Not verified | CI [6] | CI [6] |
+| Plugin install and repositories | Yes | CI [13] | Not verified | CI [7] | CI [7] |
+| Key rendering and fonts | Yes | CI [13] | Not verified | CI [8] | CI [8] |
+| System Icons | Yes | CI [13] | Not verified | No (Linux-only) [9] | No (Linux-only) [9] |
+| User icon import | Yes | CI [13] | Not verified | CI [10] | CI [10] |
+| GIF animations | Yes | CI [13] | Not verified | CI | CI |
+| CLI | Yes | CI [13] | Not verified | CI [11] | CI [11] |
 | Daemon mode | No [12] | No [12] | No [12] | No [12] | No [12] |
 
 The Linux (Arch/Plasma/Wayland) column is `Yes` where the maintainer uses the feature, and CI also runs the suite on
-Ubuntu. The other Linux columns stay `Not verified` because nobody has used them (CI on Ubuntu only shows the tests
-pass there).
+Arch Linux (advisory) and, in the next column, on Ubuntu and Fedora. Hardware access and the system tray stay
+`Not verified` there because the runners have no Stream Deck or desktop. Linux (other) stays `Not verified` because
+nobody has tried it.
 
 Footnotes:
 
@@ -109,5 +110,11 @@ Footnotes:
     covered.
 12. Not implemented: the server has no `--daemon` option. Supervision (heartbeat, memory limit, restart) is done by the
     server monitor that `poe server` always starts; DAEMON.md describes it.
+13. CI runs the full test suite in a `fedora:latest` container (blocking) and an `archlinux:latest` container
+    (advisory: `continue-on-error`, because a rolling release can break without a change here) next to the Ubuntu
+    runner, offscreen Qt, no Stream Deck, no desktop session (run
+    [44573260516](https://github.com/valsr/decker/actions/runs/44573260516), all five test legs green). The cell covers
+    Ubuntu and Fedora; a green Arch leg backs the Arch column but does not change its `Yes`. The GNOME desktop itself
+    is not exercised.
 
 Plugin support is declared per plugin, not here; see the plugins repository's table.
