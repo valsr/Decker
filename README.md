@@ -52,7 +52,7 @@ Early alpha: the table shows what exists, not that it is stable. Plugins are lis
 | User icon import | ✅ | ✅ [13] | ⚠️ | ✅ [10] | ✅ [10] |
 | GIF animations | ✅ | ✅ [13] | ⚠️ | ✅ | ✅ |
 | CLI | ✅ | ✅ [13] | ⚠️ | ✅ [11] | ✅ [11] |
-| Server settings from the client | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Server settings from the client | ✅ [14] | ✅ [14] | ⚠️ | ✅ [14] | ✅ [14] |
 | Daemon mode | ❌ [12] | ❌ [12] | ❌ [12] | ❌ [12] | ❌ [12] |
 
 The Linux (Arch/Plasma/Wayland) column is ✅ where the maintainer uses the feature or CI passes, and CI also runs the suite on
@@ -127,6 +127,13 @@ Footnotes:
     [44573260516](https://github.com/valsr/decker/actions/runs/44573260516), all five test legs green). The cell covers
     Ubuntu and Fedora; a green Arch leg backs the Arch column but does not change its ✅. The GNOME desktop itself
     is not exercised.
+14. CI ([run 44584123173](https://github.com/valsr/decker/actions/runs/44584123173), all five test legs green) covers the
+    settings validation and persistence, the `server_settings` RPCs and the permission policy, the monitor's reload
+    and rollback, the stop-when-last-client logic, the client connection calls and the Server tab (offscreen Qt). The
+    real server child tests (restart exit code 75, rollback when the new port is in use, idle stop with exit code 0)
+    ran on the Linux, Windows and macOS runners and skip when a Stream Deck is attached. Not covered: a real GUI
+    changing the port of a live server end to end, remote clients, and other clients following a port change (they
+    keep the old port).
 
 ## System Requirements
 
