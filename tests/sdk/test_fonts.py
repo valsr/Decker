@@ -82,6 +82,13 @@ def test_odd_directories_never_raise(value: str, monkeypatch: pytest.MonkeyPatch
     assert_that(font_path()).is_none()
 
 
+def test_relative_directory_containing_the_font_returns_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "DejaVuSans.ttf").write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DECKER_FONT_DIR", ".")
+    assert_that(font_path()).is_none()
+
+
 def test_module_imports_with_only_stdlib() -> None:
     src = Path(__file__).resolve().parents[2] / "src" / "decker_plugin_sdk"
     code = (

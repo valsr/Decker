@@ -250,3 +250,12 @@ def test_an_unrelated_family_still_uses_fc_match(tmp_path: Path, monkeypatch: py
     _no_os_fonts(monkeypatch, tmp_path)
 
     assert_that(fonts.font_file("Arial")).is_equal_to(("/usr/share/fonts/other/Arial.ttf", False))
+
+
+def test_bundled_index_has_every_modelled_face() -> None:
+    families = ["dejavu sans", "dejavu sans condensed", "dejavu sans mono", "dejavu serif", "dejavu serif condensed"]
+    styles = ["regular", "bold", "italic", "bolditalic"]
+
+    index = fonts._get_bundled_index()  # pylint: disable=protected-access
+
+    assert_that(index).contains_key(*[(f, s) for f in families for s in styles])
