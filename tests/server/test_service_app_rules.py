@@ -278,7 +278,7 @@ def test_server_without_desktop_session_reports_unavailable_and_rule_rpcs_work(c
 
 
 def test_focus_change_switches_profile_through_the_watcher(context, backend):
-    context.device_manager.list_devices.return_value = [MagicMock(id=DEV)]
+    context.device_manager.opened_device_ids.return_value = [DEV]
     context.device_manager.show_page.return_value = True
     profile = context.page_controller.add_profile(DEV).profile_id
     _service().app_rule_add(DEV, _rule(profile))
