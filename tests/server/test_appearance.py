@@ -6,7 +6,7 @@ from typing import Any
 import cairosvg  # type: ignore[import-untyped]
 import pytest
 from assertpy import assert_that
-from PIL import Image
+from PIL import Image, ImageChops
 
 from decker.animation import gif as gif_module
 from decker.animation.gif import MAX_GIF_FRAMES
@@ -463,19 +463,40 @@ def test_title_and_background_are_drawn_on_every_frame() -> None:
     assert_that(first.tobytes()).is_not_equal_to(plain)
 
 
+_TITLE_REGION = (32, 96, 112, 144)  # bottom-centre third of a 144 px key, where the default title sits
+_TOLERANCE = 8
+
+
+def _assert_title_drawn(img: Image.Image, background: tuple[int, int, int]) -> None:
+    """Structure of a default white bottom title on a flat background; holds for any FreeType rasterisation."""
+    assert_that(img.size).is_equal_to((144, 144))
+    assert_that(img.mode).is_equal_to("RGB")
+    solid = Image.new("RGB", img.size, background)
+    box = ImageChops.difference(img, solid).getbbox()
+    assert_that(box).described_as("the title is drawn").is_not_none()
+    left, top, right, bottom = box  # type: ignore[misc]
+    assert_that(left >= _TITLE_REGION[0] and top >= _TITLE_REGION[1]).is_true()
+    assert_that(right <= _TITLE_REGION[2] and bottom <= _TITLE_REGION[3]).is_true()
+    pixels: list[tuple[int, int, int]] = list(img.get_flattened_data())  # type: ignore[arg-type]
+    changed = [px for px in pixels if px != background]
+    for px in changed:  # anti-aliased pixels lie between the background and the white title colour
+        for channel, base in zip(px, background):
+            assert_that(channel).is_greater_than_or_equal_to(base - _TOLERANCE)
+    assert_that(max(min(px) for px in changed)).described_as("some pixels carry the full title colour").is_greater_than(
+        230
+    )
+
+
 def test_existing_compose_key_image_output_is_unchanged() -> None:
     appearance = _appearance(background="#112233", title="X")
     # Pixel hashes (not PNG bytes, which vary with the zlib/Pillow version), taken from the pre-refactor 399bca1 code.
     with_image = _open(compose_key_image(appearance, _png("#00ff00"), "Plugin"))
     without_image = _open(compose_key_image(appearance, None, "Plugin"))
-    last = (143, 143)
-    assert_that(with_image.getpixel((0, 0))).is_equal_to((0, 255, 0))
-    assert_that(with_image.getpixel(last)).is_equal_to((0, 255, 0))
-    assert_that(without_image.getpixel((0, 0))).is_equal_to((17, 34, 51))
-    assert_that(without_image.getpixel(last)).is_equal_to((17, 34, 51))
-    assert_that(len(set(with_image.get_flattened_data()))).described_as(
-        "the title is drawn over the image"
-    ).is_greater_than(1)
+    _assert_title_drawn(with_image, background=(0, 255, 0))
+    _assert_title_drawn(without_image, background=(17, 34, 51))
+    assert_that(with_image.getpixel((10, 10))).described_as("the plugin image fills the key").is_not_equal_to(
+        without_image.getpixel((10, 10))
+    )
     if sys.platform == "linux":  # glyph rasterisation differs between FreeType builds, so the hash is Linux-only
         assert_that(hashlib.sha256(with_image.tobytes()).hexdigest()).is_equal_to(
             "9e1380e915cb77e1fbf10f0ccab905bd4f226ab51394ccaf13b08d7578479557"
