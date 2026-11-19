@@ -32,11 +32,11 @@ function report(w) {
         "org.decker.WindowWatcher",
         "Focused",
         JSON.stringify({
-            resourceClass: String(w.resourceClass),
+            resourceClass: w.resourceClass || "",
             windowType: typeName(w),
-            caption: String(w.caption),
-            pid: w.pid,
-            desktopFileName: String(w.desktopFileName),
+            caption: w.caption || "",
+            pid: w.pid || 0,
+            desktopFileName: w.desktopFileName || "",
         })
     );
 }

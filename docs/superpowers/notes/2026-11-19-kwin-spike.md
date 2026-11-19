@@ -40,6 +40,9 @@ Date 2026-11-19. KWin 6.7.5, Plasma 6 Wayland (Manjaro). Spike outcome: both mec
 - The script also reports once at load (`report(workspace.activeWindow)`), which is the initial-state report.
 - `callDBus` with no receiver on the bus is silent; the script keeps running (still loaded after the receiver died).
 
+- Known limitation: the script only reports on `windowActivated`, so a caption change in the already-focused window is not
+  reported; title rules re-evaluate on the next focus change only.
+
 ## Stale-script handling
 
 - After the scratch receiver was killed the script stayed loaded (`isScriptLoaded` true).
@@ -64,14 +67,14 @@ Date 2026-11-19. KWin 6.7.5, Plasma 6 Wayland (Manjaro). Spike outcome: both mec
   `height` d, `keepAbove` b, `keepBelow` b, `layer` i, `localhost` b, `maximizeHorizontal` i, `maximizeVertical` i,
   `minimized` b, `noBorder` b, `pid` i, `resourceClass` s, `resourceName` s, `role` s, `skipPager` b, `skipSwitcher` b,
   `skipTaskbar` b, `type` i, `uuid` s, `width` d, `x` d, `y` d. Fixture: `kwin_pick.json` (anonymised).
-- Mapping to `WindowInfo`: `window_class` = `resourceClass`; `window_title` = `caption`; `pid` = `pid` (executable via
+- Mapping to `WindowInfo`: `window_class` = `resourceClass`; `title` = `caption`; `pid` = `pid` (executable via
   psutil); `desktop_file` = `desktopFile` (note: no `Name` suffix, differs from the script's `desktopFileName`);
-  `window_type` from `type` using the NET window type enum: 0 normal, 1 desktop, 2 dock, 3 toolbar, 4 menu, 5 dialog,
-  8 utility, 9 splash (others by the KDE `NET::WindowType` values). `hasTransientParent` is true for transient
-  Wayland dialogs and could map to `dialog` for picks (but then picks and focus events would be inconsistent unless
-  the focus script is changed too). Only `type 0` (Konsole) was observed in a pick; type 5 was only observed via the
-  script's `windowType`.
-- A pick on this machine was synthesized with `ydotool` (the user did not click within 60 s on the first attempt).
+  `window_type` from `type` (a NET window type int). Only `type 0` (normal) was observed in a pick; every other value
+  (including 5 dialog, 8 utility, 9 splash, 2 dock) is unmapped and unproven for picks. Type 5 was seen only as the focus
+  script's `windowType` for an XWayland dialog. `hasTransientParent` is true for transient Wayland dialogs, but using it
+  would make picks and focus events inconsistent unless the focus script changes too.
+- The queryWindowInfo return was captured from a synthetic click (ydotool); the user did not click within the first 60 s.
+  Pids and captions in both fixtures are fake/anonymised.
 
 ## Misc
 

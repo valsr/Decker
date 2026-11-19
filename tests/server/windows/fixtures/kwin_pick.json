@@ -1,5 +1,5 @@
 {
-  "_comment": "Return of org.kde.KWin /KWin org.kde.KWin queryWindowInfo (a{sv}) on KWin 6.7.5, values unwrapped from variants; caption/uuid/activities/desktops anonymised. 'signatures' gives each variant's D-Bus type.",
+  "_comment": "Return of org.kde.KWin /KWin org.kde.KWin queryWindowInfo (a{sv}) on KWin 6.7.5, values unwrapped from variants; caption/pid/uuid/activities/desktops anonymised. 'signatures' gives each variant's D-Bus type.",
   "info": {
     "activities": [
       "00000000-0000-0000-0000-000000000001"
@@ -22,7 +22,7 @@
     "maximizeVertical": 1,
     "minimized": false,
     "noBorder": false,
-    "pid": 28707,
+    "pid": 44444,
     "resourceClass": "org.kde.konsole",
     "resourceName": "konsole",
     "role": "",
