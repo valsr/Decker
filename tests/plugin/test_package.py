@@ -118,6 +118,14 @@ def test_rejects_backslash_names(tmp_path):
         read_manifest(_zip(extra=[(info, "x")]))
 
 
+@pytest.mark.windows_only("plugin install (docs/platform-support.md row 'Plugin install and repositories')")
+def test_rejects_backslash_traversal_on_windows():
+    info = zipfile.ZipInfo("placeholder.txt")
+    info.filename = "..\\evil.txt"
+    with pytest.raises(PackageError, match="parent traversal"):
+        read_manifest(_zip(extra=[(info, "x")]))
+
+
 def test_rejects_symlink_entry():
     info = zipfile.ZipInfo("link")
     info.external_attr = (stat.S_IFLNK | 0o777) << 16
