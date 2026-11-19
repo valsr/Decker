@@ -403,9 +403,9 @@ class ServerProcess:
             port=self.port,
             protocol_config={"allow_public_attrs": True},
         )
-        self._context.server = server
+        ctx.server = server
         stop_requested = gate.attach(server)
-        DeckerService.configure_context(self._context)
+        DeckerService.configure_context(ctx)
         logging.info("RPyC server listening on %s:%d", self.host, self.port)
         try:
             if not stop_requested:
