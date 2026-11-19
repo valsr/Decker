@@ -151,8 +151,11 @@ class AppRuleStore(Manager):
             self._write_default(device_id, default_rule)
             self._db.commit()
 
-    def profile_deleted(self, device_id: str, profile_id: int) -> bool:
-        """Drop the profile's rules and reset a default rule that targeted it. Returns whether anything changed."""
+    def profile_deleted(self, device_id: str, profile_id: int, fallback_profile_id: int) -> bool:
+        """Drop the profile's rules and reset a default rule that targeted it to the fallback profile, disabled.
+
+        Returns whether anything changed.
+        """
         with self._lock:
             cursor = self._db.execute(
                 "DELETE FROM app_rules WHERE device_id = ? AND profile_id = ?", (device_id, profile_id)
@@ -160,8 +163,8 @@ class AppRuleStore(Manager):
             changed = cursor.rowcount > 0
             self._renumber(device_id)
             default = self._default_rule(device_id)
-            if default.profile_id == profile_id and default != DefaultRule():
-                self._write_default(device_id, DefaultRule())
+            if default.profile_id == profile_id:
+                self._write_default(device_id, DefaultRule(profile_id=fallback_profile_id))
                 changed = True
             self._db.commit()
             return changed
