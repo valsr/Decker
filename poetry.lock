@@ -611,6 +611,23 @@ mypy-extensions = ">=1.1.0"
 colors = ["colorama"]
 
 [[package]]
+name = "jeepney"
+version = "0.9.0"
+description = "Low-level, pure Python DBus protocol wrapper."
+optional = false
+python-versions = ">=3.7"
+groups = ["main"]
+markers = "sys_platform == \"linux\""
+files = [
+    {file = "jeepney-0.9.0-py3-none-any.whl", hash = "sha256:97e5714520c16fc0a45695e5365a2e11b81ea79bba796e26f9f1d178cb182683"},
+    {file = "jeepney-0.9.0.tar.gz", hash = "sha256:cf0e9e845622b81e4a28df94c40345400256ec608d0e55bb8a3feaa9163f5732"},
+]
+
+[package.extras]
+test = ["async-timeout ; python_version < \"3.11\"", "pytest", "pytest-asyncio (>=0.17)", "pytest-trio", "testpath", "trio"]
+trio = ["trio"]
+
+[[package]]
 name = "librt"
 version = "0.16.0"
 description = "Mypyc runtime library"
@@ -1934,4 +1951,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.14"
-content-hash = "2f6d0e4c319cc8e2d98611c6695cbb4a96aec001e1d5fe18abdbdc46a44ab472"
+content-hash = "27b7e9f1ca548a963c3f698749bc421bfe496b064c2333fe207e0582b211cbf2"
