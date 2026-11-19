@@ -32,6 +32,7 @@ from decker.client.events import (
     ServerDisconnectedEvent,
 )
 from decker.client.events.event_manager import EventManager
+from decker.client.server_settings import ServerSettingsInfo, parse_server_settings
 from decker.common.model import (
     DeviceHardwareInfo,
     DevicePages,
@@ -91,6 +92,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._reported_plugin_failures: set[str] = set()
         self._last_devices: list[DeviceHardwareInfo] | None = None
         self._last_actions: list[dict[str, Any]] | None = None
+        self.server_settings: ServerSettingsInfo | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -207,11 +209,33 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._bg_server = BgServingThread(self._conn)
         EventManager.get().push(ServerConnectedEvent(host=host, port=port))
         self._refresh_all()
+        self.refresh_server_settings()
         self._refresh_updates()
         self._refresh_active_device()
         # A concurrent stop() may have closed the connection during the initial pull.
         if self.state == ServerState.INITIALIZING:
             self.state = ServerState.HEALTHY
+
+    def refresh_server_settings(self) -> ServerSettingsInfo | None:
+        """Fetch the server's settings (and whether this client may change them); None if unavailable."""
+        reply = self.call("server_settings")
+        try:
+            info = parse_server_settings(json.loads(reply)) if isinstance(reply, str) else None
+        except ValueError:
+            info = None
+        self.server_settings = info
+        return info
+
+    def set_server_settings(self, values: dict[str, Any]) -> tuple[bool, str | None]:
+        """Ask the server to change settings. Returns (accepted, error text)."""
+        reply = self.call("server_settings_set", json.dumps(values))
+        try:
+            result = json.loads(reply) if isinstance(reply, str) else None
+        except ValueError:
+            result = None
+        if not isinstance(result, dict):
+            return False, "No answer from the server."
+        return bool(result.get("ok")), result.get("error")
 
     def _refresh_updates(self) -> None:
         report = to_plain(self.call("plugin_updates"))
@@ -403,6 +427,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
 
     def _close_connection(self) -> None:
         self.state = ServerState.DISCONNECTED
+        self.server_settings = None
         if self._bg_server is not None:
             try:
                 self._bg_server.stop()

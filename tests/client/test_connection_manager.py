@@ -759,3 +759,63 @@ class TestDevicesChanged:  # pylint: disable=protected-access
         self.conn.root.devices_list.assert_called_once_with()
         self.conn.root.pages_list.assert_called_once_with("dev1")
         assert_that(self.manager._devices_refresh_requested.is_set()).is_false()
+
+
+class TestServerSettingsCalls:
+    _PAYLOAD = {
+        "port": 18861,
+        "memory_limit": 1073741824,
+        "icon_max_file_size": 4194304,
+        "stop_when_last_client_leaves": False,
+        "reconfigurable": True,
+        "last_apply_error": None,
+    }
+
+    def setup_method(self) -> None:
+        EventManager.reset()
+        self.manager = ConnectionManager()
+
+    def test_refresh_parses_the_server_reply_and_stores_it(self) -> None:
+        conn = MagicMock()
+        conn.root.server_settings.return_value = json.dumps(self._PAYLOAD)
+        self.manager._conn = conn  # pylint: disable=protected-access
+
+        info = self.manager.refresh_server_settings()
+
+        assert_that(info).is_not_none()
+        assert_that(info.reconfigurable).is_true()  # type: ignore[union-attr]
+        assert_that(self.manager.server_settings).is_equal_to(info)
+
+    def test_refresh_without_a_connection_gives_none(self) -> None:
+        assert_that(self.manager.refresh_server_settings()).is_none()
+
+    def test_refresh_ignores_a_malformed_reply(self) -> None:
+        conn = MagicMock()
+        conn.root.server_settings.return_value = "{not json"
+        self.manager._conn = conn  # pylint: disable=protected-access
+
+        assert_that(self.manager.refresh_server_settings()).is_none()
+
+    def test_set_returns_the_server_verdict(self) -> None:
+        conn = MagicMock()
+        conn.root.server_settings_set.return_value = json.dumps({"ok": False, "restarting": False, "error": "nope"})
+        self.manager._conn = conn  # pylint: disable=protected-access
+
+        assert_that(self.manager.set_server_settings({"port": 1})).is_equal_to((False, "nope"))
+        conn.root.server_settings_set.assert_called_once_with('{"port": 1}')
+
+    def test_set_without_a_connection_reports_no_answer(self) -> None:
+        ok, error = self.manager.set_server_settings({"port": 1})
+
+        assert_that(ok).is_false()
+        assert_that(error).is_not_empty()
+
+    def test_closing_the_connection_forgets_the_settings(self) -> None:
+        conn = MagicMock()
+        conn.root.server_settings.return_value = json.dumps(self._PAYLOAD)
+        self.manager._conn = conn  # pylint: disable=protected-access
+        self.manager.refresh_server_settings()
+
+        self.manager._close_connection()  # pylint: disable=protected-access
+
+        assert_that(self.manager.server_settings).is_none()
