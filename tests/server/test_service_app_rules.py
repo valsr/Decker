@@ -1,5 +1,6 @@
 import json
 import time
+from dataclasses import asdict
 from typing import Callable
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +16,7 @@ from decker.server.event_bus import EventBus
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.page_controller import PageController
 from decker.server.pages import PageStore
+from decker.server.server import ServerProcess
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
 from decker.server.window_watcher import WatcherTimings, WindowWatcher
@@ -190,7 +192,7 @@ def test_status_redacts_title_for_remote_peer(context, backend):
 
 def test_window_focused_redacted_for_remote_client_only(context, backend):
     local, remote = FakeConn(), FakeConn()
-    context.event_bus.register(local)
+    context.event_bus.register(local, loopback=True)
     context.event_bus.register(remote, loopback=False)
     assert backend.on_change is not None
 
@@ -215,8 +217,8 @@ def test_window_detection_changed_is_pushed_on_status_change(context):
 
 def test_window_pick_result_goes_only_to_caller(context, backend):
     caller, other = FakeConn(), FakeConn()
-    context.event_bus.register(caller)
-    context.event_bus.register(other)
+    context.event_bus.register(caller, loopback=True)
+    context.event_bus.register(other, loopback=True)
     engine = MagicMock()
     context.app_rule_engine = engine
 
@@ -224,7 +226,7 @@ def test_window_pick_result_goes_only_to_caller(context, backend):
     assert backend.pick_callback is not None
     backend.pick_callback(FIREFOX)
 
-    assert_that(caller.events("window_picked")).is_equal_to([{"window": json.loads(json.dumps(_as_dict(FIREFOX)))}])
+    assert_that(caller.events("window_picked")).is_equal_to([{"window": asdict(FIREFOX)}])
     assert_that(other.events("window_picked")).is_empty()
     engine.on_focus.assert_not_called()
 
@@ -242,7 +244,7 @@ def test_window_pick_result_is_redacted_for_remote_caller(context, backend):
 
 def test_window_pick_cancelled_sends_null_window(context, backend):
     caller = FakeConn()
-    context.event_bus.register(caller)
+    context.event_bus.register(caller, loopback=True)
 
     _service(conn=caller).window_pick()
     assert backend.pick_callback is not None
@@ -293,11 +295,27 @@ def test_on_connect_registers_loopback_flag_and_connection():
 
     service.on_connect(conn)
 
-    DeckerService._context.event_bus.register.assert_called_once_with(conn, False)  # pylint: disable=protected-access
+    DeckerService._context.event_bus.register.assert_called_once_with(
+        conn, loopback=False
+    )  # pylint: disable=protected-access
     assert_that(service._conn).is_same_as(conn)  # pylint: disable=protected-access
 
 
-def _as_dict(window: WindowInfo) -> dict:
-    from dataclasses import asdict
+def test_watcher_backend_failure_at_boot_leaves_detection_unavailable(context):
+    class Exploding(FakeBackend):
+        def start(self, on_change: Callable[[WindowInfo], None]) -> None:
+            raise RuntimeError("no compositor")
 
-    return asdict(window)
+    with patch("decker.server.server.select_backend", return_value=Exploding()):
+        ServerProcess(0, 0, MagicMock())._start_window_watcher(context)  # pylint: disable=protected-access
+
+    status = json.loads(_service().window_detection_status())
+    assert_that(status["state"]).is_equal_to("unavailable")
+
+
+def test_watcher_construction_failure_is_survived(context):
+    with patch("decker.server.server.select_backend", side_effect=RuntimeError("boom")):
+        ServerProcess(0, 0, MagicMock())._start_window_watcher(context)  # pylint: disable=protected-access
+
+    assert_that(context.window_watcher).is_none()
+    assert_that(json.loads(_service().window_detection_status())).is_none()

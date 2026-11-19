@@ -245,12 +245,16 @@ class ServerProcess:
         for device_id in sorted(device_ids):
             self._context.page_controller.restore(device_id)
 
-    def _start_window_watcher(self, ctx: ServerContext, engine: AppRuleEngine) -> None:
-        ctx.window_watcher = build_window_watcher(ctx, select_backend(os.environ, sys.platform))
-        ctx.window_watcher.start()
-        for info in ctx.device_manager.list_devices():
-            if info.id is not None:
-                engine.evaluate_device(info.id)
+    def _start_window_watcher(self, ctx: ServerContext) -> None:
+        try:
+            ctx.window_watcher = build_window_watcher(ctx, select_backend(os.environ, sys.platform))
+            ctx.window_watcher.start()
+            engine = ctx.app_rule_engine
+            for info in ctx.device_manager.list_devices():
+                if info.id is not None and engine is not None:
+                    engine.evaluate_device(info.id)
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Window detection could not start: %s", exc)
 
     def _resolve_target_device(self, target: str) -> str | None:
         """Find a connected device matching the given ID or USB path.
@@ -387,7 +391,7 @@ class ServerProcess:
             lambda event, payload: ctx.event_bus.push(event, json.dumps(payload)),
         )
         self._restore_devices(device_id_filter=matched_device_id)
-        self._start_window_watcher(ctx, rule_engine)
+        self._start_window_watcher(ctx)
         ctx.device_manager.start_watching(float(config.get_or_default("server.device_watch_interval", 2.0)))
 
         server = NoDelayThreadedServer(

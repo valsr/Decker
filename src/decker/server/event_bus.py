@@ -20,7 +20,7 @@ class EventBus:
         self._senders: dict[Any, Callable[[str, str], Any]] = {}  # each client's resolved, non-blocking sender
         self._loopback: dict[Any, bool] = {}
 
-    def register(self, conn: Any, loopback: bool = True) -> None:
+    def register(self, conn: Any, *, loopback: bool) -> None:
         """Add a client connection to the push list; loopback says whether it runs on the server's machine."""
         with self._lock:
             self._clients.append(conn)
@@ -56,7 +56,12 @@ class EventBus:
         dead: list[Any] = []
         for conn, loopback in clients:
             try:
-                self._sender(conn)(event_type, make_payload(loopback))
+                payload = make_payload(loopback)
+            except Exception:  # pylint: disable=broad-except
+                logging.exception("EventBus: building the %s payload failed", event_type)
+                continue
+            try:
+                self._sender(conn)(event_type, payload)
             except Exception:  # pylint: disable=broad-except
                 dead.append(conn)
         self._forget_all(dead)
