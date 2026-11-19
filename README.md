@@ -53,6 +53,7 @@ Early alpha: the table shows what exists, not that it is stable. Plugins are lis
 | GIF animations | ✅ | ✅ [13] | ⚠️ | ✅ | ✅ |
 | CLI | ✅ | ✅ [13] | ⚠️ | ✅ [11] | ✅ [11] |
 | Server settings from the client | ✅ [14] | ✅ [14] | ⚠️ | ✅ [14] | ✅ [14] |
+| Switch profile by focused app | ✅ [15] | ⚠️ [15] | ⚠️ [15] | ⚠️ [15] | ❌ [15] |
 | Daemon mode | ❌ [12] | ❌ [12] | ❌ [12] | ❌ [12] | ❌ [12] |
 
 The Linux (Arch/Plasma/Wayland) column is ✅ where the maintainer uses the feature or CI passes, and CI also runs the suite on
@@ -134,6 +135,12 @@ Footnotes:
     ran on the Linux, Windows and macOS runners and skip when a Stream Deck is attached. Not covered: a real GUI
     changing the port of a live server end to end, remote clients, and other clients following a port change (they
     keep the old port).
+15. Switches a device's profile by the focused window; see [docs/app-profile-switching.md](docs/app-profile-switching.md).
+    Linux Plasma 6 (kwin backend): the real KWin script and D-Bus transport were exercised by a live smoke test on
+    KWin 6.7.5; Plasma 5 reports unavailable. Ubuntu/Debian/Fedora/GNOME works on X11 sessions only (the X11 backend ran
+    against fakes only, no X server was available); GNOME Wayland is not supported yet. Linux (other) is the same as
+    that column. The Windows backend ran against fakes only (no Windows runner or desktop), so it is unverified on a
+    real desktop; it has no window type or desktop file. macOS is not supported yet.
 
 ## System Requirements
 
