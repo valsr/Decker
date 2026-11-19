@@ -20,6 +20,8 @@ def launch_command(plugin_dir: Path, runtime: RuntimeSpec) -> list[str]:
     return [python, "-m", "decker_plugin_sdk", str(plugin_dir / runtime.entry)]
 
 
+_FONT_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"  # not decker.server.fonts: that imports PIL
+
 _WINDOWS_VARS = (
     "SYSTEMROOT",
     "USERPROFILE",
@@ -41,6 +43,7 @@ def launch_env(sdk_path: Path | None) -> dict[str, str]:
         "HOME": os.environ.get("HOME", ""),
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "PYTHONUNBUFFERED": "1",
+        "DECKER_FONT_DIR": str(_FONT_DIR),
     }
     if sys.platform == "win32":
         env.update({name: os.environ[name] for name in _WINDOWS_VARS if name in os.environ})

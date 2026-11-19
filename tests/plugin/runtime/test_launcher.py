@@ -83,3 +83,12 @@ def test_a_real_interpreter_starts_with_the_launch_env() -> None:
         [sys.executable, "-c", code], env=launch_env(None), capture_output=True, text=True, timeout=60, check=False
     )
     assert_that(result.stdout.strip()).described_as(result.stderr).is_equal_to("ok")
+
+
+@pytest.mark.parametrize("sdk_path", [None, Path("/sdk")])
+def test_launch_env_points_at_bundled_fonts(sdk_path: Path | None) -> None:
+    expected = Path(__file__).resolve().parents[3] / "src" / "decker" / "assets" / "fonts"
+    env = launch_env(sdk_path)
+    assert_that(env["DECKER_FONT_DIR"]).is_equal_to(str(expected))
+    assert_that(Path(env["DECKER_FONT_DIR"]).is_absolute()).is_true()
+    assert_that((Path(env["DECKER_FONT_DIR"]) / "DejaVuSans.ttf").is_file()).is_true()
