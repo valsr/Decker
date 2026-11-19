@@ -18,7 +18,33 @@ Decker supports the following Elgato Stream Deck models:
 
 ## Features
 
-None so far (it can list devices)!
+| Feature | Status |
+|---------|--------|
+| Server with monitor (heartbeat, memory limit, automatic restart), multiple clients | Supported |
+| Device discovery, stable device ids | Supported |
+| Profiles and pages per device, per-key actions and long press | Supported |
+| Key appearance: title, fonts, colours, icon override, live preview | Supported |
+| Icon packs (plugins, User pack, System Icons on Linux) | Supported |
+| Animated GIF key faces | Supported |
+| Plugins (out of process, `.deckerplugin` packages, repositories, updates) | Supported |
+| PyQt6 desktop client | Supported |
+| Command line client (`poe cli`) | Supported |
+| Daemon mode, system tray on every desktop | Not supported |
+
+Early alpha: the table shows what exists, not that it is stable. Plugins are listed in the
+[plugins repository](https://github.com/valsr/decker-plugins).
+
+### Platform support
+
+| Platform | Status |
+|----------|--------|
+| Linux (Arch/Manjaro, Plasma, Wayland) | Used by the maintainer, including hardware; also tested in CI on Arch |
+| Linux (Ubuntu/Debian/Fedora, GNOME) | Test suite passes in CI (no hardware) |
+| Linux (other) | Not verified |
+| Windows | Test suite passes in CI (no hardware) |
+| macOS | Test suite passes in CI (no hardware) |
+
+Per-feature detail, with what CI does and does not cover, is in [docs/platform-support.md](docs/platform-support.md).
 
 ## System Requirements
 
@@ -31,7 +57,7 @@ None so far (it can list devices)!
 For installation/setup per operating system see the subsections below. Decker also needs the Cairo library (for SVG
 icons); the Windows and macOS steps below install it.
 
-What is verified: the CI workflow (`.github/workflows/ci.yml`) runs the test suite on Ubuntu, Windows and macOS runners
+What is verified: the CI workflow (`.github/workflows/ci.yml`) runs the test suite on Ubuntu, Windows and macOS runners and in Fedora and Arch Linux containers
 using the steps below, and they pass. CI has no Stream Deck attached, so nothing here is verified with real hardware
 off Linux (Arch/Manjaro). The steps for installing on your own Windows or macOS machine are what the CI runners
 needed; the maintainer has not verified them on a user machine.
