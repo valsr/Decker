@@ -160,7 +160,8 @@ class PageController(Manager):
                 self._ctx.key_assignment_store.delete_page(device_id, page_id)
                 self._ctx.device_state_store.delete_page_state(device_id, page_id)
             rules = self._ctx.app_rule_store
-            rules_changed = rules is not None and rules.profile_deleted(device_id, profile_id)
+            fallback = min(pid for pid in ids if pid != profile_id)
+            rules_changed = rules is not None and rules.profile_deleted(device_id, profile_id, fallback)
         self._notify(device_id, profiles=True)
         if rules_changed:
             self._notify_rules(device_id)

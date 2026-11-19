@@ -107,12 +107,12 @@ def test_profile_deleted_removes_its_rules_and_resets_default_rule(store):
     store.add_rule("dev1", _rule("drop", profile_id=2))
     store.set_default_rule("dev1", DefaultRule(True, 2, "page-1"))
 
-    assert_that(store.profile_deleted("dev1", 2)).is_true()
+    assert_that(store.profile_deleted("dev1", 2, 0)).is_true()
 
     rules = store.list_rules("dev1")
     assert_that(_names(store)).is_equal_to(["keep"])
     assert_that(rules.default_rule).is_equal_to(DefaultRule(False, 0, ""))
-    assert_that(store.profile_deleted("dev1", 2)).is_false()
+    assert_that(store.profile_deleted("dev1", 2, 0)).is_false()
 
 
 def test_page_deleted_clears_page_id_on_rules_and_default_rule(store):
@@ -141,3 +141,19 @@ def test_data_survives_reopen(tmp_path):
 
     assert_that(second.list_rules("dev1")).is_equal_to(DeviceRules("dev1", [rule], DefaultRule(True, 4, "p")))
     second.destroy()
+
+
+def test_profile_deleted_resets_default_rule_to_the_fallback_profile(store):
+    store.set_default_rule("dev1", DefaultRule(True, 0, "page-1"))
+
+    assert_that(store.profile_deleted("dev1", 0, 3)).is_true()
+
+    assert_that(store.list_rules("dev1").default_rule).is_equal_to(DefaultRule(False, 3, ""))
+
+
+def test_profile_deleted_leaves_a_default_rule_for_another_profile_alone(store):
+    store.set_default_rule("dev1", DefaultRule(True, 4, "page-1"))
+
+    assert_that(store.profile_deleted("dev1", 0, 3)).is_false()
+
+    assert_that(store.list_rules("dev1").default_rule).is_equal_to(DefaultRule(True, 4, "page-1"))

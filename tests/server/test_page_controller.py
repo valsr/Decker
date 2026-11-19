@@ -477,6 +477,26 @@ class TestAppRuleCascade:
         assert_that(store.list_rules(DEV).default_rule).is_equal_to(DefaultRule())
         assert_that(_events(context)).contains(("app_rules_changed", {"device_id": DEV}))
 
+    def test_deleting_profile_zero_resets_default_rule_to_the_lowest_remaining_profile(self, context):
+        second = context.page_controller.add_profile(DEV, "Second")
+        context.page_controller.add_profile(DEV, "Third")
+        store = context.app_rule_store
+        store.set_default_rule(DEV, DefaultRule(True, 0))
+
+        assert_that(context.page_controller.delete_profile(DEV, 0)).is_true()
+
+        assert_that(store.list_rules(DEV).default_rule).is_equal_to(DefaultRule(False, second.profile_id, ""))
+
+    def test_deleting_another_profile_leaves_a_default_rule_alone(self, context):
+        second = context.page_controller.add_profile(DEV, "Second")
+        third = context.page_controller.add_profile(DEV, "Third")
+        store = context.app_rule_store
+        store.set_default_rule(DEV, DefaultRule(True, third.profile_id))
+
+        context.page_controller.delete_profile(DEV, second.profile_id)
+
+        assert_that(store.list_rules(DEV).default_rule).is_equal_to(DefaultRule(True, third.profile_id, ""))
+
     def test_delete_profile_without_rules_pushes_no_app_rules_changed(self, context):
         profile = context.page_controller.add_profile(DEV, "Other")
 
