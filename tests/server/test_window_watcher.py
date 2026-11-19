@@ -26,11 +26,15 @@ class FakeBackend:
         self.release_start: threading.Event | None = None
         self.stop_threads: list[int] = []
         self.running = False
+        self.on_failure: Callable[[Exception], None] | None = None
 
     def available(self) -> BackendStatus:
         return BackendStatus("active")
 
-    def start(self, on_change: Callable[[WindowInfo], None]) -> None:
+    def start(
+        self, on_change: Callable[[WindowInfo], None], on_failure: Callable[[Exception], None] | None = None
+    ) -> None:
+        self.on_failure = on_failure
         self.starts += 1
         if self.starts <= self.fail_starts:
             raise RuntimeError("boom")
@@ -134,6 +138,33 @@ def test_backend_exception_marks_unavailable_and_retries() -> None:
     assert_that(rec.statuses).is_greater_than_or_equal_to(2)
     watcher.stop()
     assert_that(backend.stops).is_greater_than_or_equal_to(1)
+
+
+def test_backend_failure_after_start_marks_unavailable_and_restarts() -> None:
+    backend = FakeBackend()
+    watcher, _rec = make(backend, WatcherTimings(debounce=0.05, retry_base=0.05, retry_cap=0.2))
+    watcher.start()
+    assert backend.on_failure is not None
+    backend.on_failure(RuntimeError("listener died"))
+    assert_that(watcher.status()["state"]).is_equal_to("unavailable")
+    assert_that(watcher.status()["reason"]).contains("listener died")
+    wait_for(lambda: backend.starts == 2 and watcher.status()["state"] == "active")
+    assert_that(backend.stops).is_greater_than_or_equal_to(1)
+    assert_that(backend.stop_threads[0]).is_not_equal_to(threading.get_ident())
+    watcher.stop()
+
+
+def test_backend_failure_after_stop_is_ignored() -> None:
+    backend = FakeBackend()
+    watcher, _rec = make(backend, WatcherTimings(debounce=0.05, retry_base=0.05, retry_cap=0.2))
+    watcher.start()
+    failure = backend.on_failure
+    assert failure is not None
+    watcher.stop()
+    failure(RuntimeError("late"))
+    time.sleep(0.15)
+    assert_that(backend.starts).is_equal_to(1)
+    assert_that(watcher.status()["reason"]).does_not_contain("late")
 
 
 def test_callback_exception_marks_unavailable() -> None:

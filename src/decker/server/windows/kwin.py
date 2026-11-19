@@ -209,22 +209,28 @@ class KWinBackend:
             return BackendStatus("unavailable", f"KWin 6 or newer is required, found {match.group(1)}")
         return BackendStatus("active")
 
-    def start(self, on_change: Callable[[WindowInfo], None]) -> None:
+    def start(
+        self, on_change: Callable[[WindowInfo], None], on_failure: Callable[[Exception], None] | None = None
+    ) -> None:
         """Claim the callback bus name, then (re)load the KWin script; raises when that is impossible."""
         with self._lifecycle:
             self._stop_locked()
             try:
-                self._start_locked(on_change)
+                self._start_locked(on_change, on_failure)
             except BaseException:
                 self._stop_locked()
                 raise
 
-    def _start_locked(self, on_change: Callable[[WindowInfo], None]) -> None:
+    def _start_locked(
+        self, on_change: Callable[[WindowInfo], None], on_failure: Callable[[Exception], None] | None
+    ) -> None:
         receiver = self._receiver = self._connect()
         if receiver.request_name(BUS_NAME) != _PRIMARY_OWNER:
             raise RuntimeError(f"cannot claim D-Bus name {BUS_NAME}; another Decker server may be running")
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._listen, args=(receiver, on_change), name="kwin-focus", daemon=True)
+        self._thread = threading.Thread(
+            target=self._listen, args=(receiver, on_change, on_failure), name="kwin-focus", daemon=True
+        )
         self._thread.start()
         control = self._control = self._connect()
         scripting = "org.kde.kwin.Scripting"
@@ -237,20 +243,27 @@ class KWinBackend:
             raise RuntimeError(f"KWin did not load the {SCRIPT_NAME} script")
         control.call(_kwin_call("/Scripting", scripting, "start"), _CALL_TIMEOUT)
 
-    def _listen(self, receiver: DBusTransport, on_change: Callable[[WindowInfo], None]) -> None:
+    def _listen(
+        self,
+        receiver: DBusTransport,
+        on_change: Callable[[WindowInfo], None],
+        on_failure: Callable[[Exception], None] | None,
+    ) -> None:
         while not self._stop_event.is_set():
             try:
                 raw = receiver.poll(_POLL_INTERVAL)
-            except Exception:  # pylint: disable=broad-exception-caught
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 if not self._stop_event.is_set():
                     _log.exception("KWin focus listener failed")
+                    if on_failure is not None:
+                        on_failure(exc)
                 return
             if raw is None:
                 continue
             try:
                 payload = json.loads(raw)
                 info = window_from_kwin(payload)
-            except (ValueError, TypeError, AttributeError):
+            except (ValueError, TypeError, AttributeError, OverflowError):
                 _log.warning("ignoring malformed focus report")
                 continue
             try:
@@ -271,7 +284,7 @@ class KWinBackend:
             unload = _kwin_call("/Scripting", "org.kde.kwin.Scripting", "unloadScript", "s", (SCRIPT_NAME,))
             _quietly(lambda: control.call(unload, _CALL_TIMEOUT))
             _quietly(control.close)
-        if thread is not None:
+        if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=5)
         if receiver is not None:
             _quietly(lambda: receiver.release_name(BUS_NAME))

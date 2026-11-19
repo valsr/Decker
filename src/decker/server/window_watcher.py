@@ -153,7 +153,7 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
                 if status.state == "unavailable":
                     self._schedule_retry()
                 return
-            self._backend.start(self._on_change)
+            self._backend.start(self._on_change, self._fail)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             self._fail(exc, in_thread=False)
             return

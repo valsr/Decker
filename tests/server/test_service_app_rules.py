@@ -40,7 +40,9 @@ class FakeBackend:
     def available(self) -> BackendStatus:
         return BackendStatus("active")
 
-    def start(self, on_change: Callable[[WindowInfo], None]) -> None:
+    def start(
+        self, on_change: Callable[[WindowInfo], None], on_failure: Callable[[Exception], None] | None = None
+    ) -> None:
         self.on_change = on_change
 
     def stop(self) -> None:
@@ -303,7 +305,9 @@ def test_on_connect_registers_loopback_flag_and_connection():
 
 def test_watcher_backend_failure_at_boot_leaves_detection_unavailable(context):
     class Exploding(FakeBackend):
-        def start(self, on_change: Callable[[WindowInfo], None]) -> None:
+        def start(
+            self, on_change: Callable[[WindowInfo], None], on_failure: Callable[[Exception], None] | None = None
+        ) -> None:
             raise RuntimeError("no compositor")
 
     with patch("decker.server.server.select_backend", return_value=Exploding()):
