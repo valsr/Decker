@@ -41,6 +41,25 @@ class Greet(DeckerPlugin):
 `on_settings_changed`, `on_global_settings_changed`, plus `gestures(settings)` which may return a set of `Gesture`
 values for this key (return `None` to keep the manifest's list).
 
+## Fonts
+
+Decker bundles the DejaVu family (Sans, Sans Condensed, Sans Mono, Serif, Serif Condensed; regular, bold, italic or
+oblique, bold italic) and sets `DECKER_FONT_DIR` to its folder for every plugin process on every OS.
+`decker_plugin_sdk.fonts.font_path(family="DejaVu Sans", bold=False, italic=False)` returns the absolute path of a face,
+or `None` when the variable is unset, the family is unknown or the file is missing; it never raises. It is not exported
+from the package root, and an older Decker has no `decker_plugin_sdk.fonts` module, so guard the import:
+
+```python
+try:
+    from decker_plugin_sdk.fonts import font_path
+except ImportError:  # older Decker
+    def font_path(family: str = "DejaVu Sans", bold: bool = False, italic: bool = False) -> str | None:
+        return None
+
+path = font_path(bold=True)
+font = ImageFont.truetype(path, 24) if path else ImageFont.load_default(24)  # None: use your own default
+```
+
 ## ActionContext
 
 Attributes: `context`, `action`, `device`, `key_index`, `column`, `row`, `settings`, `global_settings`, `state`.
