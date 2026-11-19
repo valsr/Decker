@@ -276,7 +276,7 @@ class TestDefaults:
 
             files = _files(tmp_path / ".decker" / "cache" / "icons")
             assert_that(files).is_length(1)
-            assert_that(re.search(r"/\.decker/cache/icons/", str(files[0]))).is_not_none()
+            assert_that(re.search(r"/\.decker/cache/icons/", files[0].as_posix())).is_not_none()
         finally:
             paths._prefix = original
 
