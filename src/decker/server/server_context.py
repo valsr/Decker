@@ -18,6 +18,9 @@ from decker.server.plugin_installer import PluginInstaller
 from decker.server.plugins import PluginManager
 from decker.server.reconfigure import ReconfigurePolicy
 from decker.server.repositories import RepositoryStore
+from decker.server.screensaver.screensaver_controller import ScreensaverController
+from decker.server.screensaver.screensaver_engine import ScreensaverEngine
+from decker.server.screensaver.screensaver_store import ScreensaverStore
 from decker.server.update_checker import UpdateChecker
 
 if TYPE_CHECKING:  # the engine and watcher modules arrive in later tasks
@@ -47,3 +50,6 @@ class ServerContext:
     app_rule_controller: AppRuleController | None = None
     app_rule_engine: "AppRuleEngine | None" = None
     window_watcher: "WindowWatcher | None" = None
+    screensaver_store: ScreensaverStore | None = None
+    screensaver_controller: ScreensaverController | None = None
+    screensaver_engine: ScreensaverEngine | None = None

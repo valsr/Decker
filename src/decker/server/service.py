@@ -830,6 +830,44 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
 
     @exposed
     @api_response
+    def screensaver_get(self, device_id: str) -> dict[str, Any]:
+        """A device's screensaver settings plus `active` and `last_error`; unknown devices raise."""
+        return self._saver().get(device_id)
+
+    @exposed
+    @api_response
+    def screensaver_set(self, device_id: str, settings_json: str) -> bool:
+        """Validate and store screensaver settings (JSON); never activates. Image paths need a local caller."""
+        self._saver().set(device_id, settings_json, loopback=_is_loopback(self._peer_host))
+        return True
+
+    @exposed
+    @api_response
+    def screensaver_activate(self, device_id: str) -> bool:
+        """Show the screensaver now. Returns False when the device is not open."""
+        return self._saver().activate(device_id)
+
+    @exposed
+    @api_response
+    def screensaver_deactivate(self, device_id: str) -> bool:
+        """Wake the device. Returns False when it was not showing the screensaver."""
+        return self._saver().deactivate(device_id)
+
+    @exposed
+    @api_response
+    def screensaver_preview(self, device_id: str, settings_json: str) -> str:
+        """Compose draft settings at the device's layout; returns a base64 PNG. Paths need a local caller."""
+        png = self._saver().preview(device_id, settings_json, loopback=_is_loopback(self._peer_host))
+        return base64.b64encode(png).decode("ascii")
+
+    def _saver(self) -> Any:
+        controller = self._context.screensaver_controller if self._context is not None else None
+        if controller is None:
+            raise RuntimeError("screensaver is not available")
+        return controller
+
+    @exposed
+    @api_response
     def profile_add(self, device_id: str, name: str = "") -> ProfileInfo | None:
         """Append a new profile with one page (named "Profile <id>" unless a name is given)."""
         if self._context is None or not isinstance(name, str):
