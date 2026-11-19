@@ -102,6 +102,10 @@ class TestSearchDirs:
             ]
         )
 
+    @pytest.mark.posix_only(
+        "System Icons theme tree (docs/platform-support.md row 'System Icons'): "
+        "XDG_DATA_DIRS is colon-separated, which a Windows drive letter breaks"
+    )
     def test_environment_overrides(self, tmp_path: Path) -> None:
         env = {
             "XDG_DATA_HOME": str(tmp_path / "data"),
@@ -112,6 +116,10 @@ class TestSearchDirs:
             [tmp_path / "data/icons", tmp_path / ".icons", tmp_path / "a/icons", tmp_path / "b/icons"]
         )
 
+    @pytest.mark.posix_only(
+        "System Icons theme tree (docs/platform-support.md row 'System Icons'): "
+        "XDG_DATA_DIRS is colon-separated, which a Windows drive letter breaks"
+    )
     def test_blank_entries_are_ignored(self, tmp_path: Path) -> None:
         env = {"XDG_DATA_HOME": "", "XDG_DATA_DIRS": os.pathsep.join(["", "", str(tmp_path / "a"), ""])}
 
