@@ -72,9 +72,10 @@ Footnotes:
    POSIX gets SIGTERM and a graceful stop. The launcher uses the plugin venv's interpreter (`Scripts\python.exe` on
    Windows, `bin/python` elsewhere), and on Windows it passes only a minimal environment plus the Windows system
    variables (`SYSTEMROOT`, `TEMP`, ...); a test starts a real interpreter with that environment on every OS. CI ran the
-   real `uv venv` build tests (`test_build_creates_venv_with_server_python_when_no_spec`,
-   `test_build_installs_requirements`, `test_venv_is_built_relocatable`) on Windows and macOS as well as Linux (run
-   44454336780: all passed, none skipped), plus real plugin child processes, the watchdog and orphan checks. Builds that
+   real `uv venv` build tests (`test_build_creates_venv_with_server_python_when_no_spec` and
+   `test_build_installs_requirements`) on Windows and macOS as well as Linux (run 44454336780: all passed, none
+   skipped), plus real plugin child processes, the watchdog and orphan checks. `test_venv_is_built_relocatable` uses a
+   fake `uv` and only checks the arguments. Builds that
    fetch from a network index are not covered (the requirements test uses a local wheel).
 7. CI ran package read/extract (including zip path safety per OS), install, uninstall and repository RPCs against local
    fixtures. Live repository fetches and update checks over the network are not covered.
@@ -88,6 +89,7 @@ Footnotes:
     thumbnail cache are tested on all three OSes. A real file dialog is not covered.
 11. CLI command tests run against the in-process service; `poe cli` against a live server on Windows and macOS is not
     covered.
-12. Not implemented: the server has no `--daemon` option; DAEMON.md describes a design that is not implemented.
+12. Not implemented: the server has no `--daemon` option. Supervision (heartbeat, memory limit, restart) is done by the
+    server monitor that `poe server` always starts; DAEMON.md describes it.
 
 Plugin support is declared per plugin, not here; see the plugins repository's table.
