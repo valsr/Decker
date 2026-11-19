@@ -24,7 +24,7 @@ notion_project_area: decker
 
 1. Spawns the server as a child process.
 2. Periodically sends an RPyC heartbeat; a non-response counts as a failed check.
-3. Periodically samples the server process's RSS memory via `/proc/<pid>/status` or `psutil`.
+3. Periodically samples the server process's RSS memory via `psutil` (`decker.common.processes.rss_bytes`).
 4. If consecutive failed heartbeats reach the threshold **or** RSS exceeds **1 GiB**, the monitor kills the child and restarts it.
 5. If the server exits with **code 0** (triggered by the `stop` RPC), the monitor treats it as an intentional shutdown and exits cleanly — it does **not** restart. Any non-zero exit code is treated as a crash and triggers a restart.
 6. Restart backoff and max-restart limits are configurable.
@@ -36,9 +36,6 @@ The server itself has no self-healing logic — fault tolerance is entirely the 
 ```bash
 # Run the server (normal mode)
 poe server
-
-# Run the server in daemon mode
-poe server --daemon --verbose
 
 # Run the GUI client
 poe client
@@ -90,6 +87,7 @@ Run `format` before the others; it changes files that the linter then re-checks.
 - Server must support multiple simultaneous clients.
 - All hardware interaction goes through the server; the client never talks to hardware directly.
 - Fault-tolerance (restart, health checking, memory limiting) lives in the monitor, not in the server.
+- Process groups, tree termination and RSS reading are cross-platform and live in `decker.common.processes` (psutil-based); use it instead of `os.killpg`, `start_new_session` or `/proc`.
 - Each device has profiles (integer ids, lowest unused first, reused after deletion; id 0 is "Default"), and each profile owns its pages. Key assignments, key images and labels are stored per page (`PageStore`, `pages.py`; page ids are unique per device, so a page identifies its profile). Each device shows one active profile and page; only that page's actions are live, and `PageController` (`page_controller.py`) owns every page and profile switch. Key RPCs take a `page_id`. `key_move`/`key_copy` re-key or copy a key's assignment within a page (a move keeps the instance's context id; a copy gets a new one). In the client grid a click selects a key for editing, its hover play-circle icon runs it (click = press, hold = long press), and dragging a key onto another moves it (Ctrl: copies it).
 - Device IDs are stable 8-char CRC-32 hex strings derived from the device serial number. The selected device is persisted as `client.default_device` in the user config layer.
 - Configuration is YAML-based; use `flatten-dict` for nested config operations.

@@ -28,11 +28,17 @@ None so far (it can list devices)!
 - [uv](https://docs.astral.sh/uv/), needed to install plugins that have a Python runtime (it builds each plugin's
   own environment)
 
-For installation/setup for common distributions see the subsections below.
+For installation/setup per operating system see the subsections below. Decker also needs the Cairo library (for SVG
+icons); the Windows and macOS steps below install it.
+
+What is verified: the CI workflow (`.github/workflows/ci.yml`) runs the test suite on Ubuntu, Windows and macOS runners
+using the steps below, and they pass. CI has no Stream Deck attached, so nothing here is verified with real hardware
+off Linux (Arch/Manjaro). The steps for installing on your own Windows or macOS machine are what the CI runners
+needed; the maintainer has not verified them on a user machine.
 
 ### Debian/Ubuntu
 
-`sudo apt-get update sudo apt-get install -y libhidapi-libusb0`
+`sudo apt-get update && sudo apt-get install -y libhidapi-libusb0`
 
 ### Fedora
 
@@ -41,6 +47,47 @@ For installation/setup for common distributions see the subsections below.
 ### Arch Linux
 
 `sudo pacman -S hidapi`
+
+### Linux device permissions (udev)
+
+Without a udev rule, only root can open the Stream Deck. The conventional approach (not verified on every
+distribution) is a rule for the Elgato vendor id `0fd9`, for example in `/etc/udev/rules.d/70-streamdeck.rules`:
+
+```
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
+```
+
+Then reload the rules and replug the device:
+
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+`uaccess` gives the user at the active session access. On systems without logind, use a group instead, for example
+`MODE="0660", GROUP="plugdev"` in place of `TAG+="uaccess"`, and add yourself with `sudo usermod -aG plugdev $USER`
+(log out and in again).
+
+### Windows
+
+CI uses MSYS2 for the native libraries; install [MSYS2](https://www.msys2.org/), then in an MSYS2 MINGW64 shell:
+
+```bash
+pacman -S mingw-w64-x86_64-cairo mingw-w64-x86_64-hidapi
+```
+
+Put `<msys2 folder>\mingw64\bin` on `PATH` so Python finds `libcairo-2.dll` and the hidapi library, and install
+[uv](https://docs.astral.sh/uv/). Device permissions and drivers on Windows are unverified.
+
+### macOS
+
+```bash
+brew install hidapi cairo
+```
+
+Homebrew's libraries are outside the default library search path, so if Python cannot find Cairo (`no library called
+"cairo-2" was found`), set `DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib"` before starting Decker (CI does
+this). Install [uv](https://docs.astral.sh/uv/) as well. Device permissions on macOS are unverified.
 
 ## Plugins
 

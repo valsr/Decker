@@ -21,8 +21,9 @@ Core functionality is expected at parity on every platform.
 | Value | Meaning |
 |-------|---------|
 | Yes | Works, and the author has verified it on that platform |
+| CI | Verified by the CI matrix on that OS: the test suite passes there. Weaker than `Yes`: no human has used it, and no hardware is attached to the runners |
 | Partial | Works with known gaps; the footnote names the cause |
-| Planned | Not working yet, on the roadmap (project 2, core portability) |
+| Planned | Not working yet, on the roadmap |
 | No | The code clearly cannot work there today |
 | Not verified | Nobody has tried it; it may or may not work |
 
@@ -30,32 +31,52 @@ Core functionality is expected at parity on every platform.
 
 | Feature | Linux (Arch/Plasma/Wayland) | Linux (Ubuntu/Debian/Fedora/GNOME) | Linux (other) | Windows | macOS |
 |---------|------|------|------|------|------|
-| Server and monitor | Yes | Not verified | Not verified | Partial [1] | Partial [1] |
+| Server and monitor | Yes | Not verified | Not verified | CI [1] | CI [1] |
 | Hardware access (HID) | Yes | Not verified [2] | Not verified [2] | Not verified [3] | Not verified [3] |
-| GUI client | Yes | Not verified | Not verified | Not verified | Not verified |
-| System tray | Yes | Not verified [4] | Not verified | Not verified | Not verified |
-| Plugin runtime (process isolation) | Yes | Not verified | Not verified | No [5] | Partial [5] |
-| Plugin install and repositories | Yes | Not verified | Not verified | Partial [5] | Partial [5] |
-| System Icons | Yes | Not verified | Not verified | No (Linux-only) [6] | No (Linux-only) [6] |
-| User icon import | Yes | Not verified | Not verified | Not verified | Not verified |
-| GIF animations | Yes | Not verified | Not verified | Not verified | Not verified |
-| CLI | Yes | Not verified | Not verified | Not verified | Not verified |
-| Daemon mode | No [7] | No [7] | No [7] | No [7] | No [7] |
+| GUI client | Yes | Not verified | Not verified | CI [4] | CI [4] |
+| System tray | Yes | Not verified [5] | Not verified | Not verified | Not verified |
+| Plugin runtime (process isolation) | Yes | Not verified | Not verified | CI [6] | CI [6] |
+| Plugin install and repositories | Yes | Not verified | Not verified | CI [7] | CI [7] |
+| Key rendering and fonts | Yes | Not verified | Not verified | CI [8] | CI [8] |
+| System Icons | Yes | Not verified | Not verified | No (Linux-only) [9] | No (Linux-only) [9] |
+| User icon import | Yes | Not verified | Not verified | CI [10] | CI [10] |
+| GIF animations | Yes | Not verified | Not verified | CI | CI |
+| CLI | Yes | Not verified | Not verified | CI [11] | CI [11] |
+| Daemon mode | No [12] | No [12] | No [12] | No [12] | No [12] |
+
+The Linux (Arch/Plasma/Wayland) column is `Yes` where the maintainer uses the feature, and CI also runs the suite on
+Ubuntu. The other Linux columns stay `Not verified` because nobody has used them (CI on Ubuntu only shows the tests
+pass there).
 
 Footnotes:
 
-1. The monitor reads the server's memory from `/proc/<pid>/status` (`src/decker/server/monitor.py`), which exists only
-   on Linux. Memory limiting therefore needs `/proc`; a non-`/proc` implementation is planned in project 2.
-2. The README documents `libhidapi` setup only for Debian/Ubuntu, Fedora and Arch. Other distributions need their own
-   package name, and the README does not cover device permissions.
-3. `libhidapi`, drivers and device permissions are not documented for Windows or macOS.
-4. GNOME has no system tray by default, and the behaviour there is untested.
-5. Plugin process control uses POSIX process groups (`os.killpg`, `src/decker/plugin/runtime/process.py` and
-   `src/decker/plugin/environment.py`), which Windows does not have, and per-plugin memory is read from `/proc`. macOS
-   has process groups but no `/proc`, so plugin memory reporting is unavailable there. In `environment.py`, `os.killpg` is used only while building a
-   plugin environment: it kills the install command's process group on timeout, and again after every command to
-   clean up leftover children.
-6. System Icons read the server's freedesktop icon theme, so the feature is Linux-only: on Windows and macOS the library is hidden.
-7. Not implemented: the server has no `--daemon` option.
+1. CI ran the RPC service layer (with real stores on sqlite), the monitor logic and `decker.common.processes` (process
+   groups, tree kill, memory read via psutil, so no `/proc` is needed) on all three OSes. Not covered: a full
+   `poe server` run, memory-limit restarts of a long-lived server, and `poe cli` against a live server.
+2. The README documents `libhidapi` setup for Debian/Ubuntu, Fedora and Arch and a conventional udev rule; the udev
+   steps are not verified on every distribution, and other distributions need their own package name.
+3. The README documents hidapi and Cairo installation for Windows (MSYS2) and macOS (Homebrew) as the CI runners
+   needed them, but device permissions and drivers there are unverified. CI never tested hardware access on any OS
+   (the runners have no Stream Deck).
+4. PyQt6 widget and view tests run offscreen on all three OSes (`QT_QPA_PLATFORM=offscreen`). This is not a human check:
+   real window manager behaviour, HiDPI and drag and drop are not covered.
+5. GNOME has no system tray by default, and the behaviour there is untested. The tray is not covered by CI on any OS.
+6. Plugin children start in their own process group (`CREATE_NEW_PROCESS_GROUP` on Windows, a new session elsewhere)
+   and are stopped by a psutil tree kill; the launcher uses the plugin venv's interpreter (`Scripts\python.exe` on
+   Windows, `bin/python` elsewhere). CI ran real plugin child processes, the watchdog and orphan checks on all three.
+   Plugin environment builds use fake `uv` executables in CI, so real `uv` and network builds are not covered.
+7. CI ran package read/extract (including zip path safety per OS), install, uninstall and repository RPCs against local
+   fixtures. Live repository fetches and update checks over the network are not covered.
+8. Fonts resolve in this order: `fc-match` when present, an index of the OS font folders, then the bundled DejaVu
+   Sans. CI ran the lookup and `compose_key_image` on all three OSes. FreeType rasterisation differs per OS, so only
+   Linux asserts a byte-exact image hash; Windows and macOS check structure (size, colours, title region). User-installed
+   fonts beyond the runners' defaults are not covered.
+9. System Icons read the server's freedesktop icon theme, so the feature is Linux-only: on Windows and macOS the library
+   is hidden (CI checks that no packs are served there).
+10. Icon import, SVG rasterisation through Cairo (installed via MSYS2 on Windows and Homebrew on macOS) and the
+    thumbnail cache are tested on all three OSes. A real file dialog is not covered.
+11. CLI command tests run against the in-process service; `poe cli` against a live server on Windows and macOS is not
+    covered.
+12. Not implemented: the server has no `--daemon` option.
 
 Plugin support is declared per plugin, not here; see the plugins repository's table.
