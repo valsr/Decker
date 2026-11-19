@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import psutil
 from assertpy import assert_that
 
 from decker.plugin.protocol import Message
@@ -271,11 +272,7 @@ def _real_factory(plugin_id: str, command: list[str], cwd: Path, env: dict[str, 
 
 
 def _pid_gone(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return True
-    return False
+    return not psutil.pid_exists(pid)  # os.kill(pid, 0) would terminate the process on Windows
 
 
 def test_server_stop_leaves_no_orphans() -> None:
