@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from assertpy import assert_that
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from decker.client.events import DetectionStatusEvent
 from decker.client.widgets import profiles_dialog
@@ -107,6 +108,16 @@ def dialog(qapp, api, calls, pages):
     dlg.show()
     yield dlg
     dlg.close()
+
+
+def _focus(widget: QWidget) -> None:
+    window = widget.window()
+    assert window is not None
+    window.activateWindow()
+    QApplication.processEvents()
+    widget.setFocus()
+    QApplication.processEvents()
+    assert QApplication.focusWidget() is widget
 
 
 def _select_rule(dialog: ProfilesDialog, row: int) -> None:
@@ -316,7 +327,7 @@ class TestRefreshDoesNotClobberEditing:
     def test_refresh_while_typing_keeps_text_and_focus(self, dialog):
         _select_rule(dialog, 0)
         row = dialog._editor._rows[0]
-        row.value.setFocus()
+        _focus(row.value)
         row.value.setText("typed")
 
         dialog.set_rules(DeviceRules("dev1", [_R1, _R2], DefaultRule(True, 0, "")))
@@ -444,3 +455,73 @@ class TestMinorFixes:
 
         assert_that(dialog._name_edit.text()).is_equal_to("Created")
         assert_that([c[0] for c in calls]).does_not_contain("profile_activate")
+
+
+class TestFocusAndResync:
+    def _other_client_change(self, dialog, **changes):
+        dialog.set_rules(DeviceRules("dev1", [replace(_R1, **changes), _R2], DefaultRule()))
+
+    def test_after_focus_leaves_a_different_server_rule_updates_the_editor(self, dialog):
+        _select_rule(dialog, 0)
+        _focus(dialog._editor._rows[0].value)
+        _focus(dialog._add_rule_button)
+
+        self._other_client_change(dialog, name="Theirs")
+
+        assert_that(dialog._editor._name.text()).is_equal_to("Theirs")
+
+    def test_a_focused_field_with_unsaved_text_is_not_rebuilt(self, dialog):
+        _select_rule(dialog, 0)
+        row = dialog._editor._rows[0]
+        _focus(row.value)
+        row.value.setText("typed")
+
+        self._other_client_change(dialog, name="Theirs")
+
+        assert_that(dialog._editor._rows[0]).is_same_as(row)
+        assert_that(row.value.text()).is_equal_to("typed")
+        assert_that(QApplication.focusWidget()).is_same_as(row.value)
+        assert_that(dialog._editor._name.text()).is_equal_to("Browser")
+
+    def test_blur_syncs_an_untouched_editor_to_the_latest_server_rule(self, dialog):
+        _select_rule(dialog, 0)
+        _focus(dialog._editor._rows[0].value)
+        self._other_client_change(dialog, name="Theirs")
+        assert_that(dialog._editor._name.text()).is_equal_to("Browser")
+
+        _focus(dialog._add_rule_button)
+
+        assert_that(dialog._editor._name.text()).is_equal_to("Theirs")
+
+    def test_blur_keeps_the_users_unsaved_text(self, dialog):
+        _select_rule(dialog, 0)
+        row = dialog._editor._rows[0]
+        _focus(row.value)
+        row.value.setText("typed")
+        self._other_client_change(dialog, name="Theirs")
+
+        _focus(dialog._add_rule_button)
+
+        assert_that(row.value.text()).is_equal_to("typed")
+        assert_that(dialog._editor._name.text()).is_equal_to("Browser")
+
+    def test_a_stale_editor_cannot_overwrite_another_clients_change(self, dialog, api):
+        _select_rule(dialog, 0)
+        _focus(dialog._editor._rows[0].value)
+        self._other_client_change(dialog, conditions=[MatchCondition("window_class", "equals", "chrome")])
+        _focus(dialog._add_rule_button)
+
+        dialog._editor._name.setText("Mine")
+        dialog._editor._name.editingFinished.emit()
+
+        saved = api.calls[-1][2]
+        assert_that(saved.name).is_equal_to("Mine")
+        assert_that(saved.conditions[0].value).is_equal_to("chrome")
+
+    def test_rendering_does_not_reset_the_editors_profile_combo(self, dialog):
+        _select_rule(dialog, 0)
+        dialog._editor._profile.setItemText(0, "marker")
+
+        self._other_client_change(dialog, name="Theirs")
+
+        assert_that(dialog._editor._profile.itemText(0)).is_equal_to("marker")

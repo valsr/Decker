@@ -2,6 +2,7 @@
 
 import pytest
 from assertpy import assert_that
+from PyQt6.QtWidgets import QApplication, QPushButton, QVBoxLayout, QWidget
 
 from decker.client.widgets.rule_editor import RuleEditor
 from decker.common.model import AppRule, MatchCondition, PageInfo, ProfileInfo
@@ -143,3 +144,54 @@ def test_blank_name_is_an_error(editor):
     assert_that(editor.error()).contains("name")
     assert_that(editor._name.property("invalid")).is_true()
     assert_that(seen).is_empty()
+
+
+def _shown(editor: RuleEditor) -> QPushButton:
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    other = QPushButton("other")
+    layout.addWidget(editor)
+    layout.addWidget(other)
+    host.show()
+    host.activateWindow()
+    QApplication.processEvents()
+    setattr(editor, "_host", host)  # keep alive
+    return other
+
+
+def test_has_focus_means_a_field_is_focused_right_now(editor):
+    other = _shown(editor)
+    other.setFocus()
+    QApplication.processEvents()
+    assert_that(editor.has_focus()).is_false()
+
+    editor._rows[0].value.setFocus()
+    QApplication.processEvents()
+    assert_that(editor.has_focus()).is_true()
+
+    other.setFocus()
+    QApplication.processEvents()
+    assert_that(editor.has_focus()).is_false()
+
+
+def test_focus_left_is_emitted_when_focus_moves_outside(editor):
+    other = _shown(editor)
+    seen: list[int] = []
+    editor.focus_left.connect(lambda: seen.append(1))
+
+    editor._rows[0].value.setFocus()
+    editor._name.setFocus()
+    QApplication.processEvents()
+    assert_that(seen).is_empty()
+    other.setFocus()
+    QApplication.processEvents()
+
+    assert_that(seen).is_equal_to([1])
+
+
+def test_set_profiles_with_an_unchanged_list_leaves_the_combos_alone(editor):
+    editor._profile.setItemText(0, "marker")
+
+    editor.set_profiles(_PROFILES)
+
+    assert_that(editor._profile.itemText(0)).is_equal_to("marker")

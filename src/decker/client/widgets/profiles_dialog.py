@@ -89,6 +89,7 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._api = rules_api
         self._pages_for_profile = pages_for_profile  # None means the lookup failed
         self._known_pages: dict[int, list[PageInfo]] = {}  # last successful lookup per profile
+        self._editor_base: AppRule | None = None  # the server rule the editor last synced to
         self._summaries: dict[str, str] = {}  # rule id -> "-> Profile / Page"
         self._device_id = ""
         self._profiles: list[ProfileInfo] = []
@@ -186,6 +187,7 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._up_button.clicked.connect(lambda: self._move_selected(-1))
         self._down_button.clicked.connect(lambda: self._move_selected(1))
         self._editor.changed.connect(self._on_editor_changed)
+        self._editor.focus_left.connect(self._resync_editor)
         self._default_enable.toggled.connect(lambda _on: self._save_default())
         self._default_profile.activated.connect(self._on_default_profile)
         self._default_page.activated.connect(lambda _i: self._save_default())
@@ -228,12 +230,15 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
 
     def refresh(self) -> None:
         """Re-read page lists (the server's pages changed) and redraw."""
-        self._render_rules()
+        if self.isVisible():
+            self._render_rules()
+            self._editor.reload_pages()
 
     def showEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
         """Render the rules once the dialog becomes visible (hidden dialogs skip server lookups)."""
         super().showEvent(a0)
         self._render_rules()
+        self._editor.reload_pages()
 
     def select_profile(self, profile_id: int) -> None:
         """Select a profile in the list."""
@@ -385,10 +390,27 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         if rule is None:
             return
         # The user's own edit comes back as an update: do not rebuild the editor under their typing.
-        unchanged = replace(self._editor.rule(), enabled=rule.enabled) == rule
-        if not (same_selection and (self._editor.has_focus() or unchanged)):
-            self._editor.set_rule(rule)
+        echo = self._same_content(rule)
+        if not same_selection or not (echo or self._editor.has_focus()):
+            self._load_editor(rule)
+        elif echo:
+            self._editor_base = rule
         self._editor.set_unsupported_fields(self._unsupported())
+
+    def _load_editor(self, rule: AppRule) -> None:
+        self._editor.set_rule(rule)
+        self._editor_base = rule
+
+    def _same_content(self, rule: AppRule) -> bool:
+        return replace(self._editor.rule(), enabled=rule.enabled) == rule
+
+    def _resync_editor(self) -> None:
+        """Focus left the editor: show the latest server rule unless the user changed what was loaded."""
+        rule, base = self._selected_rule(), self._editor_base
+        if rule is None or base is None or rule.rule_id != self._editor.rule().rule_id:
+            return
+        if not self._same_content(rule) and self._same_content(base):
+            self._load_editor(rule)
 
     def _on_rule_row(self, row: int) -> None:
         rule = self._selected_rule()
