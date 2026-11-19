@@ -109,13 +109,20 @@ def test_venv_is_built_relocatable(tmp_path: Path) -> None:
     assert_that(argv_log.read_text()).starts_with("venv --relocatable ")
 
 
+_SPAWN_AND_SLEEP = (
+    "import subprocess, sys, time\n"
+    "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+    "time.sleep(30)\n"
+)
+
+
 def test_timeout_kills_the_whole_process_group(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(environment, "_TIMEOUT_SECONDS", 1)
     import time
 
     start = time.monotonic()
     with pytest.raises(EnvironmentBuildError, match="timed out"):
-        environment._run(["sh", "-c", "sleep 30 & sleep 30"], lambda _line: None)
+        environment._run([sys.executable, "-c", _SPAWN_AND_SLEEP], lambda _line: None)
     assert_that(time.monotonic() - start).is_less_than(10)
 
 
