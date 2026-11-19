@@ -5,6 +5,8 @@ import os
 import pytest
 from PyQt6.QtWidgets import QApplication
 
+from decker.client.fonts import register_bundled_fonts
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
@@ -12,9 +14,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 def qapp() -> QApplication:
     """A single QApplication instance shared across all client tests."""
     app = QApplication.instance()
-    if isinstance(app, QApplication):
-        return app
-    return QApplication([])
+    if not isinstance(app, QApplication):
+        app = QApplication([])
+    register_bundled_fonts()  # 'DejaVu Sans' is the default font; not every OS ships it
+    return app
 
 
 @pytest.fixture
