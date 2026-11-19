@@ -102,17 +102,18 @@ class TestSearchDirs:
             ]
         )
 
-    @pytest.mark.linux_only("System Icons are Linux-only (docs/platform-support.md): XDG_DATA_DIRS is colon-separated")
     def test_environment_overrides(self, tmp_path: Path) -> None:
-        env = {"XDG_DATA_HOME": str(tmp_path / "data"), "XDG_DATA_DIRS": f"{tmp_path}/a:{tmp_path}/b"}
+        env = {
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_DATA_DIRS": os.pathsep.join([str(tmp_path / "a"), str(tmp_path / "b")]),
+        }
 
         assert_that(icon_search_dirs(env, tmp_path)).is_equal_to(
             [tmp_path / "data/icons", tmp_path / ".icons", tmp_path / "a/icons", tmp_path / "b/icons"]
         )
 
-    @pytest.mark.linux_only("System Icons are Linux-only (docs/platform-support.md): XDG_DATA_DIRS is colon-separated")
     def test_blank_entries_are_ignored(self, tmp_path: Path) -> None:
-        env = {"XDG_DATA_HOME": "", "XDG_DATA_DIRS": f"::{tmp_path}/a:"}
+        env = {"XDG_DATA_HOME": "", "XDG_DATA_DIRS": os.pathsep.join(["", "", str(tmp_path / "a"), ""])}
 
         dirs = icon_search_dirs(env, tmp_path)
 
@@ -412,8 +413,8 @@ class TestSystemIcons:
         assert_that(icons.read_icon("decker.system.places", "broken")).is_none()
         assert_that(icons.read_icon("decker.system.places", "folder")).is_equal_to(b"png")
 
-    @pytest.mark.linux_only(
-        "System Icons are Linux-only (docs/platform-support.md): the symlinked-icon check runs on the Linux theme tree"
+    @pytest.mark.posix_only(
+        "System Icons theme tree (docs/platform-support.md row 'System Icons'): symlinks need privilege on Windows"
     )
     def test_a_symlink_to_an_image_inside_the_icon_dirs_is_served(self, tree: Path) -> None:
         target = tree / "other-theme" / "real.svg"
