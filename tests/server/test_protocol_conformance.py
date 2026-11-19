@@ -3,7 +3,6 @@
 import base64
 import io
 import json
-import stat
 import sys
 import time
 from types import SimpleNamespace
@@ -15,6 +14,7 @@ from PIL import Image
 from decker.plugin.settings_store import PluginSettingsStore
 from decker.plugin.target import ActionTarget
 from decker.server.plugins import PluginManager
+from tests.portable import entry_name, install_launcher
 from tests.server.test_plugins import _FAST, FakeBus, FakeDeviceManager
 
 _PLUGIN_ID = "com.example.conform"
@@ -26,7 +26,7 @@ _MANIFEST = {
     "name": "Conformance",
     "version": "1.0.0",
     "author": "Test",
-    "runtime": {"type": "executable", "entry": "run.py"},
+    "runtime": {"type": "executable", "entry": entry_name("run.py")},
     "global_settings": [{"key": "token", "type": "text", "label": "Token", "default": ""}],
     "contributes": {"actions": [{"id": _ACTION_ID, "name": "Act"}]},
 }
@@ -89,7 +89,7 @@ def test_non_sdk_executable_plugin_speaks_the_documented_protocol(tmp_path):
     (folder / "manifest.json").write_text(json.dumps(_MANIFEST))
     script = folder / "run.py"
     script.write_text(_SCRIPT)
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    install_launcher(script)
     device_manager = FakeDeviceManager()
     manager = PluginManager(tmp_path / "plugins", _FAST, PluginSettingsStore(tmp_path / "plugins.db"))
     manager.create(
