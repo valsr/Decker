@@ -1,5 +1,6 @@
 import hashlib
 import io
+import sys
 from typing import Any
 
 import cairosvg  # type: ignore[import-untyped]
@@ -467,12 +468,21 @@ def test_existing_compose_key_image_output_is_unchanged() -> None:
     # Pixel hashes (not PNG bytes, which vary with the zlib/Pillow version), taken from the pre-refactor 399bca1 code.
     with_image = _open(compose_key_image(appearance, _png("#00ff00"), "Plugin"))
     without_image = _open(compose_key_image(appearance, None, "Plugin"))
-    assert_that(hashlib.sha256(with_image.tobytes()).hexdigest()).is_equal_to(
-        "9e1380e915cb77e1fbf10f0ccab905bd4f226ab51394ccaf13b08d7578479557"
-    )
-    assert_that(hashlib.sha256(without_image.tobytes()).hexdigest()).is_equal_to(
-        "f15b622974dc7fb55301c3c8fd4b3d7e86922e23037e538b2e76538000ebc2ca"
-    )
+    last = (143, 143)
+    assert_that(with_image.getpixel((0, 0))).is_equal_to((0, 255, 0))
+    assert_that(with_image.getpixel(last)).is_equal_to((0, 255, 0))
+    assert_that(without_image.getpixel((0, 0))).is_equal_to((17, 34, 51))
+    assert_that(without_image.getpixel(last)).is_equal_to((17, 34, 51))
+    assert_that(len(set(with_image.get_flattened_data()))).described_as(
+        "the title is drawn over the image"
+    ).is_greater_than(1)
+    if sys.platform == "linux":  # glyph rasterisation differs between FreeType builds, so the hash is Linux-only
+        assert_that(hashlib.sha256(with_image.tobytes()).hexdigest()).is_equal_to(
+            "9e1380e915cb77e1fbf10f0ccab905bd4f226ab51394ccaf13b08d7578479557"
+        )
+        assert_that(hashlib.sha256(without_image.tobytes()).hexdigest()).is_equal_to(
+            "f15b622974dc7fb55301c3c8fd4b3d7e86922e23037e538b2e76538000ebc2ca"
+        )
 
 
 def test_compose_key_face_of_an_animated_gif_carries_the_spec_that_produced_the_poster() -> None:
