@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 from enum import StrEnum
 from typing import Any
 
@@ -16,6 +17,8 @@ from rpyc.utils.helpers import BgServingThread, async_
 from decker.client import config as client_config
 from decker.client.events import (
     ActionListUpdatedEvent,
+    AppRulesUpdatedEvent,
+    DetectionStatusEvent,
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     KeyEvent,
@@ -30,16 +33,23 @@ from decker.client.events import (
     RepositoriesCheckFinishedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
+    WindowFocusedEvent,
+    WindowPickedEvent,
 )
 from decker.client.events.event_manager import EventManager
 from decker.client.server_settings import ServerSettingsInfo, parse_server_settings
 from decker.common.model import (
+    AppRule,
+    DefaultRule,
     DeviceHardwareInfo,
     DevicePages,
     DeviceProfiles,
+    DeviceRules,
     KeyInfo,
+    MatchCondition,
     PageInfo,
     ProfileInfo,
+    WindowInfo,
 )
 
 _RETRY_INTERVAL_S = 3.0
@@ -87,6 +97,8 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._device_refresh_requested = threading.Event()
         self._actions_refresh_requested = threading.Event()
         self._devices_refresh_requested = threading.Event()
+        self._rules_refresh_requested = threading.Event()
+        self._detection_refresh_requested = threading.Event()
         self._thread: threading.Thread | None = None
         self.state: ServerState = ServerState.DISCONNECTED
         self._reported_plugin_failures: set[str] = set()
@@ -178,6 +190,12 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         if self._actions_refresh_requested.is_set():
             self._actions_refresh_requested.clear()
             self._refresh_actions()
+        if self._rules_refresh_requested.is_set():
+            self._rules_refresh_requested.clear()
+            self.refresh_app_rules()
+        if self._detection_refresh_requested.is_set():
+            self._detection_refresh_requested.clear()
+            self.refresh_detection_status()
         now = time.monotonic()
         if now - last_heartbeat >= _HEARTBEAT_INTERVAL_S:
             self._check_heartbeat()
@@ -213,6 +231,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self.refresh_server_settings()
         self._refresh_updates()
         self._refresh_active_device()
+        self.refresh_detection_status()
         # A concurrent stop() may have closed the connection during the initial pull.
         if self.state == ServerState.INITIALIZING:
             self.state = ServerState.HEALTHY
@@ -332,6 +351,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
     def _refresh_active_device(self) -> None:
         self._refresh_profiles()
         self._refresh_pages()
+        self.refresh_app_rules()
         self._refresh_key_display_states()
 
     def _refresh_pages(self) -> None:
@@ -355,6 +375,76 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             logging.warning("Could not fetch profiles for %s: %s", device_id, exc)
             return
         EventManager.get().push(ProfilesUpdatedEvent(profiles=profiles))
+
+    def refresh_app_rules(self) -> None:
+        """Fetch the active device's app rules and push them as an AppRulesUpdatedEvent."""
+        device_id = _active_device_id()
+        if self._conn is None or device_id is None:
+            return
+        try:
+            rules = _parse_device_rules(self._call_json("app_rules_list", device_id))
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Could not fetch app rules for %s: %s", device_id, exc)
+            return
+        EventManager.get().push(AppRulesUpdatedEvent(rules=rules))
+
+    def refresh_detection_status(self) -> None:
+        """Fetch the window detection status and push it as a DetectionStatusEvent."""
+        if self._conn is None:
+            return
+        try:
+            data = self._call_json("window_detection_status")
+            if not isinstance(data, dict):
+                raise ValueError(f"unexpected detection status: {data!r}")
+            event = DetectionStatusEvent(
+                state=str(data["state"]),
+                reason=str(data.get("reason") or ""),
+                backend=str(data.get("backend") or ""),
+                supports_pick=bool(data.get("supports_pick", False)),
+                window=_parse_window(data.get("window")),
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Could not fetch window detection status: %s", exc)
+            return
+        EventManager.get().push(event)
+
+    def app_rule_add(self, device_id: str, rule: AppRule) -> AppRule | None:
+        """Add a rule; returns the stored rule, or None when the server rejected it or the call failed."""
+        try:
+            data = self._call_json("app_rule_add", device_id, asdict(rule))
+            return _parse_rule(data) if data is not None else None
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Could not add app rule: %s", exc)
+            return None
+
+    def app_rule_update(self, device_id: str, rule: AppRule) -> bool:
+        """Replace a rule; False when the server rejected it or the call failed."""
+        return self._call_bool("app_rule_update", device_id, asdict(rule))
+
+    def app_rule_delete(self, device_id: str, rule_id: str) -> bool:
+        """Delete a rule; False when it is unknown or the call failed."""
+        return self._call_bool("app_rule_delete", device_id, rule_id)
+
+    def app_rule_move(self, device_id: str, rule_id: str, position: int) -> bool:
+        """Move a rule to a priority position; False when it is unknown or the call failed."""
+        return self._call_bool("app_rule_move", device_id, rule_id, position)
+
+    def app_default_rule_set(self, device_id: str, default_rule: DefaultRule) -> bool:
+        """Set the default rule; False when the server rejected it or the call failed."""
+        return self._call_bool(
+            "app_default_rule_set", device_id, default_rule.enabled, default_rule.profile_id, default_rule.page_id
+        )
+
+    def window_pick(self) -> bool:
+        """Start a window pick; the result arrives as a WindowPickedEvent. False when it could not start."""
+        return self._call_bool("window_pick")
+
+    def _call_bool(self, method: str, *args: Any) -> bool:
+        try:
+            return self._call_json(method, *args) is True
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("RPC %s failed: %s", method, exc)
+            return False
 
     def _refresh_key_display_states(self) -> None:
         device_id = _active_device_id()
@@ -414,6 +504,19 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             EventManager.get().push(_parse_updates(data))
         elif event_type == "repositories_check_finished":
             EventManager.get().push(RepositoriesCheckFinishedEvent(repositories=list(data.get("repositories") or [])))
+        elif event_type == "app_rules_changed":
+            if data.get("device_id") == _active_device_id():
+                self._rules_refresh_requested.set()
+                self._wake_event.set()
+        elif event_type == "window_detection_changed":
+            self._detection_refresh_requested.set()
+            self._wake_event.set()
+        elif event_type == "window_focused":
+            window = _parse_window(data.get("window"))
+            if window is not None:
+                EventManager.get().push(WindowFocusedEvent(window=window))
+        elif event_type == "window_picked":
+            EventManager.get().push(WindowPickedEvent(window=_parse_window(data.get("window"))))
         elif event_type == "plugins_changed":
             self.request_actions_refresh()
             EventManager.get().push(PluginsChangedEvent())
@@ -482,6 +585,51 @@ def _parse_device_profiles(data: Any) -> DeviceProfiles:
         device_id=str(data["device_id"]),
         profiles=profiles,
         active_profile_id=_int_id(data["active_profile_id"]),
+    )
+
+
+def _parse_device_rules(data: Any) -> DeviceRules:
+    """Deserialise an app_rules_list response; raises ValueError if it is malformed."""
+    if not isinstance(data, dict):
+        raise ValueError(f"unexpected app rules response: {data!r}")
+    try:
+        default = data["default_rule"]
+        return DeviceRules(
+            device_id=str(data["device_id"]),
+            rules=[_parse_rule(r) for r in data["rules"]],
+            default_rule=DefaultRule(
+                enabled=bool(default["enabled"]),
+                profile_id=_int_id(default["profile_id"]),
+                page_id=str(default.get("page_id", "")),
+            ),
+        )
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ValueError(f"malformed app rules response: {exc!r}") from exc
+
+
+def _parse_rule(data: Any) -> AppRule:
+    return AppRule(
+        rule_id=str(data["rule_id"]),
+        name=str(data["name"]),
+        enabled=bool(data["enabled"]),
+        conditions=[MatchCondition(str(c["field"]), str(c["op"]), str(c["value"])) for c in data["conditions"]],
+        profile_id=_int_id(data["profile_id"]),
+        page_id=str(data.get("page_id", "")),
+    )
+
+
+def _parse_window(data: Any) -> WindowInfo | None:
+    """Deserialise a window dict; None for null or a non-dict; missing fields become empty."""
+    if not isinstance(data, dict):
+        return None
+    pid = data.get("pid")
+    return WindowInfo(
+        window_class=str(data.get("window_class") or ""),
+        window_type=str(data.get("window_type") or ""),
+        title=str(data.get("title") or ""),
+        executable=str(data.get("executable") or ""),
+        desktop_file=str(data.get("desktop_file") or ""),
+        pid=pid if isinstance(pid, int) and not isinstance(pid, bool) else 0,
     )
 
 

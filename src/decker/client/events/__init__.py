@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from decker.client.view_name import ViewName
-from decker.common.model import DeviceHardwareInfo, DevicePages, DeviceProfiles
+from decker.common.model import (
+    DeviceHardwareInfo,
+    DevicePages,
+    DeviceProfiles,
+    DeviceRules,
+    WindowInfo,
+)
 
 
 @dataclass(frozen=True)
@@ -84,6 +90,38 @@ class ProfilesUpdatedEvent:
 
 
 @dataclass(frozen=True)
+class AppRulesUpdatedEvent:
+    """The active device's app rules or default rule changed."""
+
+    rules: DeviceRules
+
+
+@dataclass(frozen=True)
+class WindowFocusedEvent:
+    """The focused window changed on the server's machine."""
+
+    window: WindowInfo
+
+
+@dataclass(frozen=True)
+class WindowPickedEvent:
+    """A window pick finished; the window is None when the pick was cancelled."""
+
+    window: WindowInfo | None
+
+
+@dataclass(frozen=True)
+class DetectionStatusEvent:
+    """Whether focused-window detection works on the server, and the last window it saw."""
+
+    state: str
+    reason: str
+    backend: str
+    supports_pick: bool
+    window: WindowInfo | None
+
+
+@dataclass(frozen=True)
 class PluginInstallProgressEvent:
     """A plugin install job reported a progress message."""
 
@@ -148,6 +186,10 @@ AppEvent = (
     | KeyDisplayStatesUpdatedEvent
     | PagesUpdatedEvent
     | ProfilesUpdatedEvent
+    | AppRulesUpdatedEvent
+    | WindowFocusedEvent
+    | WindowPickedEvent
+    | DetectionStatusEvent
     | PluginInstallProgressEvent
     | PluginInstallFinishedEvent
     | PluginsChangedEvent
