@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication
 import decker.common.logging
 from decker.client.assets import resolve_theme
 from decker.client.connection_manager import ConnectionManager
+from decker.client.fonts import register_bundled_fonts
 from decker.client.themes import apply_theme
 from decker.client.tray import TrayIcon
 from decker.client.window import MainWindow
@@ -36,6 +37,7 @@ def main() -> None:
 
     decker.common.logging.configure(level=logging.WARNING)
     app = QApplication(sys.argv)
+    register_bundled_fonts()
     # The window can be hidden to the tray, and the settings dialog is a separate window: only Quit exits.
     app.setQuitOnLastWindowClosed(False)
     apply_theme(app, *resolve_theme())

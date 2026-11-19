@@ -330,7 +330,7 @@ def test_outline_none_ignores_outline_width() -> None:
 
 def test_fake_bold_when_family_has_no_bold_face(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "decker.server.appearance._font_file", lambda *_a, **_k: ("/usr/share/fonts/TTF/DejaVuSans.ttf", False)
+        "decker.server.appearance.font_file", lambda *_a, **_k: ("/usr/share/fonts/TTF/DejaVuSans.ttf", False)
     )
     regular, bold = _styled(), _styled(bold=True)
     assert_that(bold.tobytes()).is_not_equal_to(regular.tobytes())

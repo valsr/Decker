@@ -1,10 +1,8 @@
 """Decker-drawn key appearance: resolves appearance settings and composes the final key image."""
 
-import functools
 import io
 import logging
 import re
-import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -17,39 +15,23 @@ from decker.asset.renderer import AssetRenderer
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
 from decker.common.text_style import fold_legacy_title
 from decker.plugin.settings_schema import apply_schema, parse_settings_schema
+from decker.server.fonts import BUNDLED_BOLD, font_file
 
 _BASE_SIZE = 72  # title sizes in settings are relative to a 72 px key
-_FALLBACK_FONT = "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
 _TITLE_MARGIN = 4
 PACK_ICON_SCALE = 0.7  # pack icons are drawn at this fraction of the key, centred, so a title stays readable
 _MIN_IMAGE_SCALE = 0.1
 _LINE_BREAKS = re.compile(r"\s*[\r\n\v\f\x85\u2028\u2029]+\s*")
-_BOLD_WEIGHT = 180  # fontconfig weight at or above which a face counts as really bold (FC_WEIGHT_BOLD is 200)
 _PARSED_SCHEMA = parse_settings_schema(APPEARANCE_SCHEMA, "appearance")
 _RENDERER = AssetRenderer()
-
-
-@functools.lru_cache(maxsize=64)
-def _font_file(family: str, bold: bool = False, italic: bool = False) -> tuple[str | None, bool]:
-    """Resolve a family (and style) to ``(file, is_really_bold)`` with fontconfig; the file is None if unavailable."""
-    pattern = family + (":bold" if bold else "") + (":italic" if italic else "")
-    try:
-        result = subprocess.run(
-            ["fc-match", pattern, "--format=%{file}\n%{weight}"], capture_output=True, text=True, timeout=2, check=True
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        logging.debug("fc-match failed for %r: %s", pattern, exc)
-        return None, False
-    path, _, weight = result.stdout.partition("\n")
-    return (path.strip() or None), weight.strip().isdigit() and int(weight) >= _BOLD_WEIGHT
 
 
 def _font(
     family: str, size: int, bold: bool = False, italic: bool = False
 ) -> tuple[ImageFont.FreeTypeFont | ImageFont.ImageFont, bool]:
     """The font and whether it is really bold (so the caller knows when to fake it)."""
-    path, real_bold = _font_file(family, bold, italic)
-    for candidate, is_bold in ((path, real_bold), (_FALLBACK_FONT, True)):
+    path, real_bold = font_file(family, bold, italic)
+    for candidate, is_bold in ((path, real_bold), (str(BUNDLED_BOLD), True)):
         if candidate:
             try:
                 return ImageFont.truetype(candidate, size), is_bold
