@@ -101,7 +101,11 @@ ignore_errors = true
 [tool.pytest.ini_options]
 timeout = 300
 testpaths = ["tests"]
-markers = ["slow: tests that shell out to uv and build environments"]
+markers = [
+    "slow: tests that shell out to uv and build environments",
+    "linux_only: needs Linux-only behaviour",
+    "posix_only: needs POSIX process behaviour",
+]
 
 
 [tool.coverage.run]
