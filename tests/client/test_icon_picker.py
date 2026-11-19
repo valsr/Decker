@@ -1,10 +1,12 @@
 import base64
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from assertpy import assert_that
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtWidgets import QApplication
 
 from decker.client.icon_cache import IconThumbnailCache
 from decker.client.icon_picker import (
@@ -282,7 +284,7 @@ def _wait(qapp, ms=250):
         time.sleep(0.005)
 
 
-def _wait_until(qapp, condition, timeout_ms=5000):
+def _wait_until(qapp: QApplication, condition: Callable[[], object], timeout_ms: int = 5000) -> None:
     deadline = time.monotonic() + timeout_ms / 1000
     while time.monotonic() < deadline and not condition():
         qapp.processEvents()

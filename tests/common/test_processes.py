@@ -53,7 +53,8 @@ def _wait_gone(pid: int, timeout: float = 5.0) -> bool:
 def _read_pid(proc: subprocess.Popen[bytes], timeout: float = 10.0) -> int:
     assert proc.stdout is not None
     result: list[bytes] = []
-    reader = threading.Thread(target=lambda: result.append(proc.stdout.readline()), daemon=True)  # type: ignore[union-attr]
+    stdout = proc.stdout
+    reader = threading.Thread(target=lambda: result.append(stdout.readline()), daemon=True)
     reader.start()
     reader.join(timeout)
     assert result, "child did not report a pid in time"

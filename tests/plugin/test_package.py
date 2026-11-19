@@ -3,6 +3,7 @@ import json
 import stat
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 from assertpy import assert_that
@@ -106,7 +107,7 @@ def test_rejects_absolute_path():
         read_manifest(_zip(extra=[("/etc/evil", "x")]))
 
 
-def test_rejects_backslash_names(tmp_path):
+def test_rejects_backslash_names(tmp_path: Path) -> None:
     info = zipfile.ZipInfo("placeholder.txt")
     info.filename = "a\\b.txt"  # ZipInfo() itself rewrites os.sep to "/" on Windows
     if sys.platform == "win32":  # zipfile reads "\\" as "/" there, so the entry is an ordinary nested file
@@ -119,7 +120,7 @@ def test_rejects_backslash_names(tmp_path):
 
 
 @pytest.mark.windows_only("plugin install (docs/platform-support.md row 'Plugin install and repositories')")
-def test_rejects_backslash_traversal_on_windows():
+def test_rejects_backslash_traversal_on_windows() -> None:
     info = zipfile.ZipInfo("placeholder.txt")
     info.filename = "..\\evil.txt"
     with pytest.raises(PackageError, match="parent traversal"):
