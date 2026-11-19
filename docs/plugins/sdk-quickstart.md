@@ -60,6 +60,8 @@ path = font_path(bold=True)
 font = ImageFont.truetype(path, 24) if path else ImageFont.load_default(24)  # None: use your own default
 ```
 
+Sized `ImageFont.load_default(size)` needs Pillow >= 10.1.
+
 ## ActionContext
 
 Attributes: `context`, `action`, `device`, `key_index`, `column`, `row`, `settings`, `global_settings`, `state`.
