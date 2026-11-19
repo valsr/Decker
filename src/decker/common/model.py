@@ -94,3 +94,66 @@ class DevicePages:
     default_page_id: str
     active_page_id: str
     profile_id: int = 0
+
+
+@dataclass(frozen=True)
+class WindowInfo:
+    """The focused window's attributes; any string may be empty when a backend cannot supply it."""
+
+    window_class: str = ""
+    window_type: str = ""
+    title: str = ""
+    executable: str = ""
+    desktop_file: str = ""
+    pid: int = 0
+
+
+MATCH_FIELDS: tuple[str, ...] = ("window_class", "window_type", "title", "executable", "desktop_file")
+MATCH_OPS: tuple[str, ...] = ("equals", "contains", "not_contains", "regex")
+
+
+@dataclass(frozen=True)
+class MatchCondition:
+    """One field/operator/value test against a window."""
+
+    field: str
+    op: str
+    value: str
+
+
+@dataclass(frozen=True)
+class AppRule:
+    """Activates a profile (and optionally a page) when all conditions match the focused window."""
+
+    rule_id: str
+    name: str
+    enabled: bool
+    conditions: list[MatchCondition]
+    profile_id: int
+    page_id: str = ""
+
+
+@dataclass(frozen=True)
+class DefaultRule:
+    """Target used when no app rule matches; it has no conditions."""
+
+    enabled: bool = False
+    profile_id: int = 0
+    page_id: str = ""
+
+
+@dataclass(frozen=True)
+class DeviceRules:
+    """A device's ordered app rules plus its default rule."""
+
+    device_id: str
+    rules: list[AppRule]
+    default_rule: DefaultRule
+
+
+@dataclass(frozen=True)
+class RuleTarget:
+    """The profile and page a matched rule selects (empty page_id means the profile's default page)."""
+
+    profile_id: int
+    page_id: str
