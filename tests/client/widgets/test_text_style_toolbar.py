@@ -5,9 +5,10 @@ from typing import Any
 
 import pytest
 from assertpy import assert_that
-from PyQt6.QtGui import QFontDatabase, QShortcut
+from PyQt6.QtGui import QShortcut
 from PyQt6.QtWidgets import QToolButton
 
+from decker.client.fonts import register_bundled_fonts
 from decker.client.widgets.text_style_toolbar import TextStyleToolbar
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
 
@@ -19,9 +20,8 @@ def _style(**overrides: Any) -> dict[str, Any]:
 
 
 def _family() -> str:
-    families = QFontDatabase.families()
-    assert families, "no fonts available to the test platform"
-    return families[0]
+    assert "DejaVu Sans" in register_bundled_fonts()
+    return "DejaVu Sans"
 
 
 class TestTextStyleToolbar:
