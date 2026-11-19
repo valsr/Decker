@@ -18,3 +18,10 @@ Core functionality is expected at parity on every platform.
 
 The features x platforms table, with its footnotes, lives in the [README](../README.md#platform-support).
 Plugin support is declared per plugin and tracked in the plugins repository's README.
+
+## Focused-app profile switching
+
+Switching profiles by focused window (see [app profile switching](app-profile-switching.md)) ships in v1 with backends for
+Plasma 6 Wayland (KWin), X11 and Windows. GNOME Wayland and macOS report "unsupported" and come later; the standing rule
+above still applies, so they stay marked in the README table until a backend exists. The Windows and X11 backends are
+only tested against fakes so far.
