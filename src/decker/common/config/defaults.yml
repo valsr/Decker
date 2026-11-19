@@ -14,6 +14,8 @@ server:
   allow_remote_plugin_install: false
   # How long (seconds) a stopping server gets to shut down on request before it is terminated.
   stop_timeout: 10.0
+  # How long (seconds) a server restarted with settings a client changed gets to answer before they are rolled back.
+  apply_timeout: 60.0
   # Shut the server down (and the monitor with it) once the last client has disconnected for a while.
   stop_when_last_client_leaves: false
 
