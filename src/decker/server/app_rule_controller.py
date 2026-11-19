@@ -12,6 +12,10 @@ if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
 
 APP_RULES_CHANGED_EVENT = "app_rules_changed"
+MAX_RULES_PER_DEVICE = 200
+MAX_CONDITIONS_PER_RULE = 20
+MAX_CONDITION_VALUE_LENGTH = 1024
+MAX_RULE_NAME_LENGTH = 200
 
 
 class AppRuleController(Manager):
@@ -45,7 +49,10 @@ class AppRuleController(Manager):
 
     def add_rule(self, device_id: str, rule: AppRule) -> AppRule | None:
         """Append a rule; returns the stored rule, or None when it is invalid."""
-        if not self._rule_valid(device_id, rule):
+        if (
+            not self._rule_valid(device_id, rule)
+            or len(self._store.list_rules(device_id).rules) >= MAX_RULES_PER_DEVICE
+        ):
             return None
         stored = self._store.add_rule(device_id, rule)
         self._notify(device_id)
@@ -81,7 +88,11 @@ class AppRuleController(Manager):
         return True
 
     def _rule_valid(self, device_id: str, rule: AppRule) -> bool:
-        if not rule.name.strip():
+        if not rule.name.strip() or len(rule.name) > MAX_RULE_NAME_LENGTH:
+            return False
+        if len(rule.conditions) > MAX_CONDITIONS_PER_RULE:
+            return False
+        if any(len(condition.value) > MAX_CONDITION_VALUE_LENGTH for condition in rule.conditions):
             return False
         if any(validate_condition(condition) is not None for condition in rule.conditions):
             return False

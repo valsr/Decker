@@ -119,3 +119,39 @@ def test_set_default_rule_validates_target(context):
     assert_that(controller.set_default_rule(DEV, DefaultRule(True, 0))).is_true()
     assert_that(controller.rules(DEV).default_rule).is_equal_to(DefaultRule(True, 0))
     assert_that(_events(context)).is_equal_to([(APP_RULES_CHANGED_EVENT, {"device_id": DEV})])
+
+
+def test_rule_name_length_cap(context):
+    assert_that(_controller(context).add_rule(DEV, _rule(name="n" * 200))).is_not_none()
+    assert_that(_controller(context).add_rule(DEV, _rule(name="n" * 201))).is_none()
+
+
+def test_condition_value_length_cap(context):
+    assert_that(_controller(context).add_rule(DEV, _rule(value="v" * 1024))).is_not_none()
+    assert_that(_controller(context).add_rule(DEV, _rule(value="v" * 1025))).is_none()
+
+
+def test_conditions_per_rule_cap(context):
+    def with_conditions(count: int) -> AppRule:
+        return AppRule("", "R", True, [MatchCondition("executable", "contains", "x")] * count, 0, "")
+
+    assert_that(_controller(context).add_rule(DEV, with_conditions(20))).is_not_none()
+    assert_that(_controller(context).add_rule(DEV, with_conditions(21))).is_none()
+
+
+def test_update_enforces_the_caps_too(context):
+    stored = _controller(context).add_rule(DEV, _rule())
+    assert stored is not None
+
+    too_long = AppRule(stored.rule_id, "n" * 201, True, stored.conditions, 0, "")
+
+    assert_that(_controller(context).update_rule(DEV, too_long)).is_false()
+
+
+def test_rules_per_device_cap(context):
+    for _ in range(200):
+        assert_that(_controller(context).add_rule(DEV, _rule())).is_not_none()
+
+    assert_that(_controller(context).add_rule(DEV, _rule())).is_none()
+    assert_that(_controller(context).add_rule("other-device", _rule())).is_not_none()
+    assert_that(_controller(context).rules(DEV).rules).is_length(200)
