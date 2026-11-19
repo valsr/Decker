@@ -107,3 +107,68 @@ class TestEventBusSenders:
 
         assert_that(bus._clients).is_empty()  # pylint: disable=protected-access
         assert_that(bus._senders).is_empty()  # pylint: disable=protected-access
+
+
+class _Conn:
+    def __init__(self) -> None:
+        self.received: list[tuple[str, str]] = []
+        self.root = MagicMock()
+        self.root.on_server_event = lambda event, payload: self.received.append((event, payload))
+
+
+class TestEventBusTargeting:
+    @pytest.fixture(autouse=True)
+    def _direct_delivery(self):
+        with patch("decker.server.event_bus.async_", side_effect=lambda method: method):
+            yield
+
+    def test_push_filtered_hands_each_client_its_own_loopback_flag(self):
+        bus = EventBus()
+        local, remote = _Conn(), _Conn()
+        bus.register(local)
+        bus.register(remote, loopback=False)
+
+        bus.push_filtered("ev", lambda loopback: "local" if loopback else "remote")
+
+        assert_that(local.received).is_equal_to([("ev", "local")])
+        assert_that(remote.received).is_equal_to([("ev", "remote")])
+
+    def test_register_defaults_to_loopback(self):
+        bus = EventBus()
+        conn = _Conn()
+        bus.register(conn)
+
+        bus.push_filtered("ev", str)
+
+        assert_that(conn.received).is_equal_to([("ev", "True")])
+
+    def test_push_to_reaches_only_that_client(self):
+        bus = EventBus()
+        first, second = _Conn(), _Conn()
+        bus.register(first)
+        bus.register(second)
+
+        bus.push_to(first, "ev", "payload")
+
+        assert_that(first.received).is_equal_to([("ev", "payload")])
+        assert_that(second.received).is_empty()
+
+    def test_push_to_a_failing_client_prunes_it(self):
+        bus = EventBus()
+        conn = _Conn()
+        conn.root.on_server_event = MagicMock(side_effect=OSError("gone"))
+        bus.register(conn)
+
+        bus.push_to(conn, "ev", "payload")
+
+        assert_that(bus._clients).does_not_contain(conn)  # pylint: disable=protected-access
+
+    def test_push_filtered_prunes_failing_clients(self):
+        bus = EventBus()
+        conn = _Conn()
+        conn.root.on_server_event = MagicMock(side_effect=OSError("gone"))
+        bus.register(conn)
+
+        bus.push_filtered("ev", str)
+
+        assert_that(bus._clients).does_not_contain(conn)  # pylint: disable=protected-access

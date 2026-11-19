@@ -144,9 +144,11 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
         lost = self._drop_lost_devices()
         opened = self._open_present_devices()
         for device_id in lost:
+            self._forget_rules(device_id)
             self._announce(device_id)
         for device_id in opened:
             self._restore(device_id)
+            self._evaluate_rules(device_id)
             self._announce(device_id)
 
     def _drop_lost_devices(self) -> list[str]:
@@ -203,6 +205,16 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes
             self._context.page_controller.restore(device_id)
         except Exception:  # pylint: disable=broad-except
             logging.exception("DeviceManager: could not restore device %s after it was opened", device_id)
+
+    def _evaluate_rules(self, device_id: str) -> None:
+        engine = self._context.app_rule_engine if self._context is not None else None
+        if engine is not None:
+            engine.evaluate_device(device_id)
+
+    def _forget_rules(self, device_id: str) -> None:
+        engine = self._context.app_rule_engine if self._context is not None else None
+        if engine is not None:
+            engine.forget_device(device_id)
 
     def _announce(self, device_id: str) -> None:
         if self._context is None:

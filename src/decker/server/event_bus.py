@@ -18,11 +18,13 @@ class EventBus:
         self._lock = threading.Lock()
         self._clients: list[Any] = []
         self._senders: dict[Any, Callable[[str, str], Any]] = {}  # each client's resolved, non-blocking sender
+        self._loopback: dict[Any, bool] = {}
 
-    def register(self, conn: Any) -> None:
-        """Add a client connection to the push list."""
+    def register(self, conn: Any, loopback: bool = True) -> None:
+        """Add a client connection to the push list; loopback says whether it runs on the server's machine."""
         with self._lock:
             self._clients.append(conn)
+            self._loopback[conn] = loopback
         logging.debug("EventBus: client registered (%d total)", len(self._clients))
 
     def unregister(self, conn: Any) -> None:
@@ -45,9 +47,31 @@ class EventBus:
                 self._sender(conn)(event_type, payload)
             except Exception:  # pylint: disable=broad-except
                 dead.append(conn)
-        if dead:
+        self._forget_all(dead)
+
+    def push_filtered(self, event_type: str, make_payload: Callable[[bool], str]) -> None:
+        """Push to every client the payload made for its own loopback flag."""
+        with self._lock:
+            clients = [(conn, self._loopback.get(conn, True)) for conn in self._clients]
+        dead: list[Any] = []
+        for conn, loopback in clients:
+            try:
+                self._sender(conn)(event_type, make_payload(loopback))
+            except Exception:  # pylint: disable=broad-except
+                dead.append(conn)
+        self._forget_all(dead)
+
+    def push_to(self, conn: Any, event_type: str, payload: str) -> None:
+        """Push to one client only."""
+        try:
+            self._sender(conn)(event_type, payload)
+        except Exception:  # pylint: disable=broad-except
+            self._forget_all([conn])
+
+    def _forget_all(self, conns: list[Any]) -> None:
+        if conns:
             with self._lock:
-                for conn in dead:
+                for conn in conns:
                     self._forget(conn)
 
     def _sender(self, conn: Any) -> Callable[[str, str], Any]:
@@ -64,3 +88,4 @@ class EventBus:
         except ValueError:
             pass
         self._senders.pop(conn, None)
+        self._loopback.pop(conn, None)

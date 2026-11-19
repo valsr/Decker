@@ -4,6 +4,7 @@ import json
 import logging
 import multiprocessing
 import multiprocessing.synchronize
+import os
 import signal
 import socket
 import sys
@@ -18,6 +19,9 @@ from decker.common import paths as decker_paths
 from decker.common.context import ServerAppContext
 from decker.common.manager import Manager
 from decker.common.version import decker_version
+from decker.server.app_rule_controller import AppRuleController
+from decker.server.app_rule_engine import AppRuleEngine
+from decker.server.app_rule_store import AppRuleStore
 from decker.server.client_tracker import ClientTracker
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices.manager import DeviceManager
@@ -32,6 +36,8 @@ from decker.server.repositories import RepositoryStore
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
 from decker.server.update_checker import UpdateChecker
+from decker.server.window_wiring import build_window_watcher
+from decker.server.windows.select import select_backend
 
 
 class NoDelayThreadedServer(ThreadedServer):
@@ -239,6 +245,13 @@ class ServerProcess:
         for device_id in sorted(device_ids):
             self._context.page_controller.restore(device_id)
 
+    def _start_window_watcher(self, ctx: ServerContext, engine: AppRuleEngine) -> None:
+        ctx.window_watcher = build_window_watcher(ctx, select_backend(os.environ, sys.platform))
+        ctx.window_watcher.start()
+        for info in ctx.device_manager.list_devices():
+            if info.id is not None:
+                engine.evaluate_device(info.id)
+
     def _resolve_target_device(self, target: str) -> str | None:
         """Find a connected device matching the given ID or USB path.
 
@@ -261,6 +274,8 @@ class ServerProcess:
             ctx.client_tracker.cancel()
         if ctx.update_checker is not None:
             ctx.update_checker.stop()
+        if ctx.window_watcher is not None:
+            ctx.window_watcher.stop()
         for manager in reversed(managers):
             self._try_destroy_manager(manager)
 
@@ -312,6 +327,7 @@ class ServerProcess:
         page_controller = PageController()
         device_manager = DeviceManager(on_key_event=self._on_hardware_key_event)
         plugin_manager = PluginManager()
+        rule_store, rule_controller, rule_engine = AppRuleStore(), AppRuleController(), AppRuleEngine()
 
         self._context = ServerContext(
             device_manager=device_manager,
@@ -323,6 +339,9 @@ class ServerProcess:
             event_bus=EventBus(),
             server=None,
             reconfigure_policy=ReconfigurePolicy(self._app_context.allow_client_reconfiguration),
+            app_rule_store=rule_store,
+            app_rule_controller=rule_controller,
+            app_rule_engine=rule_engine,
             client_tracker=ClientTracker(config.get_as("server.stop_grace", float), self._on_last_client_gone),
         )
 
@@ -332,9 +351,12 @@ class ServerProcess:
             state_store,
             page_store,
             key_store,
+            rule_store,
             page_controller,
             device_manager,
             plugin_manager,
+            rule_controller,
+            rule_engine,
         ]
         for manager in managers:
             manager.create(ctx)
@@ -365,6 +387,7 @@ class ServerProcess:
             lambda event, payload: ctx.event_bus.push(event, json.dumps(payload)),
         )
         self._restore_devices(device_id_filter=matched_device_id)
+        self._start_window_watcher(ctx, rule_engine)
         ctx.device_manager.start_watching(float(config.get_or_default("server.device_watch_interval", 2.0)))
 
         server = NoDelayThreadedServer(

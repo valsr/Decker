@@ -46,7 +46,7 @@ class FakeBus:
         self.events: list[tuple[str, dict]] = []
         self.clients: list = []
 
-    def register(self, conn) -> None:
+    def register(self, conn, loopback: bool = True) -> None:
         self.clients.append(conn)
 
     def unregister(self, conn) -> None:
