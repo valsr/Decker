@@ -120,3 +120,26 @@ def test_unsupported_field_warning(editor):
 
     editor.set_unsupported_fields({"title"})
     assert_that(editor._warning.isHidden()).is_true()
+
+
+def test_missing_page_entry_keeps_the_page_id(qapp):
+    widget = RuleEditor(lambda profile_id: _PAGES.get(profile_id, []))
+    widget.set_profiles(_PROFILES)
+    widget.set_rule(AppRule("r1", "B", True, _RULE.conditions, 2, "gone"))
+
+    assert_that(widget._page.currentText()).is_equal_to("(missing page)")
+    assert_that(widget.rule().page_id).is_equal_to("gone")
+    widget._page.setCurrentIndex(widget._page.findData(""))
+    assert_that(widget.rule().page_id).is_equal_to("")
+
+
+def test_blank_name_is_an_error(editor):
+    seen: list[int] = []
+    editor.changed.connect(lambda: seen.append(1))
+
+    editor._name.setText("  ")
+    editor._name.editingFinished.emit()
+
+    assert_that(editor.error()).contains("name")
+    assert_that(editor._name.property("invalid")).is_true()
+    assert_that(seen).is_empty()

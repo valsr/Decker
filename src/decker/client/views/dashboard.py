@@ -72,6 +72,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._profiles: DeviceProfiles | None = None  # the active device's profiles, from the server
         self._rules: DeviceRules | None = None  # the active device's app rules, from the server
         self._detection: DetectionStatusEvent | None = None  # the server's window detection status
+        self._pages_cache: dict[int, list[PageInfo]] = {}  # profile id -> its pages, for the profiles dialog
         self._profiles_dialog: ProfilesDialog | None = None  # the open non-modal profiles and rules dialog
         self._devices: list[DeviceHardwareInfo] = []
         self._selected_key: int | None = None
@@ -238,6 +239,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._pages = None
         self._profiles = None
         self._rules = None
+        self._pages_cache = {}
         self._close_profiles_dialog()
         self._render_page_tabs()
         self._render_profiles()
@@ -260,8 +262,11 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             self._reset_key_selection()
             self._clear_animations()
         self._pages = pages
+        self._pages_cache = {}
         self._sync_draggable()
         self._render_page_tabs()
+        if self._profiles_dialog is not None:
+            self._profiles_dialog.refresh()
 
     def _clear_animations(self) -> None:
         """Stop every key's movie (its key left the page); fetched animations stay cached."""
@@ -379,6 +384,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if profiles.device_id != AppContext.get().active_device_id:
             return
         self._profiles = profiles
+        self._pages_cache = {}
         self._render_profiles()
         if self._profiles_dialog is not None:
             self._profiles_dialog.set_profiles(profiles)
@@ -437,12 +443,18 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             dialog.close()
             dialog.deleteLater()
 
-    def _pages_for_profile(self, profile_id: int) -> list[PageInfo]:
+    def _pages_for_profile(self, profile_id: int) -> list[PageInfo] | None:
+        """A profile's pages (cached until the server reports a change); None when the lookup failed."""
+        if profile_id in self._pages_cache:
+            return self._pages_cache[profile_id]
         raw = self._page_call("pages_list", profile_id)
         try:
-            return [PageInfo(str(p["page_id"]), str(p["name"])) for p in json.loads(raw)["pages"]] if raw else []
+            pages = [PageInfo(str(p["page_id"]), str(p["name"])) for p in json.loads(raw)["pages"]] if raw else None
         except (ValueError, TypeError, KeyError):
-            return []
+            pages = None
+        if pages is not None:
+            self._pages_cache[profile_id] = pages
+        return pages
 
     def _reset_key_selection(self) -> None:
         self._key_slots = {}

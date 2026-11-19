@@ -1,5 +1,7 @@
 """Tests for decker.client.widgets.profiles_dialog.ProfilesDialog."""
 
+import json
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -68,17 +70,41 @@ def calls() -> list[tuple[Any, ...]]:
     return []
 
 
+class FakePages:
+    """Pages lookup that counts calls and can simulate an RPC failure."""
+
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+        self.fail = False
+
+    def __call__(self, profile_id: int) -> list[PageInfo] | None:
+        self.calls.append(profile_id)
+        return None if self.fail else _PAGES.get(profile_id, [])
+
+
 @pytest.fixture()
-def dialog(qapp, api, calls):
+def pages() -> FakePages:
+    return FakePages()
+
+
+def _recording_call(calls: list[tuple[Any, ...]]) -> Any:
     def call(method: str, *args: Any) -> Any:
         calls.append((method, *args))
+        if method == "profile_add":
+            return json.dumps({"profile_id": 5, "name": "Created", "icon": ""})
         return True
 
-    dlg = ProfilesDialog(call, api, lambda profile_id: _PAGES.get(profile_id, []))
+    return call
+
+
+@pytest.fixture()
+def dialog(qapp, api, calls, pages):
+    dlg = ProfilesDialog(_recording_call(calls), api, pages)
     dlg.set_profiles(_PROFILES)
     dlg.set_rules(_RULES)
     dlg.set_status(_ACTIVE)
     dlg.select_profile(2)
+    dlg.show()
     yield dlg
     dlg.close()
 
@@ -284,3 +310,137 @@ class TestStatus:
         dialog._spy_button.click()
 
         assert_that(seen).is_equal_to([1])
+
+
+class TestRefreshDoesNotClobberEditing:
+    def test_refresh_while_typing_keeps_text_and_focus(self, dialog):
+        _select_rule(dialog, 0)
+        row = dialog._editor._rows[0]
+        row.value.setFocus()
+        row.value.setText("typed")
+
+        dialog.set_rules(DeviceRules("dev1", [_R1, _R2], DefaultRule(True, 0, "")))
+
+        assert_that(dialog._editor._rows[0]).is_same_as(row)
+        assert_that(row.value.text()).is_equal_to("typed")
+        assert_that(dialog._editor.focusWidget()).is_same_as(row.value)
+
+    def test_refresh_with_a_different_server_rule_updates_an_unfocused_editor(self, dialog):
+        _select_rule(dialog, 0)
+
+        dialog.set_rules(DeviceRules("dev1", [replace(_R1, name="Renamed"), _R2], DefaultRule()))
+
+        assert_that(dialog._editor._name.text()).is_equal_to("Renamed")
+
+    def test_echo_of_the_users_own_edit_does_not_rebuild_the_editor(self, dialog):
+        _select_rule(dialog, 0)
+        row = dialog._editor._rows[0]
+        dialog._editor._name.setText("Web")
+        dialog._editor._name.editingFinished.emit()
+
+        dialog.set_rules(DeviceRules("dev1", [replace(_R1, name="Web"), _R2], DefaultRule()))
+
+        assert_that(dialog._editor._rows[0]).is_same_as(row)
+
+
+class TestPages:
+    def test_deleted_page_is_kept_when_saving_another_field(self, dialog, api):
+        gone = replace(_R1, page_id="gone")
+        dialog.set_rules(DeviceRules("dev1", [gone, _R2], DefaultRule()))
+        _select_rule(dialog, 0)
+
+        assert_that(dialog._editor._page.currentText()).is_equal_to("(missing page)")
+        dialog._editor._name.setText("Web")
+        dialog._editor._name.editingFinished.emit()
+
+        assert_that(api.calls[-1][2].page_id).is_equal_to("gone")
+
+    def test_failed_lookup_keeps_the_previous_pages_and_page_id(self, dialog, api, pages):
+        _select_rule(dialog, 0)
+        pages.fail = True
+
+        dialog.set_rules(DeviceRules("dev1", [replace(_R1, name="Other"), _R2], DefaultRule()))
+        dialog._editor._name.setText("Web")
+        dialog._editor._name.editingFinished.emit()
+
+        names = [dialog._editor._page.itemText(i) for i in range(dialog._editor._page.count())]
+        assert_that(names).is_equal_to(["Profile default", "Mail", "Docs"])
+        assert_that(api.calls[-1][2].page_id).is_equal_to("w1")
+
+    def test_failed_lookup_without_history_still_keeps_page_id(self, qapp, api, calls):
+        dlg = ProfilesDialog(_recording_call(calls), api, lambda _id: None)
+        dlg.set_profiles(_PROFILES)
+        dlg.set_rules(_RULES)
+        dlg.show()
+        dlg._rule_list.setCurrentRow(0)
+
+        dlg._editor._name.setText("Web")
+        dlg._editor._name.editingFinished.emit()
+
+        assert_that(api.calls[-1][2].page_id).is_equal_to("w1")
+        dlg.close()
+
+    def test_default_row_keeps_a_missing_page(self, dialog):
+        dialog.set_rules(DeviceRules("dev1", [_R1], DefaultRule(True, 2, "gone")))
+
+        assert_that(dialog._default_page.currentData()).is_equal_to("gone")
+
+    def test_no_pages_rpc_while_hidden_and_one_render_on_show(self, qapp, api, calls, pages):
+        dlg = ProfilesDialog(_recording_call(calls), api, pages)
+        dlg.set_profiles(_PROFILES)
+        dlg.set_rules(_RULES)
+        dlg.set_status(_ACTIVE)
+        assert_that(pages.calls).is_empty()
+
+        dlg.show()
+
+        assert_that(pages.calls).is_not_empty()
+        assert_that(dlg._rule_list.count()).is_equal_to(2)
+        dlg.close()
+
+    def test_set_status_does_not_look_up_pages(self, dialog, pages):
+        pages.calls.clear()
+
+        dialog.set_status(DetectionStatusEvent("active", "", "windows", False, None))
+
+        assert_that(pages.calls).is_empty()
+
+    def test_status_warning_updates_rows_in_place(self, dialog):
+        dialog.set_rules(
+            DeviceRules(
+                "dev1", [AppRule("r3", "T", True, [MatchCondition("window_type", "equals", "d")], 0)], DefaultRule()
+            )
+        )
+
+        dialog.set_status(DetectionStatusEvent("active", "", "windows", False, None))
+
+        assert_that(dialog._rule_list.item(0).text()).starts_with("⚠").contains("-> Default")
+
+
+class TestMinorFixes:
+    def test_edit_after_toggle_saves_the_toggled_enabled(self, dialog, api):
+        _select_rule(dialog, 1)
+        dialog._rule_list.item(1).setCheckState(Qt.CheckState.Checked)
+
+        dialog._editor._name.setText("Edited")
+        dialog._editor._name.editingFinished.emit()
+
+        assert_that(api.calls[-1][2].enabled).is_true()
+
+    def test_blank_rule_name_is_flagged_and_not_saved(self, dialog, api):
+        _select_rule(dialog, 0)
+
+        dialog._editor._name.setText("   ")
+        dialog._editor._name.editingFinished.emit()
+
+        assert_that(api.calls).is_empty()
+        assert_that(dialog._editor.error()).is_not_empty()
+
+    def test_add_profile_selects_the_created_profile_without_activating(self, dialog, calls):
+        dialog._add_profile_button.click()
+        dialog.set_profiles(
+            DeviceProfiles("dev1", [*_PROFILES.profiles, ProfileInfo(5, "Created", "")], _PROFILES.active_profile_id)
+        )
+
+        assert_that(dialog._name_edit.text()).is_equal_to("Created")
+        assert_that([c[0] for c in calls]).does_not_contain("profile_activate")

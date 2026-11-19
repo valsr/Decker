@@ -30,7 +30,8 @@ OP_NAMES: dict[str, str] = {
     "not_contains": "does not contain",
     "regex": "matches regex",
 }
-_PROFILE_DEFAULT = "Profile default"
+PROFILE_DEFAULT = "Profile default"
+MISSING_PAGE = "(missing page)"
 _NEW_CONDITION = MatchCondition("window_class", "equals", "")
 
 
@@ -39,6 +40,17 @@ def _combo(names: dict[str, str]) -> QComboBox:
     for key, name in names.items():
         combo.addItem(name, key)
     return combo
+
+
+def fill_page_combo(combo: QComboBox, pages: list[PageInfo], page_id: str) -> None:
+    """List "Profile default" plus pages; a page_id not among them is kept as a "(missing page)" entry."""
+    combo.clear()
+    combo.addItem(PROFILE_DEFAULT, "")
+    for page in pages:
+        combo.addItem(page.name, page.page_id)
+    if page_id and combo.findData(page_id) < 0:
+        combo.addItem(MISSING_PAGE, page_id)
+    combo.setCurrentIndex(max(combo.findData(page_id), 0))
 
 
 def _repolish(widget: QWidget) -> None:
@@ -163,8 +175,14 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
             page_id,
         )
 
+    def has_focus(self) -> bool:
+        """Whether one of the editor's fields holds the keyboard focus."""
+        return self.focusWidget() is not None
+
     def error(self) -> str:
-        """The first validation problem in the entered conditions, or an empty string."""
+        """The first validation problem (blank name, then conditions), or an empty string."""
+        if not self._name.text().strip():
+            return "A name is required"
         for row in self._rows:
             problem = validate_condition(row.condition())
             if problem:
@@ -188,11 +206,7 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
     def _fill_pages(self, page_id: str) -> None:
         profile_id = self._profile.currentData()
         pages = self._pages_for_profile(profile_id) if isinstance(profile_id, int) else []
-        self._page.clear()
-        self._page.addItem(_PROFILE_DEFAULT, "")
-        for page in pages:
-            self._page.addItem(page.name, page.page_id)
-        self._page.setCurrentIndex(max(self._page.findData(page_id), 0))
+        fill_page_combo(self._page, pages, page_id)
 
     def _clear_rows(self) -> None:
         for row in self._rows:
@@ -230,6 +244,8 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
 
     def _refresh_flags(self) -> None:
         problem = self.error()
+        self._name.setProperty("invalid", not self._name.text().strip())
+        _repolish(self._name)
         self._error.setText(problem)
         self._error.setVisible(bool(problem))
         used: list[str] = []

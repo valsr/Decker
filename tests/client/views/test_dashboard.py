@@ -1164,11 +1164,46 @@ class TestProfiles:  # pylint: disable=protected-access
         cm.call.assert_called_once_with("pages_list", "dev1", 2)
         assert_that(pages).is_equal_to([PageInfo("w1", "Mail")])
 
-    def test_pages_for_profile_survive_a_failed_call(self, qapp, tmp_path):
+    def test_failed_pages_lookup_is_none_and_not_cached(self, qapp, tmp_path):
         view, cm = self._view(tmp_path)
         cm.call.return_value = None
 
-        assert_that(view._pages_for_profile(2)).is_empty()
+        assert_that(view._pages_for_profile(2)).is_none()
+        cm.call.return_value = json.dumps({"pages": [{"page_id": "w1", "name": "Mail"}]})
+        assert_that(view._pages_for_profile(2)).is_equal_to([PageInfo("w1", "Mail")])
+
+    def _count_lookups(self, view, cm) -> int:
+        cm.call.reset_mock()
+        cm.call.return_value = json.dumps({"pages": [{"page_id": "w1", "name": "Mail"}]})
+        view._pages_for_profile(2)
+        view._pages_for_profile(2)
+        view._pages_for_profile(0)
+        return len([c for c in cm.call.call_args_list if c.args[0] == "pages_list"])
+
+    def test_pages_lookup_is_cached_per_profile(self, qapp, tmp_path):
+        view, cm = self._view(tmp_path)
+
+        assert_that(self._count_lookups(view, cm)).is_equal_to(2)
+
+    @pytest.mark.parametrize(
+        "event",
+        [PagesUpdatedEvent(pages=_PAGES), ProfilesUpdatedEvent(profiles=_PROFILES)],
+    )
+    def test_pages_cache_is_invalidated_by_server_events(self, qapp, tmp_path, event):
+        view, cm = self._view(tmp_path)
+        self._count_lookups(view, cm)
+
+        view.handle_event(event)
+
+        assert_that(self._count_lookups(view, cm)).is_equal_to(2)
+
+    def test_pages_cache_is_dropped_on_device_switch(self, qapp, tmp_path):
+        view, cm = self._view(tmp_path)
+        self._count_lookups(view, cm)
+
+        view._on_device_selected(_D2)
+
+        assert_that(view._pages_cache).is_empty()
 
     def test_switching_device_closes_the_dialog(self, qapp, tmp_path):
         view, _cm = self._view(tmp_path)
