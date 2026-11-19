@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
@@ -157,3 +157,21 @@ class RuleTarget:
 
     profile_id: int
     page_id: str
+
+
+@dataclass(frozen=True)
+class ScreensaverSettings:
+    """A device's brightness and screensaver configuration."""
+
+    brightness: int = 100
+    timeout_minutes: int = 0
+    saver_brightness: int = 10
+    content: Literal["none", "image", "gallery"] = "none"
+    image_path: str = ""
+    folder_path: str = ""
+    scaling: Literal["center", "stretch"] = "center"
+    bezel: bool = False
+    key_mm: float = 16.0
+    gap_mm: float = 4.0
+    gallery_mode: Literal["activation", "interval"] = "activation"
+    gallery_minutes: int = 5
