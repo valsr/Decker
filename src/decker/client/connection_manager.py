@@ -53,6 +53,7 @@ from decker.common.model import (
 )
 
 _RETRY_INTERVAL_S = 3.0
+_WINDOW_EVENT_TYPES = ("app_rules_changed", "window_detection_changed", "window_focused", "window_picked")
 _HEARTBEAT_INTERVAL_S = 5.0
 _LONG_CALL_TIMEOUTS: dict[str, float] = {"plugin_install": 120.0, "repositories_check": 120.0, "repository_add": 60.0}
 
@@ -504,7 +505,16 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             EventManager.get().push(_parse_updates(data))
         elif event_type == "repositories_check_finished":
             EventManager.get().push(RepositoriesCheckFinishedEvent(repositories=list(data.get("repositories") or [])))
-        elif event_type == "app_rules_changed":
+        elif event_type in _WINDOW_EVENT_TYPES:
+            self._on_window_event(event_type, data)
+        elif event_type == "plugins_changed":
+            self.request_actions_refresh()
+            EventManager.get().push(PluginsChangedEvent())
+        else:
+            logging.debug("Unknown server event type: %s", event_type)
+
+    def _on_window_event(self, event_type: str, data: dict[str, Any]) -> None:
+        if event_type == "app_rules_changed":
             if data.get("device_id") == _active_device_id():
                 self._rules_refresh_requested.set()
                 self._wake_event.set()
@@ -517,11 +527,6 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
                 EventManager.get().push(WindowFocusedEvent(window=window))
         elif event_type == "window_picked":
             EventManager.get().push(WindowPickedEvent(window=_parse_window(data.get("window"))))
-        elif event_type == "plugins_changed":
-            self.request_actions_refresh()
-            EventManager.get().push(PluginsChangedEvent())
-        else:
-            logging.debug("Unknown server event type: %s", event_type)
 
     def _on_layout_changed(self, event_type: str, data: dict[str, Any]) -> None:
         if event_type == "devices_changed":
