@@ -309,6 +309,47 @@ class ServerProcess:
             if not gate.requested:
                 raise
 
+    def _build_context(self) -> tuple[ServerContext, list[Manager]]:
+        state_store = DeviceStateStore()
+        page_store = PageStore()
+        key_store = KeyAssignmentStore()
+        page_controller = PageController()
+        device_manager = DeviceManager(on_key_event=self._on_hardware_key_event)
+        plugin_manager = PluginManager()
+        rule_store, rule_controller, rule_engine = AppRuleStore(), AppRuleController(), AppRuleEngine()
+
+        context = ServerContext(
+            device_manager=device_manager,
+            plugin_manager=plugin_manager,
+            key_assignment_store=key_store,
+            device_state_store=state_store,
+            page_store=page_store,
+            page_controller=page_controller,
+            event_bus=EventBus(),
+            server=None,
+            reconfigure_policy=ReconfigurePolicy(self._app_context.allow_client_reconfiguration),
+            app_rule_store=rule_store,
+            app_rule_controller=rule_controller,
+            app_rule_engine=rule_engine,
+            client_tracker=ClientTracker(config.get_as("server.stop_grace", float), self._on_last_client_gone),
+        )
+
+        managers: list[Manager] = [
+            state_store,
+            page_store,
+            key_store,
+            rule_store,
+            page_controller,
+            device_manager,
+            plugin_manager,
+            rule_controller,
+            rule_engine,
+        ]
+        self._context = context
+        for manager in managers:
+            manager.create(context)
+        return context, managers
+
     def _run_server(self) -> None:
         """Entry point for the server subprocess. Runs RPyC in the main thread."""
         gate = ShutdownGate()
@@ -325,45 +366,7 @@ class ServerProcess:
             self._app_context.verbosity, server_id=self.server_id, log_others=self._app_context.log_others
         )
 
-        state_store = DeviceStateStore()
-        page_store = PageStore()
-        key_store = KeyAssignmentStore()
-        page_controller = PageController()
-        device_manager = DeviceManager(on_key_event=self._on_hardware_key_event)
-        plugin_manager = PluginManager()
-        rule_store, rule_controller, rule_engine = AppRuleStore(), AppRuleController(), AppRuleEngine()
-
-        self._context = ServerContext(
-            device_manager=device_manager,
-            plugin_manager=plugin_manager,
-            key_assignment_store=key_store,
-            device_state_store=state_store,
-            page_store=page_store,
-            page_controller=page_controller,
-            event_bus=EventBus(),
-            server=None,
-            reconfigure_policy=ReconfigurePolicy(self._app_context.allow_client_reconfiguration),
-            app_rule_store=rule_store,
-            app_rule_controller=rule_controller,
-            app_rule_engine=rule_engine,
-            client_tracker=ClientTracker(config.get_as("server.stop_grace", float), self._on_last_client_gone),
-        )
-
-        ctx = self._context
-        assert ctx is not None
-        managers: list[Manager] = [
-            state_store,
-            page_store,
-            key_store,
-            rule_store,
-            page_controller,
-            device_manager,
-            plugin_manager,
-            rule_controller,
-            rule_engine,
-        ]
-        for manager in managers:
-            manager.create(ctx)
+        ctx, managers = self._build_context()
 
         # Resolve the target device (if --device was passed).
         matched_device_id: str | None = None
@@ -378,9 +381,9 @@ class ServerProcess:
         # Reset device state if requested.
         if self._app_context.reset_device_data:
             if matched_device_id is not None:
-                state_store.delete_all_key_state_for_device(matched_device_id)
+                ctx.device_state_store.delete_all_key_state_for_device(matched_device_id)
             else:
-                state_store.delete_all_key_state()
+                ctx.device_state_store.delete_all_key_state()
 
         ctx.plugin_installer = PluginInstaller(decker_paths.plugins(), ctx, decker_version())
         ctx.repository_store = RepositoryStore(decker_paths.repositories())
