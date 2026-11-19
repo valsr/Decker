@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -23,10 +24,17 @@ from PyQt6.QtWidgets import (
 from decker.client import config as client_config
 from decker.client.assets import read_custom_stylesheet, resolve_theme
 from decker.client.context import AppContext
+from decker.client.server_settings import ServerSettingsInfo
 from decker.client.themes import ThemeColors, apply_theme
 from decker.client.widgets.plugins_tab import PluginsTab
 
 _STATUS_REFRESH_MS = 1000
+_RESTART_REVERT_MS = 30_000
+_MIB = 1024 * 1024
+_NOT_ALLOWED_TIP = (
+    "The server does not allow clients to change its settings. Start it with --allow-client-reconfiguration."
+)
+_NOT_CONNECTED_TIP = "Connect to the server to change its settings."
 _THEME_LABELS: dict[str, str] = {
     client_config.THEME_DARK: "Dark",
     client_config.THEME_LIGHT: "Light",
@@ -54,6 +62,15 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._host_input: QLineEdit = QLineEdit()
         self._port_input: QLineEdit = QLineEdit()
         self._status_label: QLabel = QLabel()
+        self._memory_spin: QSpinBox = QSpinBox()
+        self._image_spin: QSpinBox = QSpinBox()
+        self._stop_check: QCheckBox = QCheckBox("Stop the server when the last client disconnects")
+        self._apply_error_label: QLabel = QLabel()
+        self._loaded_server_values: tuple[int, int, bool] = (0, 0, False)
+        self._revert_port: int | None = None
+        self._restart_timer: QTimer = QTimer(self)
+        self._restart_timer.setSingleShot(True)
+        self._restart_timer.timeout.connect(self._check_restart_result)
         self._theme_combo: QComboBox = QComboBox()
         self._custom_path_input: QLineEdit = QLineEdit()
         self._browse_btn: QPushButton = QPushButton("Browse…")
@@ -120,6 +137,8 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         else:
             stylesheet, colors = resolve_theme(theme)
 
+        if not self._apply_server_settings(port, port != client_config.get_server_port()):
+            return False
         self._apply_server(host, port)
         client_config.set_close_to_tray(self._close_to_tray_check.isChecked())
         client_config.set_theme(theme, custom_path)
@@ -159,11 +178,22 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         return tab
 
     def _build_server_tab(self) -> QWidget:
+        self._memory_spin.setRange(128, 1024 * 1024)
+        self._memory_spin.setSuffix(" MiB")
+        self._image_spin.setRange(64, 64 * 1024)
+        self._image_spin.setSuffix(" KiB")
+        self._apply_error_label.setProperty("role", "error")
+        self._apply_error_label.setWordWrap(True)
+        self._apply_error_label.hide()
         tab = QWidget()
         form = QFormLayout(tab)
         form.addRow("Host", self._host_input)
         form.addRow("Port", self._port_input)
+        form.addRow("Memory limit", self._memory_spin)
+        form.addRow("Max image file size", self._image_spin)
+        form.addRow("", self._stop_check)
         form.addRow("Status", self._status_label)
+        form.addRow("", self._apply_error_label)
         return tab
 
     def _build_ui_tab(self) -> QWidget:
@@ -191,7 +221,71 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._theme_combo.setCurrentIndex(max(index, 0))
         self._custom_path_input.setText(client_config.get_custom_style_sheet())
         self._update_custom_enabled()
+        self._load_server_settings()
         self._message_label.clear()
+
+    def _server_info(self) -> ServerSettingsInfo | None:
+        connection_manager = AppContext.get().connection_manager
+        info = getattr(connection_manager, "server_settings", None)
+        return info if isinstance(info, ServerSettingsInfo) else None
+
+    def _load_server_settings(self) -> None:
+        connection_manager = AppContext.get().connection_manager
+        if connection_manager is not None and connection_manager.is_connected:
+            connection_manager.refresh_server_settings()
+        info = self._server_info()
+        if info is not None:
+            self._memory_spin.setValue(info.memory_limit // _MIB)
+            self._image_spin.setValue(info.icon_max_file_size // 1024)
+            self._stop_check.setChecked(info.stop_when_last_client_leaves)
+        self._loaded_server_values = (self._memory_spin.value(), self._image_spin.value(), self._stop_check.isChecked())
+        allowed = info is not None and info.reconfigurable
+        tip = "" if allowed else (_NOT_CONNECTED_TIP if info is None else _NOT_ALLOWED_TIP)
+        for widget in (self._memory_spin, self._image_spin, self._stop_check):
+            widget.setEnabled(allowed)
+            widget.setToolTip(tip)
+        error = info.last_apply_error if info is not None else None
+        self._apply_error_label.setText(error or "")
+        self._apply_error_label.setVisible(bool(error))
+
+    def _apply_server_settings(self, port: int, port_changed: bool) -> bool:
+        info = self._server_info()
+        connection_manager = AppContext.get().connection_manager
+        if info is None or not info.reconfigurable or connection_manager is None:
+            return True
+        values = self._changed_server_values(port, port_changed)
+        if not values:
+            return True
+        accepted, error = connection_manager.set_server_settings(values)
+        if not accepted:
+            return self._fail(self._server_tab, error or "The server refused the change.")
+        if "port" in values:
+            self._revert_port = client_config.get_server_port()
+            self._restart_timer.start(_RESTART_REVERT_MS)
+        return True
+
+    def _changed_server_values(self, port: int, port_changed: bool) -> dict[str, Any]:
+        memory, image, stop = self._loaded_server_values
+        values: dict[str, Any] = {}
+        if port_changed:
+            values["port"] = port
+        if self._memory_spin.value() != memory:
+            values["memory_limit"] = self._memory_spin.value() * _MIB
+        if self._image_spin.value() != image:
+            values["icon_max_file_size"] = self._image_spin.value() * 1024
+        if self._stop_check.isChecked() != stop:
+            values["stop_when_last_client_leaves"] = self._stop_check.isChecked()
+        return values
+
+    def _check_restart_result(self) -> None:
+        previous, self._revert_port = self._revert_port, None
+        connection_manager = AppContext.get().connection_manager
+        if previous is None or connection_manager is None or connection_manager.is_connected:
+            return
+        failed = client_config.get_server_port()
+        client_config.set_server(client_config.get_server_host(), previous)
+        connection_manager.request_reconnect()
+        self._show_message(f"The server did not come back on port {failed}; restored port {previous}.", "error")
 
     def _apply_server(self, host: str, port: int) -> None:
         if host == client_config.get_server_host() and port == client_config.get_server_port():

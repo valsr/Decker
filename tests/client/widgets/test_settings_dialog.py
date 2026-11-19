@@ -273,3 +273,145 @@ class TestGeneralTab:
         dialog.open_dialog()
 
         assert_that(dialog._close_to_tray_check.isChecked()).is_true()
+
+
+_MIB = 1024 * 1024
+
+
+def _info(**overrides):
+    from decker.client.server_settings import ServerSettingsInfo
+
+    values = {
+        "port": 18861,
+        "memory_limit": 1024 * _MIB,
+        "icon_max_file_size": 4 * _MIB,
+        "stop_when_last_client_leaves": False,
+        "reconfigurable": True,
+        "last_apply_error": None,
+    }
+    values.update(overrides)
+    return ServerSettingsInfo(**values)
+
+
+def _server_fields(dlg):
+    return [dlg._memory_spin, dlg._image_spin, dlg._stop_check]
+
+
+class TestServerReconfiguration:
+    def test_fields_are_disabled_when_the_server_does_not_allow_it(self, dialog, manager):
+        manager.server_settings = _info(reconfigurable=False)
+
+        dialog.open_dialog()
+
+        assert_that([f.isEnabled() for f in _server_fields(dialog)]).is_equal_to([False, False, False])
+        assert_that(dialog._host_input.isEnabled()).is_true()
+        assert_that(dialog._port_input.isEnabled()).is_true()
+        assert_that(dialog._memory_spin.toolTip()).contains("--allow-client-reconfiguration")
+
+    def test_fields_are_disabled_without_server_settings(self, dialog, manager):
+        manager.server_settings = None
+
+        dialog.open_dialog()
+
+        assert_that([f.isEnabled() for f in _server_fields(dialog)]).is_equal_to([False, False, False])
+
+    def test_fields_are_enabled_and_loaded_when_allowed(self, dialog, manager):
+        manager.server_settings = _info(memory_limit=512 * _MIB, icon_max_file_size=2 * _MIB, stop_when_last_client_leaves=True)
+
+        dialog.open_dialog()
+
+        assert_that([f.isEnabled() for f in _server_fields(dialog)]).is_equal_to([True, True, True])
+        assert_that(dialog._memory_spin.value()).is_equal_to(512)
+        assert_that(dialog._image_spin.value()).is_equal_to(2048)
+        assert_that(dialog._stop_check.isChecked()).is_true()
+
+    def test_apply_sends_only_the_changed_values(self, dialog, manager):
+        manager.server_settings = _info()
+        manager.set_server_settings.return_value = (True, None)
+        dialog.open_dialog()
+        dialog._memory_spin.setValue(256)
+
+        assert_that(dialog.apply()).is_true()
+
+        manager.set_server_settings.assert_called_once_with({"memory_limit": 256 * _MIB})
+        manager.request_reconnect.assert_not_called()
+
+    def test_a_host_change_is_never_sent_to_the_server(self, dialog, manager):
+        manager.server_settings = _info()
+        dialog.open_dialog()
+        dialog._host_input.setText("other.example")
+
+        dialog.apply()
+
+        manager.set_server_settings.assert_not_called()
+        assert_that(client_config.get_server_host()).is_equal_to("other.example")
+
+    def test_a_port_change_is_sent_stored_and_reconnects(self, dialog, manager):
+        manager.server_settings = _info()
+        manager.set_server_settings.return_value = (True, None)
+        dialog.open_dialog()
+        dialog._port_input.setText("19000")
+
+        assert_that(dialog.apply()).is_true()
+
+        manager.set_server_settings.assert_called_once_with({"port": 19000})
+        assert_that(client_config.get_server_port()).is_equal_to(19000)
+        manager.request_reconnect.assert_called_once()
+
+    def test_a_server_refusal_saves_nothing(self, dialog, manager):
+        manager.server_settings = _info()
+        manager.set_server_settings.return_value = (False, "port is already used")
+        dialog.open_dialog()
+        dialog._port_input.setText("19000")
+
+        assert_that(dialog.apply()).is_false()
+
+        assert_that(client_config.get_server_port()).is_equal_to(18861)
+        assert_that(dialog._message_label.text()).contains("port is already used")
+
+    def test_when_not_allowed_a_port_change_only_changes_the_client_target(self, dialog, manager):
+        manager.server_settings = _info(reconfigurable=False)
+        dialog.open_dialog()
+        dialog._port_input.setText("19000")
+
+        dialog.apply()
+
+        manager.set_server_settings.assert_not_called()
+        assert_that(client_config.get_server_port()).is_equal_to(19000)
+        manager.request_reconnect.assert_called_once()
+
+    def test_an_unreachable_new_port_reverts_the_client_port(self, dialog, manager):
+        manager.server_settings = _info()
+        manager.set_server_settings.return_value = (True, None)
+        dialog.open_dialog()
+        dialog._port_input.setText("19000")
+        dialog.apply()
+        manager.request_reconnect.reset_mock()
+        manager.state = ServerState.DISCONNECTED
+        manager.is_connected = False
+
+        dialog._check_restart_result()
+
+        assert_that(client_config.get_server_port()).is_equal_to(18861)
+        manager.request_reconnect.assert_called_once()
+        assert_that(dialog._message_label.text()).contains("18861")
+
+    def test_a_reachable_new_port_is_kept(self, dialog, manager):
+        manager.server_settings = _info()
+        manager.set_server_settings.return_value = (True, None)
+        dialog.open_dialog()
+        dialog._port_input.setText("19000")
+        dialog.apply()
+        manager.is_connected = True
+
+        dialog._check_restart_result()
+
+        assert_that(client_config.get_server_port()).is_equal_to(19000)
+
+    def test_the_last_apply_error_is_shown(self, dialog, manager):
+        manager.server_settings = _info(last_apply_error="The server could not start on port 19000.")
+
+        dialog.open_dialog()
+
+        assert_that(dialog._apply_error_label.isHidden()).is_false()
+        assert_that(dialog._apply_error_label.text()).contains("19000")
