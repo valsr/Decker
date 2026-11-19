@@ -22,6 +22,18 @@ class TestCreateParser:
         assert_that(actions["verbose"].default).is_equal_to(0)
 
 
+class TestAllowClientReconfiguration:
+    def test_absent_is_none(self):
+        assert_that(create_parser().parse_args([]).allow_client_reconfiguration).is_none()
+
+    def test_bare_flag_is_empty_list(self):
+        assert_that(create_parser().parse_args(["--allow-client-reconfiguration"]).allow_client_reconfiguration).is_equal_to([])
+
+    def test_hosts_are_collected(self):
+        args = create_parser().parse_args(["--allow-client-reconfiguration", "10.0.0.5", "host2"])
+        assert_that(args.allow_client_reconfiguration).is_equal_to(["10.0.0.5", "host2"])
+
+
 class TestMain:
     @patch("decker.server.app.ServerMonitor")
     @patch("decker.common.logging.configure")

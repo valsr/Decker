@@ -14,3 +14,4 @@ class ServerAppContext:
     prefix: Path = field(default_factory=Path.home)
     target_device: str | None = None
     reset_device_data: bool = False
+    allow_client_reconfiguration: list[str] | None = None

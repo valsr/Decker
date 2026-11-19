@@ -51,6 +51,15 @@ def create_parser() -> argparse.ArgumentParser:
         help="Clear persisted key images and labels before starting (for the target device if --device is set).",
     )
 
+    parser.add_argument(
+        "--allow-client-reconfiguration",
+        nargs="*",
+        default=None,
+        metavar="HOST",
+        help="Let clients change server settings (port, limits). Without hosts any client may; with hosts only "
+        "those hosts and local clients may. Without this flag nobody may.",
+    )
+
     return parser
 
 
@@ -74,6 +83,7 @@ def main() -> None:
 
     app_context.target_device = args.device
     app_context.reset_device_data = args.reset_device_data
+    app_context.allow_client_reconfiguration = args.allow_client_reconfiguration
 
     decker.common.logging.configure(
         level=app_context.verbosity, log_directory=os.getcwd(), log_others=app_context.log_others
