@@ -25,6 +25,12 @@ _PLAIN_VERSION = re.compile(r"^\d+(\.\d+)*$")
 _SPECIFIER = re.compile(r"^[<>=!~]")
 
 
+def venv_python(plugin_dir: Path) -> Path:
+    """Return the interpreter inside a plugin's ``.venv`` for the running platform."""
+    venv = plugin_dir / ".venv"
+    return venv / "Scripts" / "python.exe" if sys.platform == "win32" else venv / "bin" / "python"
+
+
 class EnvironmentBuildError(Exception):
     """Raised when a plugin environment cannot be built."""
 
@@ -124,6 +130,6 @@ def build_environment(
     _run([uv, "venv", "--relocatable", str(venv), "--python", python], progress)
     if runtime.requirements:
         _run(
-            [uv, "pip", "install", "--python", str(venv / "bin" / "python"), *extra_args, *runtime.requirements],
+            [uv, "pip", "install", "--python", str(venv_python(plugin_dir)), *extra_args, *runtime.requirements],
             progress,
         )

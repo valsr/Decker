@@ -1,5 +1,4 @@
 import shutil
-import stat
 import subprocess
 import sys
 import zipfile
@@ -13,8 +12,10 @@ from decker.plugin.environment import (
     EnvironmentBuildError,
     build_environment,
     stage_sdk,
+    venv_python,
 )
 from decker.plugin.manifest import RuntimeSpec
+from tests.portable import fake_executable
 
 needs_uv = pytest.mark.skipif(shutil.which("uv") is None, reason="uv not installed")
 
@@ -55,7 +56,7 @@ def test_build_creates_venv_with_server_python_when_no_spec(tmp_path: Path) -> N
     lines: list[str] = []
     build_environment(tmp_path, _runtime(), lines.append)
     result = subprocess.run(
-        [str(tmp_path / ".venv" / "bin" / "python"), "-c", "import sys; print(sys.version_info[:2])"],
+        [str(venv_python(tmp_path)), "-c", "import sys; print(sys.version_info[:2])"],
         capture_output=True,
         text=True,
         check=True,
@@ -74,7 +75,7 @@ def test_build_installs_requirements(tmp_path: Path) -> None:
     build_environment(
         plugin, _runtime(("tinypkg",)), lambda _: None, extra_args=["--no-index", "--find-links", str(wheels)]
     )
-    subprocess.run([str(plugin / ".venv" / "bin" / "python"), "-c", "import tinypkg"], check=True)
+    subprocess.run([str(venv_python(plugin)), "-c", "import tinypkg"], check=True)
 
 
 def test_missing_uv_raises(tmp_path: Path) -> None:
@@ -84,9 +85,9 @@ def test_missing_uv_raises(tmp_path: Path) -> None:
 
 
 def test_failed_install_raises_with_output(tmp_path: Path) -> None:
-    fake = tmp_path / "fakeuv"
-    fake.write_text("#!/bin/sh\nfor i in $(seq 1 30); do echo line$i; done\nexit 1\n")
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    fake = fake_executable(
+        tmp_path / "fakeuv", "import sys\nfor i in range(1, 31):\n    print(f'line{i}')\nsys.exit(1)\n"
+    )
     seen: list[str] = []
     with pytest.raises(EnvironmentBuildError) as info:
         build_environment(tmp_path, _runtime(), seen.append, uv=str(fake))
@@ -97,10 +98,11 @@ def test_failed_install_raises_with_output(tmp_path: Path) -> None:
 
 
 def test_venv_is_built_relocatable(tmp_path: Path) -> None:
-    fake = tmp_path / "fakeuv"
     argv_log = tmp_path / "argv.log"
-    fake.write_text(f'#!/bin/sh\necho "$@" >> {argv_log}\n')
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    fake = fake_executable(
+        tmp_path / "fakeuv",
+        f"import sys\nwith open({str(argv_log)!r}, 'a') as log:\n    log.write(' '.join(sys.argv[1:]) + '\\n')\n",
+    )
 
     build_environment(tmp_path, _runtime(), lambda _: None, uv=str(fake))
 
@@ -128,3 +130,14 @@ def test_python_request_enforces_minimum() -> None:
     assert_that(environment._python_request(">=3.8")).is_equal_to(">=3.8,>=3.10")
     with pytest.raises(EnvironmentBuildError, match="older"):
         environment._python_request("3.9")
+
+
+def test_venv_python_uses_scripts_on_windows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert_that(venv_python(tmp_path)).is_equal_to(tmp_path / ".venv" / "Scripts" / "python.exe")
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_venv_python_uses_bin_elsewhere(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+    assert_that(venv_python(tmp_path)).is_equal_to(tmp_path / ".venv" / "bin" / "python")
