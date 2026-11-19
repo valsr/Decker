@@ -94,6 +94,7 @@ def _run(command: list[str], progress: Callable[[str], None]) -> None:
         )
     except OSError as exc:
         raise EnvironmentBuildError(f"cannot run {command[0]}: {exc}") from exc
+    processes.adopt(proc)
     timer = threading.Timer(_TIMEOUT_SECONDS, processes.kill_tree, args=(proc,))
     timer.start()
     try:
