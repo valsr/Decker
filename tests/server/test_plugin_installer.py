@@ -25,6 +25,7 @@ from decker.server.plugin_installer import PluginInstaller, PluginInstallError
 from decker.server.plugins import PluginManager
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
+from tests.portable import cmd_wrapper, entry_name
 from tests.server.http_fixture import FixtureServer
 
 _SCRIPT = f"""#!{sys.executable}
@@ -105,7 +106,7 @@ def _manifest(version="1.0.0", plugin_id="com.example.tool", **extra) -> dict:
         "name": "Tool",
         "version": version,
         "author": "Me",
-        "runtime": {"type": "executable", "entry": "tool.py"},
+        "runtime": {"type": "executable", "entry": entry_name("tool.py")},
         "global_settings": [{"key": "token", "type": "text", "label": "Token", "default": "none"}],
         "contributes": {"actions": [{"id": f"{plugin_id}.show", "name": "Show"}]},
     }
@@ -120,6 +121,8 @@ def _package(log, manifest=None, script=True) -> bytes:
         info = zipfile.ZipInfo("tool.py")
         info.external_attr = (stat.S_IFREG | 0o755) << 16
         zf.writestr(info, _SCRIPT.format(log=str(log)) if script else "")
+        if script and sys.platform == "win32":
+            zf.writestr("tool.cmd", cmd_wrapper("tool.py"))
     return buf.getvalue()
 
 

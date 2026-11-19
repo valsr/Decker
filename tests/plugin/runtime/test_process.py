@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 import threading
 import time
@@ -22,7 +23,7 @@ class Harness:
             "test.plugin",
             [sys.executable, str(FIXTURES / script)],
             FIXTURES,
-            {"PATH": "/usr/bin:/bin"},
+            {"PATH": os.environ.get("PATH", "")},
             self.messages.append,
             self.exits.append,
         )

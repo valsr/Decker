@@ -2,7 +2,6 @@ import base64
 import io
 import json
 import shutil
-import stat
 import sys
 import threading
 import time
@@ -37,6 +36,7 @@ from decker.server.appearance import (
 from decker.server.devices.state import DeviceState
 from decker.server.page_controller import PageController
 from decker.server.plugins import PluginManager
+from tests.portable import adapt_fixture_plugin, entry_name, install_launcher
 from tests.server.animation_fixture import (
     WriteLog,
     make_gif,
@@ -69,7 +69,7 @@ _REC_MANIFEST: dict[str, Any] = {
     "name": "Recorder",
     "version": "1.0.0",
     "author": "Decker",
-    "runtime": {"type": "executable", "entry": "rec.py"},
+    "runtime": {"type": "executable", "entry": entry_name("rec.py")},
     "contributes": {
         "actions": [
             {
@@ -274,8 +274,9 @@ class Env:
         (self.rec_dir / "manifest.json").write_text(json.dumps(_REC_MANIFEST))
         script = self.rec_dir / "rec.py"
         script.write_text(_RECORDER)
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        install_launcher(script)
         shutil.copytree(_FIXTURE_DIR, self.plugins_dir / _COUNTER)
+        adapt_fixture_plugin(self.plugins_dir / _COUNTER)
         (self.plugins_dir / "com.t.static").mkdir()
         (self.plugins_dir / "com.t.static" / "manifest.json").write_text(json.dumps(_STATIC_MANIFEST))
         self.mixed_dir = self.plugins_dir / "com.t.mixed"
@@ -1228,6 +1229,8 @@ def test_plugins_dir_loader_failure_is_reported(tmp_path):
 def test_duplicate_plugin_id_is_rejected(tmp_path):
     shutil.copytree(_FIXTURE_DIR, tmp_path / "a")
     shutil.copytree(_FIXTURE_DIR, tmp_path / "b")
+    adapt_fixture_plugin(tmp_path / "a")
+    adapt_fixture_plugin(tmp_path / "b")
     manager = PluginManager(tmp_path, _FAST, PluginSettingsStore(tmp_path / "db.sqlite"))
     manager.create(SimpleNamespace(device_manager=FakeDeviceManager(), event_bus=FakeBus()))  # type: ignore[arg-type]
     try:
