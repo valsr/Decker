@@ -146,8 +146,12 @@ def _get_bundled_index() -> dict[_Key, _Face]:
         return _bundled_index
 
 
+def _style_key(bold: bool, italic: bool) -> str:
+    return "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
+
+
 def _from_bundled(family: str, bold: bool, italic: bool) -> tuple[str, bool, int] | None:
-    wanted = "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
+    wanted = _style_key(bold, italic)
     found = _get_bundled_index().get((family.lower(), wanted))
     return (found[0], bold, found[1]) if found else None
 
@@ -184,7 +188,7 @@ def _fc_match(pattern: str) -> tuple[str, bool, int] | None:
 def _from_index(family: str, bold: bool, italic: bool) -> tuple[str, bool, int] | None:
     index = _get_index()
     name = family.lower()
-    wanted = "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
+    wanted = _style_key(bold, italic)
     for style in dict.fromkeys((wanted, "bold" if bold else "regular", "regular")):
         if (name, style) in index:
             path, face = index[(name, style)]
@@ -193,7 +197,7 @@ def _from_index(family: str, bold: bool, italic: bool) -> tuple[str, bool, int] 
 
 
 def _exact_from_index(family: str, bold: bool, italic: bool) -> tuple[str, bool, int] | None:
-    wanted = "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
+    wanted = _style_key(bold, italic)
     found = _get_index().get((family.lower(), wanted))
     return (found[0], bold, found[1]) if found else None
 

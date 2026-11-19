@@ -18,7 +18,7 @@ def font_path(family: str = "DejaVu Sans", bold: bool = False, italic: bool = Fa
     try:
         directory = os.environ.get("DECKER_FONT_DIR")
         entry = _FAMILIES.get(family.strip().lower())
-        if not directory or entry is None:
+        if not directory or entry is None or not os.path.isabs(directory):
             return None
         prefix, slant = entry
         style = ("Bold" if bold else "") + (slant if italic else "")
