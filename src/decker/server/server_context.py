@@ -1,9 +1,12 @@
 """Per-server-process context: bundles all singleton manager instances."""
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from rpyc.utils.server import Server
 
+from decker.server.app_rule_controller import AppRuleController
+from decker.server.app_rule_store import AppRuleStore
 from decker.server.client_tracker import ClientTracker
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices.manager import DeviceManager
@@ -16,6 +19,10 @@ from decker.server.plugins import PluginManager
 from decker.server.reconfigure import ReconfigurePolicy
 from decker.server.repositories import RepositoryStore
 from decker.server.update_checker import UpdateChecker
+
+if TYPE_CHECKING:  # the engine and watcher modules arrive in later tasks
+    from decker.server.app_rule_engine import AppRuleEngine  # type: ignore[import-not-found]  # isort: skip
+    from decker.server.window_watcher import WindowWatcher  # type: ignore[import-not-found]  # isort: skip
 
 
 @dataclass
@@ -36,3 +43,7 @@ class ServerContext:
     reconfigure_policy: ReconfigurePolicy = field(default_factory=lambda: ReconfigurePolicy(None))
     restart_requested: bool = False
     client_tracker: ClientTracker | None = None
+    app_rule_store: AppRuleStore | None = None
+    app_rule_controller: AppRuleController | None = None
+    app_rule_engine: "AppRuleEngine | None" = None
+    window_watcher: "WindowWatcher | None" = None

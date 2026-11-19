@@ -6,7 +6,9 @@ from unittest.mock import MagicMock, call
 import pytest
 from assertpy import assert_that
 
+from decker.common.model import AppRule, DefaultRule, MatchCondition
 from decker.plugin.target import ActionTarget
+from decker.server.app_rule_store import AppRuleStore
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.page_controller import (
@@ -31,6 +33,7 @@ def context(tmp_path):
     keys = KeyAssignmentStore(db_path=tmp_path / "decker.db")
     states = DeviceStateStore(data_dir=tmp_path)
     controller = PageController()
+    rules = AppRuleStore(db_path=tmp_path / "decker.db")
     device_manager = MagicMock()
     device_manager.show_page.return_value = True
     device_manager.get_device_state.return_value.has_image.return_value = False
@@ -42,11 +45,12 @@ def context(tmp_path):
         page_store=pages,
         page_controller=controller,
         event_bus=MagicMock(),
+        app_rule_store=rules,
     )
-    for manager in (pages, keys, states, controller):
+    for manager in (pages, keys, states, rules, controller):
         manager.create(ctx)
     yield ctx
-    for manager in (controller, states, keys, pages):
+    for manager in (controller, rules, states, keys, pages):
         manager.destroy()
 
 
@@ -453,3 +457,48 @@ class TestShowWithoutBareRedraw:
         context.page_controller.restore(DEV)
 
         context.plugin_manager.activate_action.assert_called_once_with(target, {}, draw=True)
+
+
+class TestAppRuleCascade:
+    @staticmethod
+    def _rule(profile_id: int, page_id: str = "") -> AppRule:
+        return AppRule("", "R", True, [MatchCondition("executable", "contains", "x")], profile_id, page_id)
+
+    def test_delete_profile_removes_rules_and_pushes_app_rules_changed(self, context):
+        profile = context.page_controller.add_profile(DEV, "Other")
+        store = context.app_rule_store
+        store.add_rule(DEV, self._rule(profile.profile_id))
+        store.set_default_rule(DEV, DefaultRule(True, profile.profile_id))
+        cast(MagicMock, context.event_bus.push).reset_mock()
+
+        assert_that(context.page_controller.delete_profile(DEV, profile.profile_id)).is_true()
+
+        assert_that(store.list_rules(DEV).rules).is_empty()
+        assert_that(store.list_rules(DEV).default_rule).is_equal_to(DefaultRule())
+        assert_that(_events(context)).contains(("app_rules_changed", {"device_id": DEV}))
+
+    def test_delete_profile_without_rules_pushes_no_app_rules_changed(self, context):
+        profile = context.page_controller.add_profile(DEV, "Other")
+
+        context.page_controller.delete_profile(DEV, profile.profile_id)
+
+        assert_that([name for name, _ in _events(context)]).does_not_contain("app_rules_changed")
+
+    def test_delete_page_clears_rule_page_ids(self, context):
+        page2 = context.page_store.add_page(DEV)
+        store = context.app_rule_store
+        store.add_rule(DEV, self._rule(0, page2.page_id))
+        cast(MagicMock, context.event_bus.push).reset_mock()
+
+        assert_that(context.page_controller.delete_page(DEV, page2.page_id)).is_true()
+
+        assert_that(store.list_rules(DEV).rules[0].page_id).is_equal_to("")
+        assert_that(_events(context)).contains(("app_rules_changed", {"device_id": DEV}))
+
+    def test_deleting_works_without_a_rule_store(self, context):
+        context.app_rule_store = None
+        profile = context.page_controller.add_profile(DEV, "Other")
+        page = context.page_store.add_page(DEV)
+
+        assert_that(context.page_controller.delete_page(DEV, page.page_id)).is_true()
+        assert_that(context.page_controller.delete_profile(DEV, profile.profile_id)).is_true()
