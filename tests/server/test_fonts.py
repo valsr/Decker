@@ -168,7 +168,7 @@ def test_a_walk_error_is_skipped_and_scanning_continues(tmp_path: Path, monkeypa
     good = _copy_bundled(tmp_path / "good")
     real_walk = os.walk
 
-    def walk(top: Path, **kwargs: object):
+    def walk(top: Path, **kwargs: object) -> Iterator[tuple[str, list[str], list[str]]]:
         onerror = kwargs["onerror"]
         onerror(OSError("denied"))  # type: ignore[operator]
         yield from real_walk(top, **kwargs)  # type: ignore[arg-type]

@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from assertpy import assert_that
 
 from decker.asset.iconpack import IconPackRegistry
+from decker.asset.systemicons import SystemIcons
 from decker.asset.usericons import USER_PACK_ID, USER_PLUGIN_NAME, UserIcons
 from decker.common.icon_ref import DECKER_ICON_REF
 from decker.plugin.icons import MAX_ICON_BYTES
@@ -241,8 +243,7 @@ def test_read_ref_serves_the_builtin_decker_icon():
 
 class TestSystemIconPacks:
     @staticmethod
-    def _system(tmp_path, enabled=True):
-        from decker.asset.systemicons import SystemIcons
+    def _system(tmp_path: Path, enabled: bool = True) -> SystemIcons:
         from tests.asset.test_systemicons import make_theme
 
         root = tmp_path / "icons"
@@ -312,7 +313,7 @@ class TestSystemIconPacks:
             ["decker.system.actions", "decker.system.places"]
         )
 
-    def test_registry_lists_the_user_pack_but_no_system_packs_when_disabled(self, tmp_path):
+    def test_registry_lists_the_user_pack_but_no_system_packs_when_disabled(self, tmp_path: Path) -> None:
         _pack(tmp_path)
         registry = IconPackRegistry(system_icons=self._system(tmp_path, enabled=False))
         registry.register(_plugin(tmp_path))
@@ -323,7 +324,7 @@ class TestSystemIconPacks:
         assert_that(registry.list_icons("decker.system.actions")).is_empty()
         assert_that(registry.read_icon("decker.system.actions", "edit-copy")).is_none()
 
-    def test_plugin_still_cannot_register_a_decker_system_pack_when_disabled(self, tmp_path):
+    def test_plugin_still_cannot_register_a_decker_system_pack_when_disabled(self, tmp_path: Path) -> None:
         _pack(tmp_path)
         failures: list[tuple[str, str]] = []
         registry = IconPackRegistry(
