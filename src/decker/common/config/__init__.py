@@ -195,6 +195,7 @@ class Config:
         """
         if not _is_valid(value):
             raise TypeError(f"Invalid configuration value type: {type(value).__name__}")
+        self._user = _flatten(self._user_backend.load())
         self._user[path] = value
         self._user_backend.save(_unflatten(self._user))
 
@@ -204,6 +205,7 @@ class Config:
         No-op if path is not in the user layer.
         """
         prefix = path + "."
+        self._user = _flatten(self._user_backend.load())
         keys = [k for k in self._user if k == path or k.startswith(prefix)]
         if not keys:
             return

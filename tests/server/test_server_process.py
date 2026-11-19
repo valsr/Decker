@@ -16,9 +16,9 @@ from decker.common.api import ApiHandler
 from decker.common.context import ServerAppContext
 from decker.server.monitor import ServerMonitor
 from decker.server.reconfigure import RESTART_EXIT_CODE
-from decker.server.settings import read_settings
 from decker.server.server import ServerProcess
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
+from decker.server.settings import read_settings
 
 _HEALTHY_DEADLINE = 120.0
 _STOP_TIMEOUT = 60.0
@@ -136,7 +136,7 @@ def test_a_restart_needing_settings_change_makes_the_real_server_exit_with_the_r
         reply = api.request("server_settings_set", json.dumps({"memory_limit": 256 * 1024 * 1024}))
         child.join(timeout=_STOP_TIMEOUT)
 
-        assert_that(json.loads(reply)["restarting"]).is_true()
+        assert_that(json.loads(str(reply))["restarting"]).is_true()
         assert_that(child.is_alive()).is_false()
         assert_that(child.exitcode).is_equal_to(RESTART_EXIT_CODE)
     finally:
@@ -180,12 +180,14 @@ def test_the_server_stops_with_code_zero_when_the_last_client_leaves(server: Ser
     config.set("server.stop_when_last_client_leaves", True)
     config.set("server.stop_grace", 0.5)
     api = ApiHandler(host="127.0.0.1", port=port, timeout=5.0)
+    monitor_like = ApiHandler(host="127.0.0.1", port=port, timeout=5.0)
     try:
         assert_that(server.start()).is_true()
         _wait_healthy(port, server)
         child = _child(server)
 
-        assert_that(api.request("heartbeat")).is_not_none()
+        assert_that(monitor_like.request("heartbeat")).is_not_none()  # stays connected, like the monitor
+        assert_that(api.request("client_attached")).is_true()
         api.close()
         child.join(timeout=_STOP_TIMEOUT)
 
@@ -193,6 +195,7 @@ def test_the_server_stops_with_code_zero_when_the_last_client_leaves(server: Ser
         assert_that(child.exitcode).is_equal_to(0)
     finally:
         api.close()
+        monitor_like.close()
         config.unset("server.stop_when_last_client_leaves")
         config.unset("server.stop_grace")
 

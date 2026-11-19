@@ -29,6 +29,7 @@ Decker supports the following Elgato Stream Deck models:
 | Plugins (out of process, `.deckerplugin` packages, repositories, updates) | Supported |
 | PyQt6 desktop client | Supported |
 | Command line client (`poe cli`) | Supported |
+| Server settings from the client (port, memory and image limits, stop on last client), gated by `--allow-client-reconfiguration`; see [docs/server-reconfiguration.md](docs/server-reconfiguration.md) | Supported |
 | Daemon mode, system tray on every desktop | Not supported |
 
 Early alpha: the table shows what exists, not that it is stable. Plugins are listed in the
@@ -51,6 +52,7 @@ Early alpha: the table shows what exists, not that it is stable. Plugins are lis
 | User icon import | ✅ | ✅ [13] | ⚠️ | ✅ [10] | ✅ [10] |
 | GIF animations | ✅ | ✅ [13] | ⚠️ | ✅ | ✅ |
 | CLI | ✅ | ✅ [13] | ⚠️ | ✅ [11] | ✅ [11] |
+| Server settings from the client | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Daemon mode | ❌ [12] | ❌ [12] | ❌ [12] | ❌ [12] | ❌ [12] |
 
 The Linux (Arch/Plasma/Wayland) column is ✅ where the maintainer uses the feature or CI passes, and CI also runs the suite on

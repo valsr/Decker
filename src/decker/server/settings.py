@@ -1,5 +1,6 @@
 """The server settings a client may change, with validation and persistence."""
 
+import json
 from dataclasses import asdict, dataclass, replace
 
 from decker.common import config
@@ -52,12 +53,15 @@ def validate(values: dict[str, object]) -> ServerSettings:
     current = read_settings()
     unknown = sorted(set(values) - set(current.to_dict()))
     if unknown:
-        raise SettingsError(f"unknown setting: {', '.join(unknown)}")
+        names = ", ".join(unknown)
+        raise SettingsError(f"unknown setting: {names}")
     changes: dict[str, object] = {}
     if "port" in values:
         changes["port"] = _int_in_range("port", values["port"], 1, 65535)
     if "memory_limit" in values:
-        changes["memory_limit"] = _int_in_range("memory_limit", values["memory_limit"], MIN_MEMORY_LIMIT, MAX_MEMORY_LIMIT)
+        changes["memory_limit"] = _int_in_range(
+            "memory_limit", values["memory_limit"], MIN_MEMORY_LIMIT, MAX_MEMORY_LIMIT
+        )
     if "icon_max_file_size" in values:
         changes["icon_max_file_size"] = _int_in_range(
             "icon_max_file_size", values["icon_max_file_size"], MIN_IMAGE_FILE_SIZE, MAX_IMAGE_FILE_SIZE
@@ -78,3 +82,16 @@ def write_settings(new: ServerSettings) -> bool:
     config.set("icons.max_file_size", new.icon_max_file_size)
     config.set("server.stop_when_last_client_leaves", new.stop_when_last_client_leaves)
     return (new.port, new.memory_limit, new.icon_max_file_size) != (old.port, old.memory_limit, old.icon_max_file_size)
+
+
+def apply_settings_request(values_json: str) -> tuple[bool, str | None]:
+    """Parse, validate and persist a JSON settings change; returns (restart needed, error text)."""
+    try:
+        values = json.loads(values_json)
+        if not isinstance(values, dict):
+            raise ValueError
+        return write_settings(validate(values)), None
+    except SettingsError as exc:
+        return False, str(exc)
+    except ValueError:
+        return False, "settings must be a JSON object"

@@ -35,7 +35,7 @@ def _resolve(host: str) -> set[str]:
     return {text for info in infos if (text := _normalise(str(info[4][0]))) is not None}
 
 
-class ReconfigurePolicy:
+class ReconfigurePolicy:  # pylint: disable=too-few-public-methods
     """Decides whether a connected client may change server settings."""
 
     def __init__(self, hosts: list[str] | None) -> None:

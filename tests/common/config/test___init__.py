@@ -202,6 +202,39 @@ class TestGetAll:
 # ---------------------------------------------------------------------------
 
 
+class TestSharedUserFile:
+    @staticmethod
+    def _config(tmp_path: Path) -> Config:
+        defaults_file = tmp_path / "defaults.yml"
+        defaults_file.write_text("", encoding="utf-8")
+        cfg = Config(DefaultBackend(defaults_file), UserBackend(tmp_path / "config.yaml"), MemoryBackend())
+        cfg.load()
+        return cfg
+
+    def test_set_keeps_keys_another_process_wrote_since_load(self, tmp_path: Path):
+        server_side = self._config(tmp_path)
+        client_side = self._config(tmp_path)
+        server_side.set("server.port", 19000)
+
+        client_side.set("client.server_port", 19000)
+
+        fresh = self._config(tmp_path)
+        assert_that(fresh.get("server.port")).is_equal_to(19000)
+        assert_that(fresh.get("client.server_port")).is_equal_to(19000)
+
+    def test_unset_keeps_keys_another_process_wrote_since_load(self, tmp_path: Path):
+        first = self._config(tmp_path)
+        first.set("a", 1)
+        second = self._config(tmp_path)
+        first.set("b", 2)
+
+        second.unset("a")
+
+        fresh = self._config(tmp_path)
+        assert_that(fresh.has("a")).is_false()
+        assert_that(fresh.get("b")).is_equal_to(2)
+
+
 class TestSet:
     def test_set_persists_to_user_layer(self, tmp_path: Path):
         cfg = make_config(tmp_path=tmp_path)

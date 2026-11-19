@@ -207,6 +207,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._last_devices = None
         self._last_actions = None
         self._bg_server = BgServingThread(self._conn)
+        self.call("client_attached")
         EventManager.get().push(ServerConnectedEvent(host=host, port=port))
         self._refresh_all()
         self.refresh_server_settings()
