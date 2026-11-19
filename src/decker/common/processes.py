@@ -1,12 +1,28 @@
 """Cross-platform process groups, process-tree termination and memory reading."""
 
+import logging
 import os
 import signal
 import subprocess
 import sys
+import weakref
+from dataclasses import dataclass
 from typing import Any
 
 import psutil
+
+from decker.common import _winjob
+
+_LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _Job:
+    handle: int
+    close: weakref.finalize  # type: ignore[type-arg,unused-ignore]
+
+
+_JOBS: "weakref.WeakKeyDictionary[subprocess.Popen[Any], _Job]" = weakref.WeakKeyDictionary()
 
 
 def group_popen_kwargs() -> dict[str, Any]:
@@ -24,10 +40,30 @@ def terminate_tree(proc: subprocess.Popen[Any]) -> None:
         _signal_group(proc.pid, signal.SIGTERM)
 
 
+def adopt(proc: subprocess.Popen[Any]) -> None:
+    """On Windows put a just-spawned process in a kill-on-close job object; never raises, no-op elsewhere."""
+    if sys.platform != "win32":
+        return
+    handle = _winjob.create_job()
+    if handle is None:
+        _LOGGER.debug("job object unavailable; falling back to the process walk")
+        return
+    if not _winjob.assign(handle, proc.pid):
+        _LOGGER.debug("could not assign pid %s to a job object; falling back to the process walk", proc.pid)
+        _winjob.close(handle)
+        return
+    _JOBS[proc] = _Job(handle, weakref.finalize(proc, _winjob.close, handle))
+
+
 def kill_tree(proc: subprocess.Popen[Any]) -> None:
     """Forcefully stop the process and its descendants; never raises."""
     if sys.platform == "win32":
-        _walk_tree(proc, terminate=False)
+        job = _JOBS.pop(proc, None)
+        if job is None:
+            _walk_tree(proc, terminate=False)
+        else:
+            _winjob.terminate(job.handle)
+            job.close()
     else:
         _signal_group(proc.pid, signal.SIGKILL)
 
