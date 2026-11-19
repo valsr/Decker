@@ -4,6 +4,7 @@ import configparser
 import hashlib
 import logging
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -273,7 +274,9 @@ def _configured_theme() -> str:
 
 
 class SystemIcons:
-    """The active icon theme served as virtual packs ``decker.system.<category>`` (read-only, built lazily)."""
+    """The active icon theme as virtual packs ``decker.system.<category>`` (read-only, built lazily).
+
+    ``enabled`` defaults to Linux only; a disabled instance exposes nothing."""
 
     def __init__(
         self,
@@ -281,7 +284,9 @@ class SystemIcons:
         home: Path | None = None,
         configured_theme: Callable[[], str] | None = None,
         recheck_s: float = 2.0,
+        enabled: bool | None = None,
     ) -> None:
+        self._enabled = sys.platform == "linux" if enabled is None else enabled
         self._home = home if home is not None else Path.home()
         self._search_dirs = list(search_dirs) if search_dirs is not None else icon_search_dirs(os.environ, self._home)
         self._configured = configured_theme or _configured_theme
@@ -294,6 +299,8 @@ class SystemIcons:
 
     def warm(self) -> None:
         """Build the index in the background so the first icon request does not wait for it."""
+        if not self._enabled:
+            return
         self._warm_thread = threading.Thread(target=self._warm, name="system-icons-warm", daemon=True)
         self._warm_thread.start()
 
@@ -313,10 +320,12 @@ class SystemIcons:
 
     def owns(self, pack_id: str) -> bool:
         """Whether ``pack_id`` is one of the ten system packs."""
-        return _category_of_pack(pack_id) is not None
+        return self._enabled and _category_of_pack(pack_id) is not None
 
     def list_packs(self) -> list[dict[str, Any]]:
         """The non-empty category packs, shaped like plugin packs, in category order."""
+        if not self._enabled:
+            return []
         index = self._snapshot()
         return [
             {
@@ -334,12 +343,12 @@ class SystemIcons:
 
     def list_icons(self, pack_id: str) -> list[str]:
         """The category's icon names, sorted (empty for anything that is not a system pack)."""
-        category = _category_of_pack(pack_id)
+        category = _category_of_pack(pack_id) if self._enabled else None
         return sorted(self._snapshot().icons.get(category, {})) if category is not None else []
 
     def read_icon(self, pack_id: str, name: Any) -> bytes | None:
         """The bytes of an icon, or None for an unknown name, a non-image or oversized file, or a read error."""
-        category = _category_of_pack(pack_id)
+        category = _category_of_pack(pack_id) if self._enabled else None
         if category is None or not isinstance(name, str) or not name:
             return None
         path = self._snapshot().icons.get(category, {}).get(name)  # names are looked up, never joined into a path

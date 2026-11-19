@@ -241,7 +241,7 @@ def test_read_ref_serves_the_builtin_decker_icon():
 
 class TestSystemIconPacks:
     @staticmethod
-    def _system(tmp_path):
+    def _system(tmp_path, enabled=True):
         from decker.asset.systemicons import SystemIcons
         from tests.asset.test_systemicons import make_theme
 
@@ -256,7 +256,9 @@ class TestSystemIconPacks:
             files=("actions/scalable/edit-copy.svg", "places/48/folder.png"),
         )
         make_theme(root, "hicolor", {})
-        return SystemIcons(search_dirs=[root], home=tmp_path / "home", configured_theme=lambda: "T", recheck_s=0)
+        return SystemIcons(
+            search_dirs=[root], home=tmp_path / "home", configured_theme=lambda: "T", recheck_s=0, enabled=enabled
+        )
 
     def test_system_packs_follow_the_plugin_packs(self, tmp_path):
         _pack(tmp_path)
@@ -309,6 +311,31 @@ class TestSystemIconPacks:
         assert_that([p["id"] for p in _no_user(registry.list_packs())]).is_equal_to(
             ["decker.system.actions", "decker.system.places"]
         )
+
+    def test_registry_lists_the_user_pack_but_no_system_packs_when_disabled(self, tmp_path):
+        _pack(tmp_path)
+        registry = IconPackRegistry(system_icons=self._system(tmp_path, enabled=False))
+        registry.register(_plugin(tmp_path))
+
+        ids = [p["id"] for p in registry.list_packs()]
+
+        assert_that(ids).is_equal_to(["com.t.p.icons", USER_PACK_ID])
+        assert_that(registry.list_icons("decker.system.actions")).is_empty()
+        assert_that(registry.read_icon("decker.system.actions", "edit-copy")).is_none()
+
+    def test_plugin_still_cannot_register_a_decker_system_pack_when_disabled(self, tmp_path):
+        _pack(tmp_path)
+        failures: list[tuple[str, str]] = []
+        registry = IconPackRegistry(
+            on_failure=lambda pid, err: failures.append((pid, err)),
+            system_icons=self._system(tmp_path, enabled=False),
+        )
+
+        registry.register(_plugin(tmp_path, plugin_id="decker.system", pack_id="decker.system.actions"))
+
+        assert_that(failures).is_length(1)
+        assert_that(failures[0][1]).contains("reserved")
+        assert_that(registry.read_icon("decker.system.actions", "a.png")).is_none()
 
     def test_the_default_registry_is_hermetic_in_tests(self):
         assert_that(_no_user(IconPackRegistry().list_packs())).is_empty()
