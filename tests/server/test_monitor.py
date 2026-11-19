@@ -8,41 +8,8 @@ import pytest
 from assertpy import assert_that
 
 from decker.common.context import ServerAppContext
-from decker.server.monitor import ServerMonitor, _connect_host, _read_rss_bytes
+from decker.server.monitor import ServerMonitor, _connect_host
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
-
-
-class TestReadRssBytes:
-    def test_reads_vmrss_from_proc_status(self):
-        content = "Name:\tpython\nVmRSS:\t  4096 kB\nVmPeak:\t 8192 kB\n"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
-            fh.write(content)
-            path = fh.name
-        try:
-            pid = int(path)  # won't work as int — use a pid override approach
-        except ValueError:
-            pass
-        # Patch builtins.open to feed our fake /proc content
-        with (
-            patch("builtins.open", return_value=open(path))
-            if False
-            else patch(
-                "decker.server.monitor.open",
-                side_effect=lambda p, **kw: open(path),
-            )
-        ):
-            result = _read_rss_bytes(12345)
-        os.unlink(path)
-        assert_that(result).is_equal_to(4096 * 1024)
-
-    def test_returns_none_when_file_missing(self):
-        result = _read_rss_bytes(9999999)
-        assert_that(result).is_none()
-
-    def test_returns_none_on_value_error(self):
-        with patch("builtins.open", side_effect=ValueError("bad value")):
-            result = _read_rss_bytes(1)
-        assert_that(result).is_none()
 
 
 def _make_monitor() -> ServerMonitor:
@@ -111,7 +78,7 @@ class TestServerMonitorMemory:
         m = _make_monitor()
         m._server.pid = 12345  # type: ignore[misc]  # pylint: disable=protected-access
         m._memory_limit = 1024 * 1024 * 1024  # pylint: disable=protected-access
-        with patch("decker.server.monitor._read_rss_bytes", return_value=100 * 1024 * 1024):
+        with patch("decker.server.monitor.rss_bytes", return_value=100 * 1024 * 1024):
             result = m._memory_ok()  # pylint: disable=protected-access
         assert_that(result).is_true()
 
@@ -119,7 +86,7 @@ class TestServerMonitorMemory:
         m = _make_monitor()
         m._server.pid = 12345  # type: ignore[misc]  # pylint: disable=protected-access
         m._memory_limit = 100 * 1024 * 1024  # pylint: disable=protected-access
-        with patch("decker.server.monitor._read_rss_bytes", return_value=200 * 1024 * 1024):
+        with patch("decker.server.monitor.rss_bytes", return_value=200 * 1024 * 1024):
             result = m._memory_ok()  # pylint: disable=protected-access
         assert_that(result).is_false()
 
@@ -131,7 +98,7 @@ class TestServerMonitorMemory:
     def test_memory_ok_returns_true_when_rss_unreadable(self):
         m = _make_monitor()
         m._server.pid = 12345  # type: ignore[misc]  # pylint: disable=protected-access
-        with patch("decker.server.monitor._read_rss_bytes", return_value=None):
+        with patch("decker.server.monitor.rss_bytes", return_value=None):
             assert_that(m._memory_ok()).is_true()  # pylint: disable=protected-access
 
 
@@ -167,7 +134,7 @@ class TestServerMonitorCheckOnce:
         m._memory_limit = 10  # pylint: disable=protected-access
         with (
             patch.object(m, "_api") as mock_api,
-            patch("decker.server.monitor._read_rss_bytes", return_value=999999999),
+            patch("decker.server.monitor.rss_bytes", return_value=999999999),
         ):
             mock_api.request_as.return_value = DeckerServiceStatus(
                 service_status=DeckerStatusEnum.HEALTHY, last_heartbeat=0.0

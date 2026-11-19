@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -15,7 +14,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import decker_plugin_sdk
-from decker.common import paths
+from decker.common import paths, processes
 from decker.common.version import decker_version
 from decker.plugin.manifest import RuntimeSpec
 
@@ -76,13 +75,6 @@ def stage_sdk(dest_root: Path | None = None) -> Path:
     return version_dir
 
 
-def _kill_group(proc: "subprocess.Popen[str]") -> None:
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
-
-
 def _run(command: list[str], progress: Callable[[str], None]) -> None:
     tail: deque[str] = deque(maxlen=_TAIL_LINES)
     try:
@@ -92,11 +84,11 @@ def _run(command: list[str], progress: Callable[[str], None]) -> None:
             stderr=subprocess.STDOUT,
             text=True,
             errors="replace",
-            start_new_session=True,
+            **processes.group_popen_kwargs(),
         )
     except OSError as exc:
         raise EnvironmentBuildError(f"cannot run {command[0]}: {exc}") from exc
-    timer = threading.Timer(_TIMEOUT_SECONDS, _kill_group, args=(proc,))
+    timer = threading.Timer(_TIMEOUT_SECONDS, processes.kill_tree, args=(proc,))
     timer.start()
     try:
         assert proc.stdout is not None
@@ -108,7 +100,7 @@ def _run(command: list[str], progress: Callable[[str], None]) -> None:
         timed_out = not timer.is_alive()
     finally:
         timer.cancel()
-        _kill_group(proc)
+        processes.kill_tree(proc)
         proc.wait()
         if proc.stdout is not None:
             proc.stdout.close()

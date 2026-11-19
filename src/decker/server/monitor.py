@@ -7,25 +7,9 @@ from dataclasses import dataclass
 from decker.common import config
 from decker.common.api import ApiHandler
 from decker.common.context import ServerAppContext
+from decker.common.processes import rss_bytes
 from decker.server.server import ServerProcess
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
-
-
-def _read_rss_bytes(pid: int) -> int | None:
-    """Read a process's RSS memory from /proc/<pid>/status (Linux only).
-
-    Returns:
-        int | None: RSS in bytes, or None if the file could not be read.
-    """
-    try:
-        with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
-            for line in fh:
-                if line.startswith("VmRSS:"):
-                    # "VmRSS:   123456 kB"
-                    return int(line.split()[1]) * 1024
-    except (FileNotFoundError, PermissionError, ValueError, OSError) as e:
-        logging.warning("Could not read RSS for pid %d - %s", pid, type(e).__name__)
-    return None
 
 
 def _connect_host(bind_host: str) -> str:
@@ -159,7 +143,7 @@ class ServerMonitor:
         if pid is None:
             return True
 
-        rss = _read_rss_bytes(pid)
+        rss = rss_bytes(pid)
         if rss is None:
             return True
 

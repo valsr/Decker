@@ -1,9 +1,7 @@
 import base64
 import io
 import json
-import os
 import shutil
-import signal
 import stat
 import sys
 import threading
@@ -14,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import psutil
 import pytest
 from assertpy import assert_that
 from PIL import Image
@@ -487,7 +486,7 @@ class TestWillAppear:
         restarting_env.manager.activate_action(REC_TARGET)
         assert _wait_for(lambda: restarting_env.received("will_appear"))
 
-        os.kill(restarting_env.process_pid("com.decker.rec"), signal.SIGKILL)
+        psutil.Process(restarting_env.process_pid("com.decker.rec")).kill()
 
         assert _wait_for(lambda: len(restarting_env.received("will_appear")) == 2)
         assert_that(restarting_env.received("will_appear")[1]["context"]).is_equal_to("ctx-1")

@@ -20,6 +20,7 @@ argcomplete = "^3.6.3"
 cairosvg = "^2.7"
 pillow = "^13.0.0"
 packaging = "^25.0"
+psutil = "^7.2.2"
 
 [tool.poetry.group.dev.dependencies]
 black = "^26.5.1"
@@ -35,6 +36,7 @@ isort = "^9.0.2"
 dill = "^0.4.1"
 pyenchant = "^3.2.2"
 types-pyyaml = "^6.0.12.20260518"
+types-psutil = "^7.2.2.20261111"
 
 [build-system]
 requires = ["poetry-core"]
@@ -105,6 +107,7 @@ markers = [
     "slow: tests that shell out to uv and build environments",
     "linux_only: needs Linux-only behaviour",
     "posix_only: needs POSIX process behaviour",
+    "windows_only: needs Windows process behaviour",
 ]
 
 
