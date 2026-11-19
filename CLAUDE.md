@@ -110,4 +110,4 @@ Update stubs when upstream API surfaces change: `poe stubs`.
 
 ## Platform support
 
-Five tiers, in priority order: (1) Linux Arch/Manjaro/Plasma/Wayland, (2) Linux Ubuntu/Debian/Fedora/GNOME, (3) Linux other (90-100%), (4) Windows (75%+), (5) macOS (75%+). Every feature and plugin must target them. Update `docs/platform-support.md` (and the plugins repo's table) in the same change; plugins declare `platforms`/`linux` in the manifest.
+Five tiers, in priority order: (1) Linux Arch/Manjaro/Plasma/Wayland, (2) Linux Ubuntu/Debian/Fedora/GNOME, (3) Linux other (90-100%), (4) Windows (75%+), (5) macOS (75%+). Every feature and plugin must target them. Update the platform table in `README.md` (and the plugins repo's README table); tiers and rules stay in `docs/platform-support.md` in the same change; plugins declare `platforms`/`linux` in the manifest.
