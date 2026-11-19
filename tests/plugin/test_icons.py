@@ -71,11 +71,7 @@ def test_max_icon_bytes_default_is_4_mib() -> None:
     assert_that(max_icon_bytes()).is_equal_to(4 * 1024 * 1024)
 
 
-def test_max_icon_bytes_follows_config() -> None:
-    from decker.common import config
+def test_max_icon_bytes_follows_config(isolated_config) -> None:
+    isolated_config.set("icons.max_file_size", 1024)
 
-    try:
-        config.set("icons.max_file_size", 1024)
-        assert_that(max_icon_bytes()).is_equal_to(1024)
-    finally:
-        config.unset("icons.max_file_size")
+    assert_that(max_icon_bytes()).is_equal_to(1024)
