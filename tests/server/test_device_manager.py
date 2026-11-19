@@ -389,6 +389,30 @@ class TestDeviceWatcher:
 
         context.app_rule_engine.evaluate_device.assert_called_once_with(device_id_for_serial("ABC123"))
 
+    def test_a_reopened_device_forgets_its_remembered_rule_target_before_evaluation(self, watched):
+        dm, context = watched
+        patcher = self._enumerate(self._deck())
+
+        dm.check_devices()
+        patcher.stop()
+
+        device_id = device_id_for_serial("ABC123")
+        names = [c[0] for c in context.app_rule_engine.method_calls]
+        assert_that(names).is_equal_to(["forget_device", "evaluate_device"])
+        context.app_rule_engine.forget_device.assert_called_once_with(device_id)
+
+    def test_opened_device_ids_lists_only_open_devices_without_touching_hardware(self, watched):
+        dm, _ = watched
+        assert_that(dm.opened_device_ids()).is_empty()
+        patcher = self._enumerate(self._deck())
+        dm.check_devices()
+        patcher.stop()
+
+        with patch("decker.server.devices.manager._HardwareDeviceManager", side_effect=AssertionError("hardware")):
+            ids = dm.opened_device_ids()
+
+        assert_that(ids).is_equal_to([device_id_for_serial("ABC123")])
+
     def test_a_lost_device_is_forgotten_by_the_app_rule_engine(self, watched):
         dm, context = watched
         deck = self._deck()
@@ -397,6 +421,7 @@ class TestDeviceWatcher:
         patcher.stop()
         deck.get_serial_number.side_effect = OSError("gone")
         patcher = self._enumerate()
+        context.app_rule_engine.reset_mock()  # opening the deck forgot its target too
 
         dm.check_devices()
         patcher.stop()

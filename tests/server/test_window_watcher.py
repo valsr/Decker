@@ -406,3 +406,44 @@ def test_pick_result_and_timeout_race_fires_once() -> None:
     time.sleep(0.15)
     assert_that(results).is_equal_to([win("x")])
     watcher.stop()
+
+
+def test_overlapping_evaluations_apply_in_order() -> None:
+    backend = FakeBackend()
+    release_first = threading.Event()
+    first_started = threading.Event()
+    applied: list[str] = []
+
+    def on_window(window: WindowInfo) -> None:
+        if window.title == "a":
+            first_started.set()
+            release_first.wait(WAIT)
+            time.sleep(0.05)  # the slower earlier evaluation would finish last without serialisation
+        applied.append(window.title)
+
+    rec = Recorder()
+    watcher = WindowWatcher(backend, on_window, rec.push, rec.on_status, WatcherTimings(debounce=0.02))
+    watcher.start()
+    assert backend.on_change is not None
+    backend.on_change(win("a"))
+    assert_that(first_started.wait(WAIT)).is_true()
+    backend.on_change(win("b"))
+    time.sleep(0.1)
+    release_first.set()
+    wait_for(lambda: len(applied) == 2)
+    watcher.stop()
+    assert_that(applied).is_equal_to(["a", "b"])
+
+
+def test_launch_survives_an_unstarted_stopper_thread() -> None:
+    backend = FakeBackend()
+    watcher, _ = make(backend)
+    with watcher._lock:  # pylint: disable=protected-access
+        watcher._running = True  # pylint: disable=protected-access
+        watcher._stopper = threading.Thread(target=lambda: None)  # pylint: disable=protected-access
+
+    watcher._launch()  # pylint: disable=protected-access
+
+    assert_that(watcher._launching).is_false()  # pylint: disable=protected-access
+    assert_that(backend.started.wait(WAIT)).is_true()
+    watcher.stop()

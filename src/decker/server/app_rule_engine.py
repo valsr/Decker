@@ -42,9 +42,13 @@ class AppRuleEngine(Manager):
         """Remember the window and evaluate every connected device against it."""
         with self._lock:
             self._window = window
-        for info in self._ctx.device_manager.list_devices():
-            if info.id is not None:
-                self._evaluate(info.id, window)
+        try:
+            device_ids = self._ctx.device_manager.opened_device_ids()
+        except Exception:  # pylint: disable=broad-exception-caught
+            _LOGGER.exception("AppRuleEngine: could not list the open devices")
+            return
+        for device_id in device_ids:
+            self._evaluate(device_id, window)
 
     def evaluate_device(self, device_id: str) -> None:
         """Evaluate one device against the last focused window (no-op before the first one)."""
@@ -68,9 +72,18 @@ class AppRuleEngine(Manager):
                 previous = self._last_target.get(device_id)
                 self._last_target[device_id] = target
             if target is not None and target != previous:
-                self._apply(device_id, target)
+                self._apply_or_retry(device_id, target)
         except Exception:  # pylint: disable=broad-exception-caught
             _LOGGER.exception("AppRuleEngine: evaluating device %s failed", device_id)
+
+    def _apply_or_retry(self, device_id: str, target: RuleTarget) -> None:
+        try:
+            self._apply(device_id, target)
+        except Exception:
+            with self._lock:  # forget the target so the next focus change retries it
+                if self._last_target.get(device_id) == target:
+                    del self._last_target[device_id]
+            raise
 
     def _apply(self, device_id: str, target: RuleTarget) -> None:
         controller = self._ctx.page_controller
