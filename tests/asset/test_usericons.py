@@ -221,14 +221,9 @@ def test_preview_refuses_utf16_svg(tmp_path: Path) -> None:
     assert_that(list(tmp_path.iterdir())).is_empty()
 
 
-def test_import_rejects_images_over_the_configured_limit(tmp_path: Path) -> None:
-    from decker.common import config
-
-    try:
-        config.set("icons.max_file_size", 1024)
-        result = UserIcons(tmp_path).import_icon("big", b"x" * 2048, _OPTIONS)
-    finally:
-        config.unset("icons.max_file_size")
+def test_import_rejects_images_over_the_configured_limit(tmp_path: Path, isolated_config) -> None:
+    isolated_config.set("icons.max_file_size", 1024)
+    result = UserIcons(tmp_path).import_icon("big", b"x" * 2048, _OPTIONS)
 
     assert_that(result.ok).is_false()
     assert_that(result.error).contains("1024")

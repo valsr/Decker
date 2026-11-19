@@ -20,6 +20,17 @@ def _no_system_icon_themes(tmp_path_factory: pytest.TempPathFactory, monkeypatch
     monkeypatch.setenv("XDG_DATA_DIRS", str(empty / "share"))
 
 
+@pytest.fixture
+def isolated_config(tmp_path):
+    """Point the config singleton at a temporary user config file, restoring it afterwards."""
+    from decker.common import config  # pylint: disable=import-outside-toplevel
+
+    saved = (config._config, config._USER_CONFIG_PATH)  # pylint: disable=protected-access
+    config.configure_prefix(tmp_path / "config.yaml")
+    yield config
+    config._config, config._USER_CONFIG_PATH = saved  # pylint: disable=protected-access
+
+
 def marker_reason(marker: pytest.Mark | None, default: str) -> str:
     """Return a marker's reason, given positionally or as ``reason=``."""
     if marker is not None:
