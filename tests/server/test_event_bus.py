@@ -133,6 +133,16 @@ class TestEventBusTargeting:
         assert_that(local.received).is_equal_to([("ev", "local")])
         assert_that(remote.received).is_equal_to([("ev", "remote")])
 
+    def test_a_client_without_a_loopback_flag_is_treated_as_remote(self):
+        bus = EventBus()
+        conn = _Conn()
+        bus.register(conn, loopback=True)
+        del bus._loopback[conn]  # pylint: disable=protected-access
+
+        bus.push_filtered("ev", lambda loopback: "local" if loopback else "remote")
+
+        assert_that(conn.received).is_equal_to([("ev", "remote")])
+
     def test_register_defaults_to_loopback(self):
         bus = EventBus()
         conn = _Conn()
