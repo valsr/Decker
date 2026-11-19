@@ -1,3 +1,5 @@
+> **Not implemented.** The server currently has no `--daemon` option; this document describes a planned design. See docs/platform-support.md.
+
 # Decker Daemon Mode
 
 This document describes the daemon mode functionality added to the Decker server application.

@@ -51,7 +51,8 @@ pass there).
 Footnotes:
 
 1. CI ran the RPC service layer (with real stores on sqlite), the monitor logic and `decker.common.processes` (process
-   groups, tree kill, memory read via psutil, so no `/proc` is needed) on all three OSes. Not covered: a full
+   groups, tree kill, memory read via psutil, so no `/proc` is needed) on all three OSes. On Windows the tree kill does
+   not clean up orphaned helpers once the leader has exited (the pid may be recycled). Not covered: a full
    `poe server` run, memory-limit restarts of a long-lived server, and `poe cli` against a live server.
 2. The README documents `libhidapi` setup for Debian/Ubuntu, Fedora and Arch and a conventional udev rule; the udev
    steps are not verified on every distribution, and other distributions need their own package name.
@@ -61,10 +62,12 @@ Footnotes:
 4. PyQt6 widget and view tests run offscreen on all three OSes (`QT_QPA_PLATFORM=offscreen`). This is not a human check:
    real window manager behaviour, HiDPI and drag and drop are not covered.
 5. GNOME has no system tray by default, and the behaviour there is untested. The tray is not covered by CI on any OS.
-6. Plugin children start in their own process group (`CREATE_NEW_PROCESS_GROUP` on Windows, a new session elsewhere)
-   and are stopped by a psutil tree kill; the launcher uses the plugin venv's interpreter (`Scripts\python.exe` on
-   Windows, `bin/python` elsewhere). CI ran real plugin child processes, the watchdog and orphan checks on all three.
-   Plugin environment builds use fake `uv` executables in CI, so real `uv` and network builds are not covered.
+6. Plugin children start in their own process group (`CREATE_NEW_PROCESS_GROUP` on Windows, a new session elsewhere).
+   They are stopped by a recursive psutil kill on Windows and by `os.killpg` (SIGTERM/SIGKILL) on the process group
+   elsewhere. The launcher uses the plugin venv's interpreter (`Scripts\python.exe` on Windows, `bin/python` elsewhere);
+   on Windows that path is only asserted as an argv string, because the plugin tests build no real venv (`uv` is
+   faked). CI ran real plugin child processes, the watchdog and orphan checks on all three. Real `uv` and network
+   builds are not covered.
 7. CI ran package read/extract (including zip path safety per OS), install, uninstall and repository RPCs against local
    fixtures. Live repository fetches and update checks over the network are not covered.
 8. Fonts resolve in this order: `fc-match` when present, an index of the OS font folders, then the bundled DejaVu
@@ -77,6 +80,6 @@ Footnotes:
     thumbnail cache are tested on all three OSes. A real file dialog is not covered.
 11. CLI command tests run against the in-process service; `poe cli` against a live server on Windows and macOS is not
     covered.
-12. Not implemented: the server has no `--daemon` option.
+12. Not implemented: the server has no `--daemon` option; DAEMON.md describes a design that is not implemented.
 
 Plugin support is declared per plugin, not here; see the plugins repository's table.

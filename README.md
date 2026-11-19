@@ -76,7 +76,8 @@ CI uses MSYS2 for the native libraries; install [MSYS2](https://www.msys2.org/),
 pacman -S mingw-w64-x86_64-cairo mingw-w64-x86_64-hidapi
 ```
 
-Put `<msys2 folder>\mingw64\bin` on `PATH` so Python finds `libcairo-2.dll` and the hidapi library, and install
+Put `<msys2 folder>\mingw64\bin` on `PATH` so Python finds `libcairo-2.dll` (CI proves Cairo is needed: the SVG tests run there). CI installs hidapi too but never
+loads it, since no test enumerates devices. Install
 [uv](https://docs.astral.sh/uv/). Device permissions and drivers on Windows are unverified.
 
 ### macOS
