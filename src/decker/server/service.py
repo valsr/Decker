@@ -45,7 +45,7 @@ from decker.plugin.target import ActionTarget
 from decker.server.key_assignments import KeyAssignment
 from decker.server.plugin_installer import PluginInstallError
 from decker.server.repositories import CatalogEntry, RepositoryError, RepositoryStore
-from decker.server.settings import SettingsError, read_settings, validate, write_settings
+from decker.server.settings import apply_settings_request, read_settings
 from decker.server.update_checker import UpdateChecker
 
 if TYPE_CHECKING:
@@ -150,6 +150,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         super().__init__()
         self._last_heartbeat: float = time.time()
         self._peer_host: str | None = None
+        self._attached: bool = False
 
     def on_connect(self, conn: Any) -> None:
         """Handle client connection — register for server-push events."""
@@ -157,15 +158,13 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         self._peer_host = _peer_host(conn)
         if self._context is not None:
             self._context.event_bus.register(conn)
-            if self._context.client_tracker is not None:
-                self._context.client_tracker.connected()
 
     def on_disconnect(self, conn: Any) -> None:
         """Handle client disconnection — stop pushing events to this client."""
         logging.info("Client disconnected from Decker service")
         if self._context is not None:
             self._context.event_bus.unregister(conn)
-            if self._context.client_tracker is not None:
+            if self._attached and self._context.client_tracker is not None:
                 self._context.client_tracker.disconnected()
 
     @exposed
@@ -183,6 +182,14 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         return True
 
     @exposed
+    def client_attached(self) -> bool:
+        """Mark this connection as a user-facing client (the GUI); the monitor and the CLI do not call this."""
+        if not self._attached and self._context is not None and self._context.client_tracker is not None:
+            self._attached = True
+            self._context.client_tracker.connected()
+        return True
+
+    @exposed
     def server_settings(self) -> str:
         """Return the editable server settings plus whether this client may change them, as JSON."""
         values = read_settings().to_dict()
@@ -194,19 +201,9 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
     def server_settings_set(self, values_json: str) -> str:
         """Change server settings (JSON object of changed values); restart-needing changes restart the server."""
         error = self._settings_change_error()
-        values: object = None
+        restart = False
         if error is None:
-            try:
-                values = json.loads(values_json)
-            except ValueError:
-                error = "settings must be a JSON object"
-        if error is None and not isinstance(values, dict):
-            error = "settings must be a JSON object"
-        if error is None:
-            try:
-                restart = write_settings(validate(values))  # type: ignore[arg-type]
-            except SettingsError as exc:
-                error = str(exc)
+            restart, error = apply_settings_request(values_json)
         if error is not None:
             return json.dumps({"ok": False, "restarting": False, "error": error})
         config.unset("server.last_apply_error")

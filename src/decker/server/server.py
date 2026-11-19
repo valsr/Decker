@@ -256,6 +256,14 @@ class ServerProcess:
         logging.info("Received signal %d, shutting down", signum)
         self._request_shutdown()
 
+    def _cleanup(self, ctx: ServerContext, managers: list[Manager]) -> None:
+        if ctx.client_tracker is not None:
+            ctx.client_tracker.cancel()
+        if ctx.update_checker is not None:
+            ctx.update_checker.stop()
+        for manager in reversed(managers):
+            self._try_destroy_manager(manager)
+
     def _on_last_client_gone(self) -> None:
         ctx = self._context
         if ctx is None or ctx.restart_requested:
@@ -374,11 +382,7 @@ class ServerProcess:
                 ctx.update_checker.start()
                 self._serve(server, gate)
         finally:
-            if ctx.client_tracker is not None:
-                ctx.client_tracker.cancel()
-            ctx.update_checker.stop()
-            for manager in reversed(managers):
-                self._try_destroy_manager(manager)
+            self._cleanup(ctx, managers)
         if ctx.restart_requested:
             sys.exit(RESTART_EXIT_CODE)
         # Normal return -> subprocess exits with code 0 (intentional stop)

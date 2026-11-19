@@ -91,9 +91,37 @@ class TestServiceWiring:
         yield DeckerService(), idle
         DeckerService._context = None  # pylint: disable=protected-access
 
-    def test_connect_and_disconnect_drive_the_tracker(self, wired) -> None:
+    def test_an_attached_client_counts_and_its_disconnect_starts_the_timer(self, wired) -> None:
         svc, idle = wired
         svc.on_connect(MagicMock())
+        svc.client_attached()
+        svc.on_disconnect(MagicMock())
+
+        assert_that(idle.wait(2)).is_true()
+
+    def test_a_connection_that_never_attached_is_not_a_client(self, wired) -> None:
+        svc, idle = wired
+        svc.on_connect(MagicMock())
+        svc.on_disconnect(MagicMock())
+
+        assert_that(idle.wait(_GRACE * 6)).is_false()
+
+    def test_an_unattached_connection_does_not_keep_the_server_alive(self, wired) -> None:
+        from decker.server.service import DeckerService
+
+        gui, idle = wired
+        monitor = DeckerService()
+        monitor.on_connect(MagicMock())
+        gui.on_connect(MagicMock())
+        gui.client_attached()
+        gui.on_disconnect(MagicMock())
+
+        assert_that(idle.wait(2)).is_true()
+
+    def test_attaching_twice_counts_once(self, wired) -> None:
+        svc, idle = wired
+        svc.client_attached()
+        svc.client_attached()
         svc.on_disconnect(MagicMock())
 
         assert_that(idle.wait(2)).is_true()

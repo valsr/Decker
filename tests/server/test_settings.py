@@ -3,7 +3,13 @@
 import pytest
 from assertpy import assert_that
 
-from decker.server.settings import ServerSettings, SettingsError, read_settings, validate, write_settings
+from decker.server.settings import (
+    ServerSettings,
+    SettingsError,
+    read_settings,
+    validate,
+    write_settings,
+)
 
 _MIB = 1024 * 1024
 

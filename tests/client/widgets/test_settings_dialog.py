@@ -1,5 +1,6 @@
 """Tests for decker.client.widgets.settings_dialog.SettingsDialog."""
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -278,10 +279,10 @@ class TestGeneralTab:
 _MIB = 1024 * 1024
 
 
-def _info(**overrides):
+def _info(**overrides: Any):
     from decker.client.server_settings import ServerSettingsInfo
 
-    values = {
+    values: dict[str, Any] = {
         "port": 18861,
         "memory_limit": 1024 * _MIB,
         "icon_max_file_size": 4 * _MIB,
@@ -316,7 +317,9 @@ class TestServerReconfiguration:
         assert_that([f.isEnabled() for f in _server_fields(dialog)]).is_equal_to([False, False, False])
 
     def test_fields_are_enabled_and_loaded_when_allowed(self, dialog, manager):
-        manager.server_settings = _info(memory_limit=512 * _MIB, icon_max_file_size=2 * _MIB, stop_when_last_client_leaves=True)
+        manager.server_settings = _info(
+            memory_limit=512 * _MIB, icon_max_file_size=2 * _MIB, stop_when_last_client_leaves=True
+        )
 
         dialog.open_dialog()
 

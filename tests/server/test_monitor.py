@@ -276,8 +276,8 @@ class TestServerMonitorReconfiguration:
     def test_exit_code_zero_still_stops_the_monitor_without_rebuilding(self, restart_env):
         m, cfg, _ = restart_env
         cfg.set("server.port", 19000)
-        m._server.exit_code = 0  # type: ignore[misc]  # pylint: disable=protected-access
-        m._server.exited_cleanly = True  # type: ignore[misc]  # pylint: disable=protected-access
+        m._server.exit_code = 0  # pylint: disable=protected-access
+        m._server.exited_cleanly = True  # pylint: disable=protected-access
 
         m._check_once()  # pylint: disable=protected-access
 

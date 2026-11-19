@@ -819,3 +819,13 @@ class TestServerSettingsCalls:
         self.manager._close_connection()  # pylint: disable=protected-access
 
         assert_that(self.manager.server_settings).is_none()
+
+
+def test_try_connect_attaches_as_a_client() -> None:
+    EventManager.reset()
+    manager = ConnectionManager()
+    conn = MagicMock()
+    with patch("rpyc.utils.factory.connect", return_value=conn):
+        manager._try_connect()  # pylint: disable=protected-access
+
+    conn.root.client_attached.assert_called_once_with()
