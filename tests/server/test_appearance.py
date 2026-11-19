@@ -12,6 +12,7 @@ from decker.animation.gif import MAX_GIF_FRAMES
 from decker.animation.model import AnimationSpec
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
 from decker.plugin.manifest import ManifestValidationError, PluginManifest
+from decker.server import fonts
 from decker.server.appearance import (
     compose_key_face,
     compose_key_frames,
@@ -329,9 +330,7 @@ def test_outline_none_ignores_outline_width() -> None:
 
 
 def test_fake_bold_when_family_has_no_bold_face(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "decker.server.appearance.font_file", lambda *_a, **_k: ("/usr/share/fonts/TTF/DejaVuSans.ttf", False)
-    )
+    monkeypatch.setattr("decker.server.appearance.font_file", lambda *_a, **_k: (str(fonts.BUNDLED_REGULAR), False))
     regular, bold = _styled(), _styled(bold=True)
     assert_that(bold.tobytes()).is_not_equal_to(regular.tobytes())
     assert_that(_lit(bold)).is_greater_than(_lit(regular))

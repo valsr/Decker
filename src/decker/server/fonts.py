@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 from PIL import ImageFont
@@ -18,7 +18,7 @@ BUNDLED_BOLD: Path = _ASSET_FONTS / "DejaVuSans-Bold.ttf"
 
 _BOLD_WEIGHT = 180  # fontconfig weight at or above which a face counts as really bold (FC_WEIGHT_BOLD is 200)
 _FONT_SUFFIXES = {".ttf", ".otf", ".ttc"}
-_index: dict[tuple[str, str], str] | None = None
+_index: dict[tuple[str, str], tuple[str, int]] | None = None  # pylint: disable=invalid-name
 _index_lock = threading.Lock()
 
 
@@ -40,78 +40,142 @@ def font_directories() -> list[Path]:
     return list(dict.fromkeys(result))
 
 
-def _style_of(style_name: str) -> str:
+_PLAIN_STYLES = {"regular", "book", "roman", "normal", ""}
+_STYLE_WORDS = {"bold", "italic", "oblique"}
+_MAX_FACES = 32  # faces read from one .ttc collection
+_Key = tuple[str, str]
+_Face = tuple[str, int]
+
+
+def _style_of(style_name: str) -> str | None:
+    """The index style for a face's style name, or None for weights and widths the index does not model."""
     words = style_name.lower().split()
+    if any(w not in _STYLE_WORDS and w not in _PLAIN_STYLES for w in words):
+        return None
     bold = "bold" in words
     italic = "italic" in words or "oblique" in words
     return "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
 
 
-def _font_files(directory: Path) -> list[Path]:
-    try:
-        return sorted(p for p in directory.rglob("*") if p.suffix.lower() in _FONT_SUFFIXES and p.is_file())
-    except OSError as exc:
-        logging.debug("cannot scan font folder %s: %s", directory, exc)
-        return []
+def _face_name(path: Path, face: int) -> tuple[str, str]:
+    family, style = ImageFont.truetype(str(path), 10, index=face).getname()
+    return family or "", style or ""
 
 
-def build_font_index(directories: Sequence[Path]) -> dict[tuple[str, str], str]:
-    """Map ``(lower-cased family, style)`` to a font file, read from each file's own metadata."""
-    index: dict[tuple[str, str], str] = {}
+def _faces_of(path: Path) -> list[tuple[int, str, str]]:
+    faces: list[tuple[int, str, str]] = []
+    for face in range(_MAX_FACES if path.suffix.lower() == ".ttc" else 1):
+        try:
+            family, style = _face_name(path, face)
+        except (OSError, ValueError) as exc:
+            if face == 0:
+                logging.debug("skipping font file %s: %s", path, exc)
+            break
+        faces.append((face, family, style))
+    return faces
+
+
+def _font_files(directory: Path) -> Iterator[Path]:
+    def on_error(exc: OSError) -> None:
+        logging.debug("cannot scan font folder: %s", exc)
+
+    for root, dirs, files in os.walk(directory, onerror=on_error, followlinks=False):
+        dirs.sort()
+        for name in sorted(files):
+            if Path(name).suffix.lower() in _FONT_SUFFIXES:
+                yield Path(root) / name
+
+
+def build_face_index(directories: Sequence[Path]) -> dict[_Key, _Face]:
+    """Map ``(lower-cased family, style)`` to ``(file, face number)``, read from each file's own metadata."""
+    index: dict[_Key, _Face] = {}
+    exact: set[_Key] = set()  # keys whose entry cannot be displaced (only Book/Roman/Normal regulars can be)
     for directory in directories:
         for path in _font_files(directory):
-            try:
-                family, style = ImageFont.truetype(str(path), 10).getname()
-            except (OSError, ValueError) as exc:
-                logging.debug("skipping font file %s: %s", path, exc)
-                continue
-            if family:
-                index.setdefault((family.lower(), _style_of(style or "")), str(path))
+            for face, family, style in _faces_of(path):
+                kind = _style_of(style)
+                if not family or kind is None:
+                    continue
+                key = (family.lower(), kind)
+                is_exact = kind != "regular" or style.lower() == "regular"
+                if key not in index or (is_exact and key not in exact):
+                    index[key] = (str(path), face)
+                    if is_exact:
+                        exact.add(key)
     return index
 
 
-def _get_index() -> dict[tuple[str, str], str]:
+def build_font_index(directories: Sequence[Path]) -> dict[_Key, str]:
+    """Map ``(lower-cased family, style)`` to a font file."""
+    return {key: path for key, (path, _) in build_face_index(directories).items()}
+
+
+def _get_index() -> dict[_Key, _Face]:
     global _index  # pylint: disable=global-statement
     with _index_lock:
         if _index is None:
-            _index = build_font_index(font_directories())
+            _index = build_face_index(font_directories())
         return _index
 
 
-def _fc_match(pattern: str) -> tuple[str | None, bool] | None:
+def _fc_match(pattern: str) -> tuple[str, bool, int] | None:
     if not shutil.which("fc-match"):
         return None
     try:
         result = subprocess.run(
-            ["fc-match", pattern, "--format=%{file}\n%{weight}"], capture_output=True, text=True, timeout=2, check=True
+            ["fc-match", pattern, "--format=%{file}\n%{weight}\n%{index}"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         logging.debug("fc-match failed for %r: %s", pattern, exc)
         return None
-    path, _, weight = result.stdout.partition("\n")
+    path, _, rest = result.stdout.partition("\n")
+    weight, _, face = rest.partition("\n")
     if not path.strip():
         return None
-    return path.strip(), weight.strip().isdigit() and int(weight) >= _BOLD_WEIGHT
+    return (
+        path.strip(),
+        weight.strip().isdigit() and int(weight) >= _BOLD_WEIGHT,
+        int(face) if face.strip().isdigit() else 0,
+    )
 
 
-def _from_index(family: str, bold: bool, italic: bool) -> tuple[str, bool] | None:
+def _from_index(family: str, bold: bool, italic: bool) -> tuple[str, bool, int] | None:
     index = _get_index()
     name = family.lower()
     wanted = "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
     for style in dict.fromkeys((wanted, "bold" if bold else "regular", "regular")):
         if (name, style) in index:
-            return index[(name, style)], "bold" in style
+            path, face = index[(name, style)]
+            return path, "bold" in style, face
     return None
 
 
 @functools.lru_cache(maxsize=64)
+def _resolve(family: str, bold: bool, italic: bool) -> tuple[str, bool, int]:
+    pattern = family + (":bold" if bold else "") + (":italic" if italic else "")
+    return _fc_match(pattern) or _from_index(family, bold, italic) or _bundled(bold)
+
+
+def _bundled(bold: bool) -> tuple[str, bool, int]:
+    return (str(BUNDLED_BOLD), True, 0) if bold else (str(BUNDLED_REGULAR), False, 0)
+
+
 def font_file(family: str, bold: bool = False, italic: bool = False) -> tuple[str | None, bool]:
     """Resolve a family (and style) to ``(file, is_really_bold)``; falls back to the bundled DejaVu Sans."""
-    pattern = family + (":bold" if bold else "") + (":italic" if italic else "")
-    matched = _fc_match(pattern)
-    if matched:
-        return matched
-    found = _from_index(family, bold, italic)
-    if found:
-        return found
-    return (str(BUNDLED_BOLD), True) if bold else (str(BUNDLED_REGULAR), False)
+    path, real_bold, _ = _resolve(family, bold, italic)
+    return path, real_bold
+
+
+def font_face(path: str, family: str, bold: bool = False, italic: bool = False) -> int:
+    """The face number to open in ``path`` (non-zero only for a collection file resolved for this family)."""
+    resolved, _, face = _resolve(family, bold, italic)
+    return face if resolved == path else 0
+
+
+def clear_font_cache() -> None:
+    """Forget resolved fonts (the index itself is kept)."""
+    _resolve.cache_clear()
