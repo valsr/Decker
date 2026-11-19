@@ -146,7 +146,9 @@ def test_a_weight_only_family_has_no_regular_entry(tmp_path: Path, monkeypatch: 
     assert_that(fonts.build_font_index([tmp_path])).is_empty()
 
 
-@pytest.mark.posix_only(reason="key rendering fonts: chmod 000 makes a font subfolder unreadable")
+@pytest.mark.posix_only(
+    reason="key rendering and fonts (docs/platform-support.md): chmod 000 makes a font subfolder unreadable"
+)
 def test_an_unreadable_subfolder_does_not_lose_the_other_fonts(tmp_path: Path) -> None:
     if getattr(os, "geteuid", lambda: 1)() == 0:
         pytest.skip("root can read everything")
@@ -177,7 +179,7 @@ def test_a_walk_error_is_skipped_and_scanning_continues(tmp_path: Path, monkeypa
     assert_that(good.is_dir()).is_true()
 
 
-@pytest.mark.posix_only(reason="key rendering fonts: directory symlinks need POSIX")
+@pytest.mark.posix_only(reason="key rendering and fonts (docs/platform-support.md): directory symlinks need POSIX")
 def test_a_directory_symlink_loop_does_not_hang(tmp_path: Path) -> None:
     _copy_bundled(tmp_path / "fonts")
     (tmp_path / "fonts" / "loop").symlink_to(tmp_path, target_is_directory=True)
