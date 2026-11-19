@@ -18,6 +18,7 @@ from decker.common import paths as decker_paths
 from decker.common.context import ServerAppContext
 from decker.common.manager import Manager
 from decker.common.version import decker_version
+from decker.server.client_tracker import ClientTracker
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices.manager import DeviceManager
 from decker.server.event_bus import EventBus
@@ -255,6 +256,14 @@ class ServerProcess:
         logging.info("Received signal %d, shutting down", signum)
         self._request_shutdown()
 
+    def _on_last_client_gone(self) -> None:
+        ctx = self._context
+        if ctx is None or ctx.restart_requested:
+            return
+        if config.get_as("server.stop_when_last_client_leaves", bool):
+            logging.info("The last client has left, shutting down")
+            self._request_shutdown()
+
     def _request_shutdown(self) -> None:
         if self._gate is not None:
             self._gate.request()
@@ -306,6 +315,7 @@ class ServerProcess:
             event_bus=EventBus(),
             server=None,
             reconfigure_policy=ReconfigurePolicy(self._app_context.allow_client_reconfiguration),
+            client_tracker=ClientTracker(config.get_as("server.stop_grace", float), self._on_last_client_gone),
         )
 
         ctx = self._context
@@ -364,6 +374,8 @@ class ServerProcess:
                 ctx.update_checker.start()
                 self._serve(server, gate)
         finally:
+            if ctx.client_tracker is not None:
+                ctx.client_tracker.cancel()
             ctx.update_checker.stop()
             for manager in reversed(managers):
                 self._try_destroy_manager(manager)

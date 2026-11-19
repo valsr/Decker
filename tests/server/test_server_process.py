@@ -176,6 +176,27 @@ def test_a_port_that_is_already_in_use_rolls_back_to_the_old_port(tmp_path: Path
         config.unset("server.apply_timeout")
 
 
+def test_the_server_stops_with_code_zero_when_the_last_client_leaves(server: ServerProcess, port: int) -> None:
+    config.set("server.stop_when_last_client_leaves", True)
+    config.set("server.stop_grace", 0.5)
+    api = ApiHandler(host="127.0.0.1", port=port, timeout=5.0)
+    try:
+        assert_that(server.start()).is_true()
+        _wait_healthy(port, server)
+        child = _child(server)
+
+        assert_that(api.request("heartbeat")).is_not_none()
+        api.close()
+        child.join(timeout=_STOP_TIMEOUT)
+
+        assert_that(child.is_alive()).is_false()
+        assert_that(child.exitcode).is_equal_to(0)
+    finally:
+        api.close()
+        config.unset("server.stop_when_last_client_leaves")
+        config.unset("server.stop_grace")
+
+
 def test_stop_right_after_start_still_ends_the_process(tmp_path: Path, port: int) -> None:
     server = _make_server(port, tmp_path, startup_wait=0.05)
     try:

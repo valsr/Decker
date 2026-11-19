@@ -157,12 +157,16 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         self._peer_host = _peer_host(conn)
         if self._context is not None:
             self._context.event_bus.register(conn)
+            if self._context.client_tracker is not None:
+                self._context.client_tracker.connected()
 
     def on_disconnect(self, conn: Any) -> None:
         """Handle client disconnection — stop pushing events to this client."""
         logging.info("Client disconnected from Decker service")
         if self._context is not None:
             self._context.event_bus.unregister(conn)
+            if self._context.client_tracker is not None:
+                self._context.client_tracker.disconnected()
 
     @exposed
     def stop(self) -> bool:

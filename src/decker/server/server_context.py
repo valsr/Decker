@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from rpyc.utils.server import Server
 
+from decker.server.client_tracker import ClientTracker
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.devices.manager import DeviceManager
 from decker.server.event_bus import EventBus
@@ -34,3 +35,4 @@ class ServerContext:
     update_checker: UpdateChecker | None = None
     reconfigure_policy: ReconfigurePolicy = field(default_factory=lambda: ReconfigurePolicy(None))
     restart_requested: bool = False
+    client_tracker: ClientTracker | None = None
