@@ -95,7 +95,7 @@ Footnotes:
    locate the bundled files with `decker_plugin_sdk.fonts.font_path` (the server sets `DECKER_FONT_DIR` for plugin
    processes). For the bundled DejaVu families the server uses an installed copy found in the OS font folders (exact
    style), else the bundled file, and does not consult fontconfig for them, so a user's fontconfig alias or
-   substitution for a DejaVu family is ignored. CI run 44558930159 (head 6ae0b64) ran the bundled-family resolution
+   substitution for a DejaVu family is ignored. CI run 44563672808 (head ca4e277) ran the bundled-family resolution
    (`tests/server/test_fonts.py`, with only the POSIX-only chmod and symlink cases skipped on Windows), the SDK helper
    (`tests/sdk/test_fonts.py`), the client font registration (`tests/client/test_client_fonts.py`), and the lookup and
    `compose_key_image` on all three OSes. FreeType rasterisation differs per OS, so only Linux asserts a byte-exact
