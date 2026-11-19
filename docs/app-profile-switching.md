@@ -16,8 +16,17 @@ one side and the selected profile's rules on the other, in an ordered list.
 - A rule matches when **all** its conditions match (AND). There is no OR: add another rule instead.
 - A condition is a field, an operator and a value. Fields: Window class, Window type, Title, Executable, Desktop file.
   Operators: `is`, `contains`, `does not contain`, `matches regex`. All comparisons are case-insensitive.
+- On an empty field (for example no desktop file on X11 or Windows), `does not contain` is true and `contains` and
+  `matches regex` are false; `is` compares the text with the value, so it matches only an empty value.
+- `matches regex` is an unanchored search (anchor with `^` and `$`). A pattern that takes longer than 0.1 s counts as no
+  match. An invalid pattern never matches, and both the editor and the server reject it on save. `contains`, `does not
+  contain` and `matches regex` need a value.
+- A rule with no conditions never matches.
 - The **default rule** ("when no rule matches") has no conditions. It can only be enabled or disabled and retargeted
   (profile and page).
+- The default rule starts disabled, targeting profile 0.
+- Deleting a profile removes the rules that targeted it and resets a default rule that targeted it (disabled, back to
+  profile 0). Deleting a page clears the page on rules (and the default rule) that named it.
 
 ## Behaviour
 
@@ -25,7 +34,8 @@ one side and the selected profile's rules on the other, in an ordered list.
   window is evaluated.
 - A manual profile switch sticks until focus moves to a window whose target differs from the previous target.
 - Editing rules never switches the deck. Edits apply at the next focus change.
-- A window that matches no rule, with the default rule disabled, changes nothing.
+- A window that matches no rule, with the default rule disabled, changes nothing. It also resets the server's memory of the previous
+  target, so returning to the earlier window re-applies its profile, overriding a manual switch.
 - A title change inside an already-focused window is not re-evaluated until focus changes.
 
 ## Window Spy
