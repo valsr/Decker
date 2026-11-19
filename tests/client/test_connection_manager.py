@@ -2,6 +2,7 @@
 
 import json
 import time
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from assertpy import assert_that
@@ -10,10 +11,14 @@ from decker.client.connection_manager import (
     ConnectionManager,
     ServerState,
     _ClientService,
+    _parse_device_rules,
+    _parse_window,
 )
 from decker.client.context import AppContext
 from decker.client.events import (
     ActionListUpdatedEvent,
+    AppRulesUpdatedEvent,
+    DetectionStatusEvent,
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
     KeyEvent,
@@ -28,14 +33,21 @@ from decker.client.events import (
     RepositoriesCheckFinishedEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
+    WindowFocusedEvent,
+    WindowPickedEvent,
 )
 from decker.client.events.event_manager import EventManager
 from decker.common.model import (
+    AppRule,
+    DefaultRule,
     DeviceHardwareInfo,
     DevicePages,
     DeviceProfiles,
+    DeviceRules,
+    MatchCondition,
     PageInfo,
     ProfileInfo,
+    WindowInfo,
 )
 from decker.common.utils import api_response
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
@@ -832,3 +844,155 @@ def test_try_connect_attaches_as_a_client() -> None:
         manager._close_connection()  # pylint: disable=protected-access
 
     conn.root.client_attached.assert_called_once_with()
+
+
+_RULE = AppRule("r1", "Browser", True, [MatchCondition("window_class", "equals", "firefox")], 2, "pg1")
+_RULES = DeviceRules("dev1", [_RULE], DefaultRule(True, 1, ""))
+_STATUS = {
+    "state": "ok",
+    "reason": "",
+    "backend": "kwin",
+    "supports_pick": True,
+    "window": {"window_class": "firefox", "title": "T", "pid": 7},
+}
+
+
+@api_response
+def _wire(value: object) -> object:
+    """Serialise with the server's own encoder so the wire format can't drift."""
+    return value
+
+
+def test_parse_device_rules_round_trip() -> None:
+    assert_that(_parse_device_rules(json.loads(str(_wire(_RULES))))).is_equal_to(_RULES)
+
+
+def test_parse_rules_rejects_malformed() -> None:
+    good = json.loads(str(_wire(_RULES)))
+    bad_cond = json.loads(str(_wire(_RULES)))
+    bad_cond["rules"][0]["conditions"] = [{"field": "title"}]
+    no_default = {k: v for k, v in good.items() if k != "default_rule"}
+    bad_inputs: list[Any] = [None, [], "x", bad_cond, no_default, {**good, "rules": "oops"}]
+    for data in bad_inputs:
+        assert_that(_parse_device_rules).raises(ValueError).when_called_with(data)
+
+
+def test_parse_window_tolerates_missing_fields_and_null() -> None:
+    assert_that(_parse_window(None)).is_none()
+    assert_that(_parse_window({})).is_equal_to(WindowInfo())
+    assert_that(_parse_window({"window_class": "a", "pid": 3})).is_equal_to(WindowInfo(window_class="a", pid=3))
+
+
+class TestAppRuleClient:  # pylint: disable=protected-access
+    def setup_method(self) -> None:
+        EventManager.reset()
+        AppContext.reset()
+        AppContext.get().active_device = DeviceHardwareInfo(
+            id="dev1", type="Stream Deck", vendor_id=0, product_id=0, num_keys=15
+        )
+        self.manager = ConnectionManager()
+        self.conn = MagicMock()
+        self.conn.root.app_rules_list.return_value = str(_wire(_RULES))
+        self.conn.root.window_detection_status.return_value = json.dumps(_STATUS)
+        self.manager._conn = self.conn
+
+    def teardown_method(self) -> None:
+        self.manager._conn = None
+        AppContext.reset()
+
+    def test_app_rules_changed_event_refreshes_rules(self) -> None:
+        self.manager._on_server_event("app_rules_changed", json.dumps({"device_id": "dev1"}))
+        self.conn.root.app_rules_list.assert_not_called()  # fetched later on the worker thread
+        with patch("decker.client.connection_manager._HEARTBEAT_INTERVAL_S", 3600):
+            self.manager._run_once(last_heartbeat=time.monotonic())
+
+        events = [e for e in EventManager.get().drain() if isinstance(e, AppRulesUpdatedEvent)]
+        assert_that(events).is_length(1)
+        assert_that(events[0].rules).is_equal_to(_RULES)
+        self.conn.root.app_rules_list.assert_called_once_with("dev1")
+
+    def test_app_rules_changed_for_other_device_is_ignored(self) -> None:
+        self.manager._on_server_event("app_rules_changed", json.dumps({"device_id": "other"}))
+
+        assert_that(self.manager._rules_refresh_requested.is_set()).is_false()
+
+    def test_detection_changed_event_refreshes_status(self) -> None:
+        self.manager._on_server_event("window_detection_changed", json.dumps(_STATUS))
+        with patch("decker.client.connection_manager._HEARTBEAT_INTERVAL_S", 3600):
+            self.manager._run_once(last_heartbeat=time.monotonic())
+
+        events = [e for e in EventManager.get().drain() if isinstance(e, DetectionStatusEvent)]
+        assert_that(events).is_length(1)
+
+    def test_malformed_or_failed_rules_response_is_logged_not_raised(self) -> None:
+        self.conn.root.app_rules_list.return_value = json.dumps([])
+        self.manager.refresh_app_rules()
+        self.conn.root.app_rules_list.side_effect = RuntimeError("down")
+        self.manager.refresh_app_rules()
+
+        assert_that(EventManager.get().drain()).is_empty()
+
+    @patch("decker.client.connection_manager.rpyc.utils.factory.connect")
+    def test_detection_status_pushed_on_connect(self, mock_connect: MagicMock) -> None:
+        conn = _healthy_conn()
+        conn.root.window_detection_status.return_value = json.dumps(_STATUS)
+        conn.root.app_rules_list.return_value = str(_wire(_RULES))
+        mock_connect.return_value = conn
+        self.manager._conn = None
+        with (
+            patch("decker.client.config.get_server_host", return_value="localhost"),
+            patch("decker.client.config.get_server_port", return_value=18861),
+        ):
+            self.manager._try_connect()
+
+        drained = EventManager.get().drain()
+        (status,) = [e for e in drained if isinstance(e, DetectionStatusEvent)]
+        assert_that(status).is_equal_to(
+            DetectionStatusEvent("ok", "", "kwin", True, WindowInfo(window_class="firefox", title="T", pid=7))
+        )
+        assert_that([e for e in drained if isinstance(e, AppRulesUpdatedEvent)]).is_length(1)
+        self.manager._close_connection()
+
+    def test_window_focused_maps_to_event(self) -> None:
+        self.manager._on_server_event("window_focused", json.dumps({"window": {"window_class": "x", "pid": 1}}))
+
+        assert_that(EventManager.get().drain()).is_equal_to([WindowFocusedEvent(WindowInfo(window_class="x", pid=1))])
+
+    def test_window_picked_event_pushes_event_with_none_on_cancel(self) -> None:
+        self.manager._on_server_event("window_picked", json.dumps({"window": None}))
+        self.manager._on_server_event("window_picked", json.dumps({"window": {"window_class": "y"}}))
+
+        assert_that(EventManager.get().drain()).is_equal_to(
+            [WindowPickedEvent(None), WindowPickedEvent(WindowInfo(window_class="y"))]
+        )
+
+    def test_bool_rpc_results_are_parsed_not_truthy(self) -> None:
+        for name in ("app_rule_update", "app_rule_delete", "app_rule_move", "app_default_rule_set", "window_pick"):
+            getattr(self.conn.root, name).return_value = "false"
+        assert_that(self.manager.app_rule_update("dev1", _RULE)).is_false()
+        assert_that(self.manager.app_rule_delete("dev1", "r1")).is_false()
+        assert_that(self.manager.app_rule_move("dev1", "r1", 0)).is_false()
+        assert_that(self.manager.app_default_rule_set("dev1", DefaultRule())).is_false()
+        assert_that(self.manager.window_pick()).is_false()
+
+    def test_edit_calls_send_plain_dicts_and_parse_true(self) -> None:
+        for name in ("app_rule_update", "app_rule_delete", "app_rule_move", "app_default_rule_set", "window_pick"):
+            getattr(self.conn.root, name).return_value = "true"
+        assert_that(self.manager.app_rule_update("dev1", _RULE)).is_true()
+        sent = self.conn.root.app_rule_update.call_args.args[1]
+        assert_that(sent["conditions"]).is_equal_to([{"field": "window_class", "op": "equals", "value": "firefox"}])
+        assert_that(self.manager.app_default_rule_set("dev1", DefaultRule(True, 3, "p"))).is_true()
+        self.conn.root.app_default_rule_set.assert_called_once_with("dev1", True, 3, "p")
+        assert_that(self.manager.app_rule_move("dev1", "r1", 2)).is_true()
+        self.conn.root.app_rule_move.assert_called_once_with("dev1", "r1", 2)
+        assert_that(self.manager.window_pick()).is_true()
+
+    def test_app_rule_add_returns_stored_rule_or_none(self) -> None:
+        self.conn.root.app_rule_add.return_value = str(_wire(_RULE))
+        assert_that(self.manager.app_rule_add("dev1", _RULE)).is_equal_to(_RULE)
+        self.conn.root.app_rule_add.return_value = "null"
+        assert_that(self.manager.app_rule_add("dev1", _RULE)).is_none()
+
+    def test_edit_failure_returns_false(self) -> None:
+        self.conn.root.app_rule_delete.side_effect = RuntimeError("down")
+        assert_that(self.manager.app_rule_delete("dev1", "r1")).is_false()
