@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFormLayout,
     QHBoxLayout,
@@ -97,6 +98,7 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
     """Edits one rule; ``changed`` fires after a valid user edit (invalid ones show ``error()`` instead)."""
 
     changed = pyqtSignal()
+    focus_left = pyqtSignal()  # keyboard focus moved from a field of the editor to something outside it
 
     def __init__(self, pages_for_profile: Callable[[int], list[PageInfo]], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -106,6 +108,7 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
         self._unsupported: set[str] = set()
         self._loading = False
         self._rows: list[ConditionRow] = []
+        self._profile_infos: list[ProfileInfo] = []
         self._name = QLineEdit()
         self._rows_layout = QVBoxLayout()
         self._rows_layout.setContentsMargins(0, 0, 0, 0)
@@ -125,6 +128,9 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
         self._add_condition_button.clicked.connect(self._on_add_condition)
         self._profile.activated.connect(self._on_profile_chosen)
         self._page.activated.connect(lambda _i: self._on_edited())
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            app.focusChanged.connect(self._on_focus_changed)
 
     def _build_layout(self) -> None:
         form = QFormLayout()
@@ -143,6 +149,9 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
 
     def set_profiles(self, profiles: list[ProfileInfo]) -> None:
         """Offer these profiles as targets, keeping the chosen target when it still exists."""
+        if profiles == self._profile_infos:
+            return
+        self._profile_infos = list(profiles)
         profile_id, page_id = self._target()
         self._loading = True
         self._profile.clear()
@@ -175,9 +184,21 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
             page_id,
         )
 
+    def reload_pages(self) -> None:
+        """Re-read the page list of the chosen profile, keeping the chosen page."""
+        page_id = self._page.currentData()
+        self._fill_pages(page_id if isinstance(page_id, str) else "")
+
     def has_focus(self) -> bool:
-        """Whether one of the editor's fields holds the keyboard focus."""
-        return self.focusWidget() is not None
+        """Whether one of the editor's fields holds the keyboard focus right now."""
+        return self._inside(QApplication.focusWidget())
+
+    def _inside(self, widget: QWidget | None) -> bool:
+        return widget is not None and self.isAncestorOf(widget)
+
+    def _on_focus_changed(self, old: QWidget | None, new: QWidget | None) -> None:
+        if self._inside(old) and not self._inside(new):
+            self.focus_left.emit()
 
     def error(self) -> str:
         """The first validation problem (blank name, then conditions), or an empty string."""
