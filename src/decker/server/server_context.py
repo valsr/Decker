@@ -22,7 +22,7 @@ from decker.server.update_checker import UpdateChecker
 
 if TYPE_CHECKING:  # the engine and watcher modules arrive in later tasks
     from decker.server.app_rule_engine import AppRuleEngine  # type: ignore[import-not-found]  # isort: skip
-    from decker.server.window_watcher import WindowWatcher  # type: ignore[import-not-found]  # isort: skip
+    from decker.server.window_watcher import WindowWatcher
 
 
 @dataclass
