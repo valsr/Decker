@@ -12,13 +12,13 @@ class TestEventBusRegistration:
     def test_register_adds_client(self):
         bus = EventBus()
         conn = MagicMock()
-        bus.register(conn)
+        bus.register(conn, loopback=True)
         assert_that(bus._clients).contains(conn)  # pylint: disable=protected-access
 
     def test_unregister_removes_client(self):
         bus = EventBus()
         conn = MagicMock()
-        bus.register(conn)
+        bus.register(conn, loopback=True)
         bus.unregister(conn)
         assert_that(bus._clients).does_not_contain(conn)  # pylint: disable=protected-access
 
@@ -32,8 +32,8 @@ class TestEventBusPush:
     def test_push_calls_on_server_event_for_each_client(self):
         bus = EventBus()
         conn1, conn2 = MagicMock(), MagicMock()
-        bus.register(conn1)
-        bus.register(conn2)
+        bus.register(conn1, loopback=True)
+        bus.register(conn2, loopback=True)
 
         with patch("decker.server.event_bus.async_") as mock_async:
             mock_async.return_value = MagicMock(return_value=None)
@@ -44,8 +44,8 @@ class TestEventBusPush:
         bus = EventBus()
         dead_conn = MagicMock()
         live_conn = MagicMock()
-        bus.register(dead_conn)
-        bus.register(live_conn)
+        bus.register(dead_conn, loopback=True)
+        bus.register(live_conn, loopback=True)
 
         def raise_for_dead(method):
             if method == dead_conn.root.on_server_event:
@@ -73,7 +73,7 @@ class TestEventBusSenders:
     def test_the_remote_callable_is_resolved_once_per_client(self):
         bus = EventBus()
         conn = MagicMock()
-        bus.register(conn)
+        bus.register(conn, loopback=True)
 
         with patch("decker.server.event_bus.async_") as mock_async:
             send = MagicMock()
@@ -87,11 +87,11 @@ class TestEventBusSenders:
     def test_unregistering_forgets_the_resolved_callable(self):
         bus = EventBus()
         conn = MagicMock()
-        bus.register(conn)
+        bus.register(conn, loopback=True)
         with patch("decker.server.event_bus.async_", return_value=MagicMock()) as mock_async:
             bus.push("key_event", "{}")
             bus.unregister(conn)
-            bus.register(conn)
+            bus.register(conn, loopback=True)
             bus.push("key_event", "{}")
 
         assert_that(mock_async.call_count).is_equal_to(2)
@@ -99,7 +99,7 @@ class TestEventBusSenders:
     def test_a_client_whose_delivery_fails_is_dropped_and_its_callable_forgotten(self):
         bus = EventBus()
         conn = MagicMock()
-        bus.register(conn)
+        bus.register(conn, loopback=True)
         send = MagicMock(side_effect=OSError("gone"))
 
         with patch("decker.server.event_bus.async_", return_value=send):
@@ -125,7 +125,7 @@ class TestEventBusTargeting:
     def test_push_filtered_hands_each_client_its_own_loopback_flag(self):
         bus = EventBus()
         local, remote = _Conn(), _Conn()
-        bus.register(local)
+        bus.register(local, loopback=True)
         bus.register(remote, loopback=False)
 
         bus.push_filtered("ev", lambda loopback: "local" if loopback else "remote")
@@ -136,7 +136,7 @@ class TestEventBusTargeting:
     def test_register_defaults_to_loopback(self):
         bus = EventBus()
         conn = _Conn()
-        bus.register(conn)
+        bus.register(conn, loopback=True)
 
         bus.push_filtered("ev", str)
 
@@ -145,8 +145,8 @@ class TestEventBusTargeting:
     def test_push_to_reaches_only_that_client(self):
         bus = EventBus()
         first, second = _Conn(), _Conn()
-        bus.register(first)
-        bus.register(second)
+        bus.register(first, loopback=True)
+        bus.register(second, loopback=True)
 
         bus.push_to(first, "ev", "payload")
 
@@ -157,7 +157,7 @@ class TestEventBusTargeting:
         bus = EventBus()
         conn = _Conn()
         conn.root.on_server_event = MagicMock(side_effect=OSError("gone"))
-        bus.register(conn)
+        bus.register(conn, loopback=True)
 
         bus.push_to(conn, "ev", "payload")
 
@@ -167,8 +167,33 @@ class TestEventBusTargeting:
         bus = EventBus()
         conn = _Conn()
         conn.root.on_server_event = MagicMock(side_effect=OSError("gone"))
-        bus.register(conn)
+        bus.register(conn, loopback=True)
 
         bus.push_filtered("ev", str)
 
         assert_that(bus._clients).does_not_contain(conn)  # pylint: disable=protected-access
+
+    def test_a_payload_builder_failure_does_not_prune_healthy_clients(self, caplog):
+        bus = EventBus()
+        bad, good = _Conn(), _Conn()
+        bus.register(bad, loopback=False)
+        bus.register(good, loopback=True)
+
+        def builder(loopback: bool) -> str:
+            if not loopback:
+                raise ValueError("builder bug")
+            return "ok"
+
+        with caplog.at_level("ERROR"):
+            bus.push_filtered("ev", builder)
+
+        assert_that(good.received).is_equal_to([("ev", "ok")])
+        assert_that(bus._clients).contains(bad, good)  # pylint: disable=protected-access
+        assert_that(caplog.text).contains("builder bug")
+
+    def test_push_to_a_dead_connection_does_not_raise(self):
+        bus = EventBus()
+        conn = _Conn()
+        conn.root.on_server_event = MagicMock(side_effect=OSError("gone"))
+
+        bus.push_to(conn, "ev", "payload")  # never registered, delivery fails

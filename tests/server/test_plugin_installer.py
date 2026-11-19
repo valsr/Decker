@@ -46,7 +46,7 @@ class FakeBus:
         self.events: list[tuple[str, dict]] = []
         self.clients: list = []
 
-    def register(self, conn, loopback: bool = True) -> None:
+    def register(self, conn, *, loopback: bool) -> None:
         self.clients.append(conn)
 
     def unregister(self, conn) -> None:
@@ -398,7 +398,7 @@ def test_client_disconnect_mid_install_still_completes(env, tmp_path):
     DeckerService.configure_context(env.context)
     service = DeckerService()
     service._peer_host = "127.0.0.1"  # pylint: disable=protected-access
-    env.bus.register(gone)
+    env.bus.register(gone, loopback=True)
     job = service.plugin_install("tool.deckerplugin", _package(tmp_path / "v1.log"))
     service.on_disconnect(gone)
 

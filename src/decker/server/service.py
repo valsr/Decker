@@ -72,23 +72,21 @@ def _peer_host(conn: Any) -> str | None:
     return host if isinstance(host, str) else None
 
 
+def _wire_get(raw: Any, key: str, default: Any) -> Any:
+    """`raw.get` without attribute access, which a client's netref denies to the server."""
+    return raw[key] if key in raw else default
+
+
 def _rule_from_wire(raw: Any) -> AppRule | None:
-    """Build an AppRule from an RPyC-passed dict; None when it is malformed."""
+    """Build an AppRule from an RPyC-passed dict (a netref there, so read it key by key); None when malformed."""
     try:
-        fields = dict(raw)
-        conditions = [MatchCondition(str(c["field"]), str(c["op"]), str(c["value"])) for c in fields["conditions"]]
-        profile_id, page_id = fields["profile_id"], fields.get("page_id", "")
+        conditions = [MatchCondition(str(c["field"]), str(c["op"]), str(c["value"])) for c in raw["conditions"]]
+        profile_id, page_id = raw["profile_id"], _wire_get(raw, "page_id", "")
         if isinstance(profile_id, bool) or not isinstance(profile_id, int) or not isinstance(page_id, str):
             return None
-        return AppRule(
-            str(fields.get("rule_id", "")),
-            str(fields["name"]),
-            bool(fields["enabled"]),
-            conditions,
-            profile_id,
-            page_id,
-        )
-    except (KeyError, TypeError, ValueError):
+        rule_id, name = _wire_get(raw, "rule_id", ""), raw["name"]
+        return AppRule(str(rule_id), str(name), bool(raw["enabled"]), conditions, profile_id, page_id)
+    except (KeyError, TypeError, ValueError, AttributeError):
         return None
 
 
@@ -187,7 +185,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         self._peer_host = _peer_host(conn)
         self._conn = conn
         if self._context is not None:
-            self._context.event_bus.register(conn, _is_loopback(self._peer_host))
+            self._context.event_bus.register(conn, loopback=_is_loopback(self._peer_host))
 
     def on_disconnect(self, conn: Any) -> None:
         """Handle client disconnection — stop pushing events to this client."""
