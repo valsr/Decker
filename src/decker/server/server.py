@@ -59,6 +59,12 @@ class ShutdownGate:
         self._requested = False
         self._server: Closable | None = None
 
+    @property
+    def requested(self) -> bool:
+        """True once a shutdown has been requested."""
+        with self._lock:
+            return self._requested
+
     def request(self) -> None:
         """Record a shutdown request and close the attached server, if any."""
         with self._lock:
@@ -70,11 +76,13 @@ class ShutdownGate:
     def attach(self, server: Closable) -> bool:
         """Attach the server; returns True (after closing it) if a shutdown was already requested."""
         with self._lock:
-            if not self._requested:
-                self._server = server
-                return False
-        server.close()
-        return True
+            self._server = server
+            requested = self._requested
+            if requested:
+                self._server = None
+        if requested:
+            server.close()
+        return requested
 
 
 def stop_process(
@@ -111,7 +119,7 @@ class ServerProcess:
         self._context: ServerContext | None = None
         self._app_context = app_context
         self._stop_event: multiprocessing.synchronize.Event = multiprocessing.Event()
-        self._gate = ShutdownGate()
+        self._gate: ShutdownGate | None = None
 
     def start(self) -> bool:
         """Spawn the RPyC server subprocess.
@@ -244,16 +252,30 @@ class ServerProcess:
     def _signal_handler(self, signum: int, _: Any) -> None:
         """Graceful shutdown: close the RPyC server."""
         logging.info("Received signal %d, shutting down", signum)
-        self._gate.request()
+        self._request_shutdown()
+
+    def _request_shutdown(self) -> None:
+        if self._gate is not None:
+            self._gate.request()
 
     def _watch_stop_event(self) -> None:
         self._stop_event.wait()
         logging.info("Stop requested, shutting down")
-        self._gate.request()
+        self._request_shutdown()
+
+    def _serve(self, server: NoDelayThreadedServer, gate: ShutdownGate) -> None:
+        if gate.requested:
+            return
+        try:
+            server.start()
+        except OSError:
+            if not gate.requested:
+                raise
 
     def _run_server(self) -> None:
         """Entry point for the server subprocess. Runs RPyC in the main thread."""
-        self._gate = ShutdownGate()
+        gate = ShutdownGate()
+        self._gate = gate
         threading.Thread(target=self._watch_stop_event, name="stop-watcher", daemon=True).start()
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -332,13 +354,13 @@ class ServerProcess:
             protocol_config={"allow_public_attrs": True},
         )
         self._context.server = server
-        stop_requested = self._gate.attach(server)
+        stop_requested = gate.attach(server)
         DeckerService.configure_context(self._context)
         logging.info("RPyC server listening on %s:%d", self.host, self.port)
         try:
             if not stop_requested:
                 ctx.update_checker.start()
-                server.start()
+                self._serve(server, gate)
         finally:
             ctx.update_checker.stop()
             for manager in reversed(managers):
