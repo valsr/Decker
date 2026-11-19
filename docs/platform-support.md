@@ -36,7 +36,7 @@ Core functionality is expected at parity on every platform.
 | System tray | Yes | Not verified [4] | Not verified | Not verified | Not verified |
 | Plugin runtime (process isolation) | Yes | Not verified | Not verified | No [5] | Partial [5] |
 | Plugin install and repositories | Yes | Not verified | Not verified | Partial [5] | Partial [5] |
-| System Icons | Yes | Not verified | Not verified | No [6] | No [6] |
+| System Icons | Yes | Not verified | Not verified | No (Linux-only) [6] | No (Linux-only) [6] |
 | User icon import | Yes | Not verified | Not verified | Not verified | Not verified |
 | GIF animations | Yes | Not verified | Not verified | Not verified | Not verified |
 | CLI | Yes | Not verified | Not verified | Not verified | Not verified |
@@ -55,7 +55,7 @@ Footnotes:
    has process groups but no `/proc`, so plugin memory reporting is unavailable there. In `environment.py`, `os.killpg` is used only while building a
    plugin environment: it kills the install command's process group on timeout, and again after every command to
    clean up leftover children.
-6. System Icons read the server's freedesktop icon theme; Windows and macOS have none.
+6. System Icons read the server's freedesktop icon theme, so the feature is Linux-only: on Windows and macOS the library is hidden.
 7. Not implemented: the server has no `--daemon` option.
 
 Plugin support is declared per plugin, not here; see the plugins repository's table.

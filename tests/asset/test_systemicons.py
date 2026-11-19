@@ -1,6 +1,8 @@
 """Discovery and indexing of the system's freedesktop icon theme."""
 
 import os
+import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,7 @@ from decker.asset.systemicons import (
     PACK_PREFIX,
     SYSTEM_PLUGIN_ID,
     SYSTEM_PLUGIN_NAME,
+    SystemIcons,
     build_index,
     category_of,
     detect_theme,
@@ -99,6 +102,7 @@ class TestSearchDirs:
             ]
         )
 
+    @pytest.mark.linux_only("System Icons are Linux-only (docs/platform-support.md): XDG_DATA_DIRS is colon-separated")
     def test_environment_overrides(self, tmp_path: Path) -> None:
         env = {"XDG_DATA_HOME": str(tmp_path / "data"), "XDG_DATA_DIRS": f"{tmp_path}/a:{tmp_path}/b"}
 
@@ -106,6 +110,7 @@ class TestSearchDirs:
             [tmp_path / "data/icons", tmp_path / ".icons", tmp_path / "a/icons", tmp_path / "b/icons"]
         )
 
+    @pytest.mark.linux_only("System Icons are Linux-only (docs/platform-support.md): XDG_DATA_DIRS is colon-separated")
     def test_blank_entries_are_ignored(self, tmp_path: Path) -> None:
         env = {"XDG_DATA_HOME": "", "XDG_DATA_DIRS": f"::{tmp_path}/a:"}
 
@@ -338,7 +343,9 @@ class TestSystemIcons:
     def _icons(tree: Path, theme: str = "T"):
         from decker.asset.systemicons import SystemIcons
 
-        return SystemIcons(search_dirs=[tree], home=tree.parent / "home", configured_theme=lambda: theme, recheck_s=0)
+        return SystemIcons(
+            search_dirs=[tree], home=tree.parent / "home", configured_theme=lambda: theme, recheck_s=0, enabled=True
+        )
 
     def test_packs_have_the_registry_shape_in_category_order_and_skip_empty_ones(self, tree: Path) -> None:
         packs = self._icons(tree).list_packs()
@@ -405,6 +412,9 @@ class TestSystemIcons:
         assert_that(icons.read_icon("decker.system.places", "broken")).is_none()
         assert_that(icons.read_icon("decker.system.places", "folder")).is_equal_to(b"png")
 
+    @pytest.mark.linux_only(
+        "System Icons are Linux-only (docs/platform-support.md): symlinks need privilege on Windows"
+    )
     def test_a_symlink_to_an_image_inside_the_icon_dirs_is_served(self, tree: Path) -> None:
         target = tree / "other-theme" / "real.svg"
         target.parent.mkdir()
@@ -581,7 +591,9 @@ class TestReviewFixes:
 
         theme = make_theme(tmp_path, "T", self.DIRS, files=("apps/scalable/a.svg",))
         make_theme(tmp_path, "hicolor", {})
-        icons = SystemIcons(search_dirs=[tmp_path], home=tmp_path / "h", configured_theme=lambda: "T", recheck_s=0)
+        icons = SystemIcons(
+            search_dirs=[tmp_path], home=tmp_path / "h", configured_theme=lambda: "T", recheck_s=0, enabled=True
+        )
         assert_that(icons.list_icons("decker.system.applications")).is_equal_to(["a"])
         real = module.build_index
         started = threading.Event()
@@ -685,7 +697,7 @@ class TestWarmUp:
                 done.set()
 
         monkeypatch.setattr(module, "build_index", counting)
-        icons = SystemIcons(search_dirs=[tmp_path], home=tmp_path / "h", configured_theme=lambda: "T")
+        icons = SystemIcons(search_dirs=[tmp_path], home=tmp_path / "h", configured_theme=lambda: "T", enabled=True)
 
         icons.warm()
         assert_that(done.wait(5)).is_true()
@@ -701,8 +713,56 @@ class TestWarmUp:
             raise RuntimeError("boom")
 
         monkeypatch.setattr(module, "build_index", boom)
-        icons = SystemIcons(search_dirs=[tmp_path], home=tmp_path / "h", configured_theme=lambda: "T")
+        icons = SystemIcons(search_dirs=[tmp_path], home=tmp_path / "h", configured_theme=lambda: "T", enabled=True)
 
         icons.warm()
         assert icons._warm_thread is not None  # pylint: disable=protected-access
         icons._warm_thread.join(5)  # pylint: disable=protected-access
+
+
+class TestEnabled:
+    @staticmethod
+    def _themed(tmp_path: Path, enabled: bool | None) -> SystemIcons:
+        make_theme(
+            tmp_path,
+            "T",
+            {"actions/48": {"Context": "Actions", "Size": "48", "Type": "Fixed"}},
+            files=("actions/48/edit-copy.png",),
+        )
+        make_theme(tmp_path, "hicolor", {})
+        return SystemIcons(
+            search_dirs=[tmp_path], home=tmp_path / "h", configured_theme=lambda: "T", recheck_s=0, enabled=enabled
+        )
+
+    def test_disabled_system_icons_expose_nothing(self, tmp_path: Path) -> None:
+        icons = self._themed(tmp_path, False)
+
+        assert_that(icons.owns("decker.system.actions")).is_false()
+        assert_that(icons.list_packs()).is_empty()
+        assert_that(icons.list_icons("decker.system.actions")).is_empty()
+        assert_that(icons.read_icon("decker.system.actions", "edit-copy")).is_none()
+
+    def test_enabled_system_icons_expose_the_theme(self, tmp_path: Path) -> None:
+        icons = self._themed(tmp_path, True)
+
+        assert_that(icons.owns("decker.system.actions")).is_true()
+        assert_that(icons.list_icons("decker.system.actions")).is_equal_to(["edit-copy"])
+
+    def test_disabled_warm_starts_no_thread(self, tmp_path: Path) -> None:
+        icons = self._themed(tmp_path, False)
+        before = threading.active_count()
+
+        icons.warm()
+
+        assert_that(threading.active_count()).is_equal_to(before)
+        assert_that(icons._warm_thread).is_none()  # pylint: disable=protected-access
+
+    @pytest.mark.parametrize(("platform", "expected"), [("linux", True), ("win32", False), ("darwin", False)])
+    def test_default_enabled_follows_the_platform(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, expected: bool
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", platform)
+
+        icons = self._themed(tmp_path, None)
+
+        assert_that(icons.owns("decker.system.actions")).is_equal_to(expected)

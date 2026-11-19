@@ -31,4 +31,5 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         if skip:
             for item in items:
                 if marker in item.keywords:
-                    item.add_marker(pytest.mark.skip(reason=reason))
+                    own = item.get_closest_marker(marker)
+                    item.add_marker(pytest.mark.skip(reason=own.args[0] if own and own.args else reason))
