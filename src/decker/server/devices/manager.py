@@ -85,6 +85,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._animation_budget: float = ANIMATION_BUDGET_PERCENT_DEFAULT / 100
         self._activity_hook: _DeviceHook | None = None
         self._wake_hook: _DeviceHook | None = None
+        self._open_hook: _DeviceHook | None = None
         self._overlay: set[str] = set()  # devices whose hardware is held back for the screensaver
         self._overlay_lock = threading.Lock()  # serialises set_overlay so manager and device gates cannot disagree
         self._swallow_release: set[tuple[str, int]] = set()  # keys whose press woke the deck
@@ -365,6 +366,10 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Call hook(device_id) on the first press of a key while the overlay is active."""
         self._wake_hook = hook
 
+    def set_open_hook(self, hook: _DeviceHook | None) -> None:
+        """Call hook(device_id) after a device is opened or reopened, on the opening thread and outside the lock."""
+        self._open_hook = hook
+
     def set_overlay(self, device_id: str, active: bool) -> None:
         """Hold back (or release) hardware content writes and key events for a device; caches keep updating."""
         with self._overlay_lock:
@@ -496,6 +501,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if self._state_store is not None:
             self._state_store.save_device(device.get_hw_info())
 
+        self._call_hook(self._open_hook, device.device_id)  # outside _lock, on the opener's thread
         return device
 
     def open_device(self, device_id: str) -> Device | None:

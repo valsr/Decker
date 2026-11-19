@@ -33,6 +33,9 @@ from decker.server.plugin_installer import PluginInstaller
 from decker.server.plugins import PluginManager
 from decker.server.reconfigure import RESTART_EXIT_CODE, ReconfigurePolicy
 from decker.server.repositories import RepositoryStore
+from decker.server.screensaver.screensaver_controller import ScreensaverController
+from decker.server.screensaver.screensaver_engine import ScreensaverEngine
+from decker.server.screensaver.screensaver_store import ScreensaverStore
 from decker.server.server_context import ServerContext
 from decker.server.service import DeckerService
 from decker.server.update_checker import UpdateChecker
@@ -280,6 +283,7 @@ class ServerProcess:
             ctx.update_checker.stop()
         if ctx.window_watcher is not None:
             ctx.window_watcher.stop()
+        ctx.device_manager.set_open_hook(None)
         for manager in reversed(managers):
             self._try_destroy_manager(manager)
 
@@ -317,6 +321,10 @@ class ServerProcess:
         device_manager = DeviceManager(on_key_event=self._on_hardware_key_event)
         plugin_manager = PluginManager()
         rule_store, rule_controller, rule_engine = AppRuleStore(), AppRuleController(), AppRuleEngine()
+        saver_store, saver_controller = ScreensaverStore(), ScreensaverController()
+        saver_engine = ScreensaverEngine(
+            saver_store, device_manager, page_controller.active_page_id, saver_controller.notify_changed
+        )
 
         context = ServerContext(
             device_manager=device_manager,
@@ -331,6 +339,9 @@ class ServerProcess:
             app_rule_store=rule_store,
             app_rule_controller=rule_controller,
             app_rule_engine=rule_engine,
+            screensaver_store=saver_store,
+            screensaver_controller=saver_controller,
+            screensaver_engine=saver_engine,
             client_tracker=ClientTracker(config.get_as("server.stop_grace", float), self._on_last_client_gone),
         )
 
@@ -339,15 +350,19 @@ class ServerProcess:
             page_store,
             key_store,
             rule_store,
+            saver_store,
             page_controller,
             device_manager,
             plugin_manager,
             rule_controller,
             rule_engine,
+            saver_engine,  # destroyed before the device manager, so it can wake active devices
+            saver_controller,
         ]
         self._context = context
         for manager in managers:
             manager.create(context)
+        device_manager.set_open_hook(saver_engine.device_opened)
         return context, managers
 
     def _run_server(self) -> None:
