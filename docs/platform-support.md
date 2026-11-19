@@ -93,11 +93,14 @@ Footnotes:
    Sans. The full DejaVu family (Sans, Sans Condensed, Sans Mono, Serif, Serif Condensed; regular, bold, italic and
    bold italic) is bundled, and the server resolves those families on every OS even when the OS lacks them. Plugins
    locate the bundled files with `decker_plugin_sdk.fonts.font_path` (the server sets `DECKER_FONT_DIR` for plugin
-   processes). CI run 44557607848 ran the bundled-family resolution (`tests/server/test_fonts.py`, with only the
-   POSIX-only chmod and symlink cases skipped on Windows), the SDK helper (`tests/sdk/test_fonts.py`), the client font
-   registration (`tests/client/test_client_fonts.py`), the lookup and `compose_key_image` on all three OSes. FreeType rasterisation differs per OS, so only
-   Linux asserts a byte-exact image hash; Windows and macOS check structure (size, colours, title region). User-installed
-   fonts beyond the runners' defaults are not covered.
+   processes). For the bundled DejaVu families the server uses an installed copy found in the OS font folders (exact
+   style), else the bundled file, and does not consult fontconfig for them, so a user's fontconfig alias or
+   substitution for a DejaVu family is ignored. CI run 44558930159 (head 6ae0b64) ran the bundled-family resolution
+   (`tests/server/test_fonts.py`, with only the POSIX-only chmod and symlink cases skipped on Windows), the SDK helper
+   (`tests/sdk/test_fonts.py`), the client font registration (`tests/client/test_client_fonts.py`), and the lookup and
+   `compose_key_image` on all three OSes. FreeType rasterisation differs per OS, so only Linux asserts a byte-exact
+   image hash; Windows and macOS check structure (size, colours, title region). User-installed fonts beyond the
+   runners' defaults are not covered.
 9. System Icons read the server's freedesktop icon theme, so the feature is Linux-only: on Windows and macOS the library
    is hidden (CI checks that no packs are served there).
 10. Icon import, SVG rasterisation through Cairo (installed via MSYS2 on Windows and Homebrew on macOS) and the
