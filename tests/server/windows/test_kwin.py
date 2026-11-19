@@ -9,8 +9,10 @@ import pytest
 from assertpy import assert_that
 
 from decker.common.model import WindowInfo
+from decker.server.window_watcher import WatcherTimings
 from decker.server.windows.backend import BackendStatus
 from decker.server.windows.kwin import (
+    PICK_TIMEOUT,
     SCRIPT_NAME,
     DBusCall,
     DBusError,
@@ -114,8 +116,17 @@ def test_query_window_info_result_maps_to_window_info() -> None:
     assert_that(info.pid).is_equal_to(44444)
 
 
-def test_pick_type_other_than_normal_is_unmapped() -> None:
-    assert_that(window_from_kwin({**PICK["info"], "type": 5}).window_type).is_equal_to("")
+@pytest.mark.parametrize(
+    "net_type,name",
+    [(0, "normal"), (1, "desktop"), (2, "dock"), (3, "toolbar"), (4, "menu"), (5, "dialog"), (8, "utility"),
+     (9, "splash"), (13, "notification"), (16, "onscreendisplay"), (17, "criticalnotification")],
+)  # fmt: skip
+def test_pick_type_maps_to_the_names_the_focus_script_emits(net_type: int, name: str) -> None:
+    assert_that(window_from_kwin({**PICK["info"], "type": net_type}).window_type).is_equal_to(name)
+
+
+def test_kwin_picker_does_not_outlive_the_watcher_token() -> None:
+    assert_that(PICK_TIMEOUT).is_less_than_or_equal_to(WatcherTimings().pick_timeout)
 
 
 def test_start_unloads_stale_script_first(bus: FakeBus) -> None:

@@ -19,10 +19,22 @@ from decker.server.windows.backend import BackendStatus
 
 SCRIPT_NAME = "decker-window-watcher"
 BUS_NAME = "org.decker.WindowWatcher"
-PICK_TIMEOUT = 120.0
+PICK_TIMEOUT = 55.0  # below the watcher's 60 s pick token so the picker never outlives it
 _CALL_TIMEOUT = 5.0
 _POLL_INTERVAL = 0.25
-_NET_TYPE_NAMES: dict[int, str] = {0: "normal"}
+_NET_TYPE_NAMES: dict[int, str] = {
+    0: "normal",
+    1: "desktop",
+    2: "dock",
+    3: "toolbar",
+    4: "menu",
+    5: "dialog",
+    8: "utility",
+    9: "splash",
+    13: "notification",
+    16: "onscreendisplay",
+    17: "criticalnotification",
+}
 _PRIMARY_OWNER = 1
 _KWIN = "org.kde.KWin"
 
