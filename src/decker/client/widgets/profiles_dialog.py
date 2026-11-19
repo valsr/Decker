@@ -1,6 +1,7 @@
 """Non-modal "Profiles and rules" dialog: manage a device's profiles and its app-profile switching rules."""
 
 import json
+import os
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any, Protocol
@@ -29,7 +30,9 @@ from decker.client.widgets.rule_editor import (
     MISSING_PAGE,
     RuleEditor,
     fill_page_combo,
+    unsupported_fields,
 )
+from decker.client.widgets.window_spy import WindowSpyDialog, rule_from_window
 from decker.common.model import (
     AppRule,
     DefaultRule,
@@ -38,12 +41,11 @@ from decker.common.model import (
     MatchCondition,
     PageInfo,
     ProfileInfo,
+    WindowInfo,
 )
 
 _ID_ROLE = Qt.ItemDataRole.UserRole
 _PROFILE_DEFAULT = "profile default"  # lower case: it reads inside the "-> Profile / page" summary
-# Fields a detection backend never fills in; unlisted backends are not flagged.
-_UNSUPPORTED_FIELDS: dict[str, set[str]] = {"x11": {"desktop_file"}, "windows": {"window_type", "desktop_file"}}
 
 
 class RulesApi(Protocol):
@@ -67,6 +69,10 @@ class RulesApi(Protocol):
 
     def app_default_rule_set(self, device_id: str, default_rule: DefaultRule) -> bool:
         """Set the default rule."""
+        ...
+
+    def window_pick(self) -> bool:
+        """Ask the server to let the user click a window; False when it refused."""
         ...
 
 
@@ -97,6 +103,7 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._status: DetectionStatusEvent | None = None
         self._select_profile_id: int | None = None
         self._select_rule_id = ""
+        self._spy: WindowSpyDialog | None = None
         self._build_widgets()
         outer = QVBoxLayout(self)
         panes = QHBoxLayout()
@@ -191,6 +198,7 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._default_enable.toggled.connect(lambda _on: self._save_default())
         self._default_profile.activated.connect(self._on_default_profile)
         self._default_page.activated.connect(lambda _i: self._save_default())
+        self._spy_button.clicked.connect(self._open_spy)
         self._spy_button.clicked.connect(self.spy_requested.emit)
         self._close_button.clicked.connect(self.close)
 
@@ -227,6 +235,18 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._status_label.setText(f"Window detection: {status.state} ({status.backend}){reason}")
         self._editor.set_unsupported_fields(self._unsupported())
         self._refresh_warnings()
+        if self._spy is not None:
+            self._spy.set_status(status)
+
+    def on_focused(self, window: WindowInfo) -> None:
+        """Forward a focus change to the Window Spy when it is open."""
+        if self._spy is not None:
+            self._spy.on_focused(window)
+
+    def on_picked(self, window: WindowInfo | None) -> None:
+        """Forward a finished pick to the Window Spy when it is open."""
+        if self._spy is not None:
+            self._spy.on_picked(window)
 
     def refresh(self) -> None:
         """Re-read page lists (the server's pages changed) and redraw."""
@@ -304,7 +324,7 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
     # ------------------------------------------------------------------ rules
 
     def _unsupported(self) -> set[str]:
-        return set(_UNSUPPORTED_FIELDS.get(self._status.backend, set())) if self._status is not None else set()
+        return unsupported_fields(self._status.backend) if self._status is not None else set()
 
     def _pages(self, profile_id: int) -> list[PageInfo]:
         pages = self._pages_for_profile(profile_id)
@@ -422,6 +442,22 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         enabled = item.checkState() == Qt.CheckState.Checked
         if rule is not None and rule.enabled != enabled:
             self._api.app_rule_update(self._device_id, replace(rule, enabled=enabled))
+
+    def _open_spy(self) -> None:
+        if self._spy is None:
+            self._spy = WindowSpyDialog(self._api.window_pick, os.getpid(), self)
+            self._spy.create_rule.connect(self._on_spy_create_rule)
+            if self._status is not None:
+                self._spy.set_status(self._status)
+        self._spy.show()
+        self._spy.raise_()
+        self._spy.activateWindow()
+
+    def _on_spy_create_rule(self, window: WindowInfo) -> None:
+        starter = replace(rule_from_window(window), profile_id=self._selected_profile_id() or 0)
+        stored = self._api.app_rule_add(self._device_id, starter)
+        if stored is not None:
+            self._select_rule_id = stored.rule_id
 
     def _on_add_rule(self) -> None:
         profile_id = self._selected_profile_id() or 0

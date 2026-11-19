@@ -31,9 +31,16 @@ OP_NAMES: dict[str, str] = {
     "not_contains": "does not contain",
     "regex": "matches regex",
 }
+# Fields a detection backend never fills in; unlisted backends are not flagged.
+_UNSUPPORTED_FIELDS: dict[str, set[str]] = {"x11": {"desktop_file"}, "windows": {"window_type", "desktop_file"}}
 PROFILE_DEFAULT = "Profile default"
 MISSING_PAGE = "(missing page)"
 _NEW_CONDITION = MatchCondition("window_class", "equals", "")
+
+
+def unsupported_fields(backend: str) -> set[str]:
+    """The match fields the named detection backend never supplies."""
+    return set(_UNSUPPORTED_FIELDS.get(backend, set()))
 
 
 def _combo(names: dict[str, str]) -> QComboBox:
