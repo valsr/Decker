@@ -8,8 +8,10 @@ from decker.common import config
 from decker.common.api import ApiHandler
 from decker.common.context import ServerAppContext
 from decker.common.processes import rss_bytes
+from decker.server.reconfigure import RESTART_EXIT_CODE
 from decker.server.server import ServerProcess
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
+from decker.server.settings import ServerSettings, read_settings, write_settings
 
 
 def _connect_host(bind_host: str) -> str:
@@ -33,17 +35,25 @@ class ServerMonitor:
 
     def __init__(self, context: ServerAppContext) -> None:
         """Initialize the server monitor from configuration."""
+        self._context = context
+        self._server: ServerProcess
+        self._api: ApiHandler
+        self._memory_limit: int
+        self._build_server()
+        self._good: ServerSettings | None = None
+        self._interval: float = config.get_as("server.health_check_interval", float)
+        self._max_failed_heartbeats: int = config.get_as("server.max_failed_heartbeats", int)
+        self._failed_heartbeats: int = 0
+        self._stop_requested: bool = False
+
+    def _build_server(self) -> None:
+        """(Re)create the server handle, the API connection and the memory limit from the current config."""
         host = config.get_as("server.host", str)
         port = config.get_as("server.port", int)
         startup_wait = config.get_as("server.startup_wait", float)
-        self._server = ServerProcess(port, startup_wait, context, host=host)
-        self._api: ApiHandler = ApiHandler(host=_connect_host(host), port=port)
-        self._interval: float = config.get_as("server.health_check_interval", float)
-        self._max_failed_heartbeats: int = config.get_as("server.max_failed_heartbeats", int)
-        self._memory_limit: int = config.get_as("server.memory_limit", int)
-        self._failed_heartbeats: int = 0
-        self._stop_requested: bool = False
-        self._context = context
+        self._server = ServerProcess(port, startup_wait, self._context, host=host)
+        self._api = ApiHandler(host=_connect_host(host), port=port)
+        self._memory_limit = config.get_as("server.memory_limit", int)
 
     def start(self) -> bool:
         """
@@ -58,6 +68,7 @@ class ServerMonitor:
             logging.error("Failed to start server process")
             return False
 
+        self._good = read_settings()
         try:
             self._monitor()
         except KeyboardInterrupt:
@@ -109,6 +120,9 @@ class ServerMonitor:
             if self._server.exited_cleanly:
                 logging.info("Server stopped cleanly, shutting down monitor")
                 self._stop_requested = True
+                return
+            if self._server.exit_code == RESTART_EXIT_CODE:
+                self._apply_reconfiguration()
                 return
             logging.warning("Server process died unexpectedly, restarting")
             self._restart_server()
@@ -165,3 +179,46 @@ class ServerMonitor:
 
         if not self._server.start():
             logging.error("Failed to restart server — will retry on next cycle")
+
+    def _apply_reconfiguration(self) -> None:
+        """Restart on the settings a client just saved; go back to the last good ones if that server will not run."""
+        logging.info("Server asked for a restart to apply new settings")
+        config.reload()
+        self._api.close()
+        self._build_server()
+        if self._start_verified():
+            self._good = read_settings()
+            return
+        failed = read_settings()
+        logging.error("Server did not start with the new settings (port %d), rolling back", failed.port)
+        self._rollback(f"The server could not start on port {failed.port}; the previous settings were restored.")
+
+    def _rollback(self, message: str) -> None:
+        self._server.stop()
+        self._api.close()
+        if self._good is not None:
+            write_settings(self._good)
+        config.set("server.last_apply_error", message)
+        self._build_server()
+        if not self._server.start():
+            logging.error("Failed to start the server on the previous settings, will retry on the next cycle")
+
+    def _start_verified(self) -> bool:
+        """Start the server and wait until it answers a heartbeat; False if it dies or stays silent."""
+        if not self._server.start():
+            return False
+        deadline = time.monotonic() + config.get_as_or_default("server.apply_timeout", float, 60.0)
+        while time.monotonic() < deadline:
+            if not self._server.is_running:
+                return False
+            if self._answers_heartbeat():
+                return True
+            time.sleep(0.25)
+        return False
+
+    def _answers_heartbeat(self) -> bool:
+        try:
+            response = self._api.request_as(DeckerServiceStatus, "heartbeat")
+        except Exception:  # pylint: disable=broad-except
+            return False
+        return response is not None and response.service_status == DeckerStatusEnum.HEALTHY

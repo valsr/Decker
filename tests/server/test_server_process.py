@@ -16,6 +16,7 @@ from decker.common.api import ApiHandler
 from decker.common.context import ServerAppContext
 from decker.server.monitor import ServerMonitor
 from decker.server.reconfigure import RESTART_EXIT_CODE
+from decker.server.settings import read_settings
 from decker.server.server import ServerProcess
 from decker.server.service import DeckerServiceStatus, DeckerStatusEnum
 
@@ -143,6 +144,36 @@ def test_a_restart_needing_settings_change_makes_the_real_server_exit_with_the_r
         server.stop()
         config.reload()
         config.set("server.memory_limit", original)
+
+
+def test_a_port_that_is_already_in_use_rolls_back_to_the_old_port(tmp_path: Path, port: int) -> None:
+    monitor = ServerMonitor(ServerAppContext(prefix=tmp_path, allow_client_reconfiguration=[]))
+    api = ApiHandler(host="127.0.0.1", port=port, timeout=5.0)
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.bind(("127.0.0.1", 0))
+    blocker.listen()
+    blocked_port = int(blocker.getsockname()[1])
+    config.set("server.apply_timeout", 30.0)
+    try:
+        assert_that(monitor._server.start()).is_true()  # pylint: disable=protected-access
+        _wait_healthy(port, monitor._server)  # pylint: disable=protected-access
+        monitor._good = read_settings()  # pylint: disable=protected-access
+        child = _child(monitor._server)  # pylint: disable=protected-access
+
+        api.request("server_settings_set", json.dumps({"port": blocked_port}))
+        child.join(timeout=_STOP_TIMEOUT)
+        monitor._check_once()  # pylint: disable=protected-access
+
+        assert_that(config.get_as("server.port", int)).is_equal_to(port)
+        assert_that(config.get_as("server.last_apply_error", str)).contains(str(blocked_port))
+        _wait_healthy(port, monitor._server)  # pylint: disable=protected-access
+    finally:
+        api.close()
+        blocker.close()
+        monitor.stop()
+        config.reload()
+        config.unset("server.last_apply_error")
+        config.unset("server.apply_timeout")
 
 
 def test_stop_right_after_start_still_ends_the_process(tmp_path: Path, port: int) -> None:
