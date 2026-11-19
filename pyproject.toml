@@ -23,6 +23,7 @@ packaging = "^25.0"
 psutil = "^7.2.2"
 regex = "^2026.11.19"
 jeepney = {version = "^0.9.0", markers = "sys_platform == 'linux'"}
+python-xlib = {version = "^0.33", markers = "sys_platform == 'linux'"}
 
 [tool.poetry.group.dev.dependencies]
 black = "^26.5.1"
@@ -40,6 +41,7 @@ pyenchant = "^3.2.2"
 types-pyyaml = "^6.0.12.20260518"
 types-psutil = "^7.2.2.20261111"
 types-regex = "^2026.11.19.20261119"
+types-python-xlib = "^0.33"
 
 [build-system]
 requires = ["poetry-core"]
