@@ -64,10 +64,18 @@ Footnotes:
 5. GNOME has no system tray by default, and the behaviour there is untested. The tray is not covered by CI on any OS.
 6. Plugin children start in their own process group (`CREATE_NEW_PROCESS_GROUP` on Windows, a new session elsewhere).
    They are stopped by a recursive psutil kill on Windows and by `os.killpg` (SIGTERM/SIGKILL) on the process group
-   elsewhere. The launcher uses the plugin venv's interpreter (`Scripts\python.exe` on Windows, `bin/python` elsewhere);
-   on Windows that path is only asserted as an argv string, because the plugin tests build no real venv (`uv` is
-   faked). CI ran real plugin child processes, the watchdog and orphan checks on all three. Real `uv` and network
-   builds are not covered.
+   elsewhere; on Windows terminate then kill are both hard kills (`TerminateProcess`). Windows has no process-group
+   semantics here, so helpers an executable plugin leaves behind after its leader exits are not cleaned up; the
+   follow-up that would remove that whole class is Windows Job Objects with `KILL_ON_JOB_CLOSE` (not implemented). On
+   Windows the monitor stops the server with `multiprocessing.Process.terminate()`, which is `TerminateProcess`, so the
+   SIGTERM handler and the graceful plugin shutdown do not run on monitor restarts and plugins then rely on stdin EOF;
+   POSIX gets SIGTERM and a graceful stop. The launcher uses the plugin venv's interpreter (`Scripts\python.exe` on
+   Windows, `bin/python` elsewhere), and on Windows it passes only a minimal environment plus the Windows system
+   variables (`SYSTEMROOT`, `TEMP`, ...); a test starts a real interpreter with that environment on every OS. CI ran the
+   real `uv venv` build tests (`test_build_creates_venv_with_server_python_when_no_spec`,
+   `test_build_installs_requirements`, `test_venv_is_built_relocatable`) on Windows and macOS as well as Linux (run
+   44454336780: all passed, none skipped), plus real plugin child processes, the watchdog and orphan checks. Builds that
+   fetch from a network index are not covered (the requirements test uses a local wheel).
 7. CI ran package read/extract (including zip path safety per OS), install, uninstall and repository RPCs against local
    fixtures. Live repository fetches and update checks over the network are not covered.
 8. Fonts resolve in this order: `fc-match` when present, an index of the OS font folders, then the bundled DejaVu
