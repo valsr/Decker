@@ -106,8 +106,10 @@ def test_rejects_absolute_path():
 
 
 def test_rejects_backslash_names():
+    info = zipfile.ZipInfo("placeholder.txt")
+    info.filename = "a\\b.txt"  # ZipInfo() itself rewrites os.sep to "/" on Windows
     with pytest.raises(PackageError, match="backslash"):
-        read_manifest(_zip(extra=[("a\\b.txt", "x")]))
+        read_manifest(_zip(extra=[(info, "x")]))
 
 
 def test_rejects_symlink_entry():
