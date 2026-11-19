@@ -15,7 +15,7 @@ from decker.asset.renderer import AssetRenderer
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
 from decker.common.text_style import fold_legacy_title
 from decker.plugin.settings_schema import apply_schema, parse_settings_schema
-from decker.server.fonts import BUNDLED_BOLD, font_file
+from decker.server.fonts import BUNDLED_BOLD, font_face, font_file
 
 _BASE_SIZE = 72  # title sizes in settings are relative to a 72 px key
 _TITLE_MARGIN = 4
@@ -34,7 +34,7 @@ def _font(
     for candidate, is_bold in ((path, real_bold), (str(BUNDLED_BOLD), True)):
         if candidate:
             try:
-                return ImageFont.truetype(candidate, size), is_bold
+                return ImageFont.truetype(candidate, size, index=font_face(candidate, family, bold, italic)), is_bold
             except OSError:
                 continue
     return ImageFont.load_default(size), False

@@ -1,3 +1,4 @@
+import os
 import shutil
 import sys
 from collections.abc import Iterator
@@ -13,9 +14,9 @@ from decker.server import appearance, fonts
 @pytest.fixture(autouse=True)
 def _fresh_font_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(fonts, "_index", None)
-    fonts.font_file.cache_clear()
+    fonts.clear_font_cache()
     yield
-    fonts.font_file.cache_clear()
+    fonts.clear_font_cache()
 
 
 def _copy_bundled(directory: Path) -> Path:
@@ -102,3 +103,112 @@ def test_appearance_font_never_returns_the_pillow_default_font(monkeypatch: pyte
     font, _ = appearance._font("No Such Family", 20)
 
     assert_that(font).is_instance_of(ImageFont.FreeTypeFont)
+
+
+def _fake_names(monkeypatch: pytest.MonkeyPatch, names: dict[str, list[tuple[str, str]]]) -> None:
+    def face_name(path: Path, face: int) -> tuple[str, str]:
+        faces = names[path.name]
+        if face >= len(faces):
+            raise OSError("no such face")
+        return faces[face]
+
+    monkeypatch.setattr(fonts, "_face_name", face_name)
+
+
+def _touch(directory: Path, *file_names: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in file_names:
+        (directory / name).write_bytes(b"x")
+
+
+def test_only_the_regular_style_takes_the_regular_slot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _touch(tmp_path, "a-light.ttf", "b-semibold.ttf", "c-book.ttf", "d-regular.ttf", "e-black.ttf")
+    _fake_names(
+        monkeypatch,
+        {
+            "a-light.ttf": [("Fam", "Light")],
+            "b-semibold.ttf": [("Fam", "Semibold")],
+            "c-book.ttf": [("Fam", "Book")],
+            "d-regular.ttf": [("Fam", "Regular")],
+            "e-black.ttf": [("Fam", "Black")],
+        },
+    )
+
+    index = fonts.build_font_index([tmp_path])
+
+    assert_that(index).is_equal_to({("fam", "regular"): str(tmp_path / "d-regular.ttf")})
+
+
+def test_a_weight_only_family_has_no_regular_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _touch(tmp_path, "a.ttf")
+    _fake_names(monkeypatch, {"a.ttf": [("Thin Fam", "Light Italic")]})
+
+    assert_that(fonts.build_font_index([tmp_path])).is_empty()
+
+
+@pytest.mark.posix_only(reason="key rendering fonts: chmod 000 makes a font subfolder unreadable")
+def test_an_unreadable_subfolder_does_not_lose_the_other_fonts(tmp_path: Path) -> None:
+    if getattr(os, "geteuid", lambda: 1)() == 0:
+        pytest.skip("root can read everything")
+    _copy_bundled(tmp_path / "ok")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        index = fonts.build_font_index([tmp_path])
+    finally:
+        locked.chmod(0o755)
+
+    assert_that(index).contains_key(("dejavu sans", "regular"))
+
+
+def test_a_walk_error_is_skipped_and_scanning_continues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    good = _copy_bundled(tmp_path / "good")
+    real_walk = os.walk
+
+    def walk(top: Path, **kwargs: object):
+        onerror = kwargs["onerror"]
+        onerror(OSError("denied"))  # type: ignore[operator]
+        yield from real_walk(top, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "walk", walk)
+
+    assert_that(fonts.build_font_index([tmp_path])).contains_key(("dejavu sans", "bold"))
+    assert_that(good.is_dir()).is_true()
+
+
+@pytest.mark.posix_only(reason="key rendering fonts: directory symlinks need POSIX")
+def test_a_directory_symlink_loop_does_not_hang(tmp_path: Path) -> None:
+    _copy_bundled(tmp_path / "fonts")
+    (tmp_path / "fonts" / "loop").symlink_to(tmp_path, target_is_directory=True)
+
+    index = fonts.build_font_index([tmp_path / "fonts"])
+
+    assert_that(index).contains_key(("dejavu sans", "regular"))
+
+
+def test_every_face_of_a_collection_is_indexed_with_its_face_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _touch(tmp_path, "pack.ttc")
+    _fake_names(monkeypatch, {"pack.ttc": [("Alpha", "Regular"), ("Alpha", "Bold"), ("Beta", "Regular")]})
+
+    index = fonts.build_font_index([tmp_path])
+    faces = fonts.build_face_index([tmp_path])
+
+    pack = str(tmp_path / "pack.ttc")
+    assert_that(index).is_equal_to({("alpha", "regular"): pack, ("alpha", "bold"): pack, ("beta", "regular"): pack})
+    assert_that(faces[("alpha", "bold")]).is_equal_to((pack, 1))
+    assert_that(faces[("beta", "regular")]).is_equal_to((pack, 2))
+
+
+def test_font_face_returns_the_face_of_the_resolved_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _touch(tmp_path, "pack.ttc")
+    _fake_names(monkeypatch, {"pack.ttc": [("Alpha", "Regular"), ("Beta", "Regular")]})
+    monkeypatch.setattr(shutil, "which", lambda *_a, **_k: None)
+    monkeypatch.setattr(fonts, "font_directories", lambda: [tmp_path])
+
+    path, _ = fonts.font_file("Beta")
+
+    assert_that(fonts.font_face(path or "", "Beta")).is_equal_to(1)
+    assert_that(fonts.font_face(str(fonts.BUNDLED_REGULAR), "Beta")).is_equal_to(0)
