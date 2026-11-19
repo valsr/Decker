@@ -69,8 +69,9 @@ Date 2026-11-19. KWin 6.7.5, Plasma 6 Wayland (Manjaro). Spike outcome: both mec
   `skipTaskbar` b, `type` i, `uuid` s, `width` d, `x` d, `y` d. Fixture: `kwin_pick.json` (anonymised).
 - Mapping to `WindowInfo`: `window_class` = `resourceClass`; `title` = `caption`; `pid` = `pid` (executable via
   psutil); `desktop_file` = `desktopFile` (note: no `Name` suffix, differs from the script's `desktopFileName`);
-  `window_type` from `type` (a NET window type int). Only `type 0` (normal) was observed in a pick; every other value
-  (including 5 dialog, 8 utility, 9 splash, 2 dock) is unmapped and unproven for picks. Type 5 was seen only as the focus
+  `window_type` from `type` (a NET window type int). Only `type 0` (normal) was observed in a pick; the other stable NET
+  values (1 desktop, 2 dock, 3 toolbar, 4 menu, 5 dialog, 8 utility, 9 splash, 13 notification, 16 onscreendisplay,
+  17 criticalnotification) are mapped to the focus script's names but unproven for picks (the final review added the map). Type 5 was seen only as the focus
   script's `windowType` for an XWayland dialog. `hasTransientParent` is true for transient Wayland dialogs, but using it
   would make picks and focus events inconsistent unless the focus script changes too.
 - The queryWindowInfo return was captured from a synthetic click (ydotool); the user did not click within the first 60 s.

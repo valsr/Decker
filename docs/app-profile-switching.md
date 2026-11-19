@@ -8,7 +8,7 @@ a terminal profile when a terminal has focus. The server does the detection, so 
 ## Rules
 
 Open the profile selector's **Edit profile…** entry. It opens the **Profiles and rules** dialog: the device's profiles on
-one side and the selected profile's rules on the other, in an ordered list.
+one side and all of the device's rules on the other, in an ordered list (each rule shows the profile it targets).
 
 - Rules are per device and ordered; the **first matching rule wins**. Reorder them with move up/down.
 - A rule has a name, an enabled flag, conditions, a target profile and an optional page. With no page, the target
@@ -25,8 +25,10 @@ one side and the selected profile's rules on the other, in an ordered list.
 - The **default rule** ("when no rule matches") has no conditions. It can only be enabled or disabled and retargeted
   (profile and page).
 - The default rule starts disabled, targeting profile 0.
-- Deleting a profile removes the rules that targeted it and resets a default rule that targeted it (disabled, back to
-  profile 0). Deleting a page clears the page on rules (and the default rule) that named it.
+- Size limits, enforced by the server: 200 rules per device, 20 conditions per rule, 1024 characters per condition
+  value and 200 characters per rule name. A save over a limit is refused like any other invalid rule.
+- Deleting a profile removes the rules that targeted it and resets a default rule that targeted it (disabled, to the
+  lowest remaining profile, which is profile 0 unless that was the one deleted). Deleting a page clears the page on rules (and the default rule) that named it.
 
 ## Behaviour
 
@@ -36,13 +38,16 @@ one side and the selected profile's rules on the other, in an ordered list.
 - Editing rules never switches the deck. Edits apply at the next focus change.
 - A window that matches no rule, with the default rule disabled, changes nothing. It also resets the server's memory of the previous
   target, so returning to the earlier window re-applies its profile, overriding a manual switch.
-- A title change inside an already-focused window is not re-evaluated until focus changes.
+- On KWin and X11, a title change inside an already-focused window is not re-evaluated until focus changes. On Windows the
+  title is part of the focus identity, so a title change is re-evaluated.
 
 ## Window Spy
 
 Window Spy (in the dialog) shows a window's class, type, title, executable and desktop file so you can write rules.
 
-- **Pick window**: click the window you want to inspect (where the backend supports picking).
+- **Pick window**: click the window you want to inspect (where the backend supports picking). Picks time out after about
+  a minute. KWin's picker cannot be cancelled over D-Bus, so after a cancel or timeout it may stay on screen until it
+  times out on its own (55 s).
 - **Capture in 3 s** and **Follow**: where picking is unsupported, capture the focused window after a 3 second countdown,
   or follow focus live.
 - **Create rule from this window** pre-fills a new rule from the shown attributes.
@@ -65,7 +70,8 @@ an empty title.
 | Windows | `windows` | No window type and no desktop file. |
 | GNOME / other Wayland, macOS | none | Report unsupported for now. |
 
-- On native Wayland (KWin) a dialog reports window type `normal`; only X11/XWayland windows report `dialog`.
+- On native Wayland (KWin) a dialog reports window type `normal`; only X11/XWayland windows report `dialog`. A KWin
+  pick reports the same type names as focus events (`dialog`, `utility`, `splash`, `dock` and so on).
 - **Known limitation:** rule edits are whole-rule updates. If two clients edit different fields of the same rule at the same
   moment, the last save wins for the fields it holds (no field-level merge yet).
 
