@@ -90,7 +90,12 @@ Footnotes:
 7. CI ran package read/extract (including zip path safety per OS), install, uninstall and repository RPCs against local
    fixtures. Live repository fetches and update checks over the network are not covered.
 8. Fonts resolve in this order: `fc-match` when present, an index of the OS font folders, then the bundled DejaVu
-   Sans. CI ran the lookup and `compose_key_image` on all three OSes. FreeType rasterisation differs per OS, so only
+   Sans. The full DejaVu family (Sans, Sans Condensed, Sans Mono, Serif, Serif Condensed; regular, bold, italic and
+   bold italic) is bundled, and the server resolves those families on every OS even when the OS lacks them. Plugins
+   locate the bundled files with `decker_plugin_sdk.fonts.font_path` (the server sets `DECKER_FONT_DIR` for plugin
+   processes). CI run 44557607848 ran the bundled-family resolution (`tests/server/test_fonts.py`, with only the
+   POSIX-only chmod and symlink cases skipped on Windows), the SDK helper (`tests/sdk/test_fonts.py`), the client font
+   registration (`tests/client/test_client_fonts.py`), the lookup and `compose_key_image` on all three OSes. FreeType rasterisation differs per OS, so only
    Linux asserts a byte-exact image hash; Windows and macOS check structure (size, colours, title region). User-installed
    fonts beyond the runners' defaults are not covered.
 9. System Icons read the server's freedesktop icon theme, so the feature is Linux-only: on Windows and macOS the library
