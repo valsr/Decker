@@ -1,6 +1,7 @@
 import io
 import json
 import stat
+import sys
 import zipfile
 
 import pytest
@@ -105,9 +106,14 @@ def test_rejects_absolute_path():
         read_manifest(_zip(extra=[("/etc/evil", "x")]))
 
 
-def test_rejects_backslash_names():
+def test_rejects_backslash_names(tmp_path):
     info = zipfile.ZipInfo("placeholder.txt")
     info.filename = "a\\b.txt"  # ZipInfo() itself rewrites os.sep to "/" on Windows
+    if sys.platform == "win32":  # zipfile reads "\\" as "/" there, so the entry is an ordinary nested file
+        dest = tmp_path / "out"
+        extract(_zip(extra=[(info, "x")]), dest)
+        assert_that((dest / "a" / "b.txt").read_text()).is_equal_to("x")
+        return
     with pytest.raises(PackageError, match="backslash"):
         read_manifest(_zip(extra=[(info, "x")]))
 
