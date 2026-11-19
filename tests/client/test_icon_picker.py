@@ -282,6 +282,13 @@ def _wait(qapp, ms=250):
         time.sleep(0.005)
 
 
+def _wait_until(qapp, condition, timeout_ms=5000):
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline and not condition():
+        qapp.processEvents()
+        time.sleep(0.005)
+
+
 def _manager(**kwargs):
     return FakeConnectionManager(_PACKS, _ICONS, **kwargs)
 
@@ -519,7 +526,7 @@ class TestIconBrowserLoading:
         dialog = IconBrowserDialog(None, cm)
         dialog.resize(640, 480)
         dialog.show()
-        _wait(qapp, 300)
+        _wait_until(qapp, lambda: any(c[2] == "icon-0000.svg" for c in cm.icon_calls()))
         asked = {c[2] for c in cm.icon_calls()}
         assert_that(asked).contains("icon-0000.svg")
         assert_that(asked).does_not_contain("icon-1000.svg")  # layout may probe the last item; nothing mid-list
