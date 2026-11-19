@@ -25,9 +25,9 @@ notion_project_area: decker
 1. Spawns the server as a child process.
 2. Periodically sends an RPyC heartbeat; a non-response counts as a failed check.
 3. Periodically samples the server process's RSS memory via `psutil` (`decker.common.processes.rss_bytes`).
-4. If consecutive failed heartbeats reach the threshold **or** RSS exceeds **1 GiB**, the monitor kills the child and restarts it.
+4. If consecutive failed heartbeats reach the threshold **or** RSS exceeds **1 GiB**, the monitor stops the child and restarts it. Stopping asks the server to shut down (a shared stop event, so the normal shutdown runs on every OS), waits `server.stop_timeout` seconds (default 10), then terminates and finally kills it.
 5. If the server exits with **code 0** (triggered by the `stop` RPC), the monitor treats it as an intentional shutdown and exits cleanly — it does **not** restart. Any non-zero exit code is treated as a crash and triggers a restart.
-6. Restart backoff and max-restart limits are configurable.
+6. If starting the new child fails, the restart is retried on the next check round; there is no backoff or maximum restart count yet.
 
 The server itself has no self-healing logic — fault tolerance is entirely the monitor's responsibility.
 

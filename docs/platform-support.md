@@ -52,7 +52,11 @@ Footnotes:
 
 1. CI ran the RPC service layer (with real stores on sqlite), the monitor logic and `decker.common.processes` (process
    groups, tree kill, memory read via psutil, so no `/proc` is needed) on all three OSes. On Windows the tree kill does
-   not clean up orphaned helpers once the leader has exited (the pid may be recycled). Not covered: a full
+   not clean up orphaned helpers once the leader has exited (the pid may be recycled). The real server child was
+   also started, stopped gracefully (exit code 0) and restarted by the monitor on Linux, Windows and macOS (integration
+   tests in `tests/server/test_server_process.py`, run 44460424393; they skip when a Stream Deck is attached). Not
+   covered: the graceful shutdown of plugin processes during such a stop end to end (no plugin is installed in those
+   tests; the supervisor tests only cover stopping plugin processes at unit level), hardware access, a full
    `poe server` run, memory-limit restarts of a long-lived server, and `poe cli` against a live server.
 2. The README documents `libhidapi` setup for Debian/Ubuntu, Fedora and Arch and a conventional udev rule; the udev
    steps are not verified on every distribution, and other distributions need their own package name.
@@ -66,10 +70,11 @@ Footnotes:
    They are stopped by a recursive psutil kill on Windows and by `os.killpg` (SIGTERM/SIGKILL) on the process group
    elsewhere; on Windows terminate then kill are both hard kills (`TerminateProcess`). Windows has no process-group
    semantics here, so helpers an executable plugin leaves behind after its leader exits are not cleaned up; the
-   follow-up that would remove that whole class is Windows Job Objects with `KILL_ON_JOB_CLOSE` (not implemented). On
-   Windows the monitor stops the server with `multiprocessing.Process.terminate()`, which is `TerminateProcess`, so the
-   SIGTERM handler and the graceful plugin shutdown do not run on monitor restarts and plugins then rely on stdin EOF;
-   POSIX gets SIGTERM and a graceful stop. The launcher uses the plugin venv's interpreter (`Scripts\python.exe` on
+   follow-up that would remove that whole class is Windows Job Objects with `KILL_ON_JOB_CLOSE` (not implemented). The
+   monitor stops the server on every OS by setting a stop event, which makes the server run its normal shutdown
+   (including stopping plugins); only if the server is still alive after `server.stop_timeout` does it fall back to
+   `terminate()` (SIGTERM on POSIX, `TerminateProcess` on Windows) and then `kill()`. Plugins stopped through that
+   fallback on Windows rely on stdin EOF instead of a graceful stop. The launcher uses the plugin venv's interpreter (`Scripts\python.exe` on
    Windows, `bin/python` elsewhere), and on Windows it passes only a minimal environment plus the Windows system
    variables (`SYSTEMROOT`, `TEMP`, ...); a test starts a real interpreter with that environment on every OS. CI ran the
    real `uv venv` build tests (`test_build_creates_venv_with_server_python_when_no_spec` and
