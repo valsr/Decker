@@ -1,0 +1,26 @@
+{
+  "_comment": "Payloads of the Focused(s) D-Bus call, captured on KWin 6.7.5 Plasma 6 Wayland. Each value is the parsed JSON string argument.",
+  "samples": {
+    "native_wayland": {
+      "resourceClass": "org.kde.dolphin",
+      "windowType": "normal",
+      "caption": "/tmp — Dolphin",
+      "pid": 3064369,
+      "desktopFileName": "org.kde.dolphin"
+    },
+    "xwayland": {
+      "resourceClass": "Xmessage",
+      "windowType": "normal",
+      "caption": "decker-x11",
+      "pid": 3064445,
+      "desktopFileName": ""
+    },
+    "dialog_xwayland": {
+      "resourceClass": "qtdlg.py",
+      "windowType": "dialog",
+      "caption": "spike-dialog",
+      "pid": 3064451,
+      "desktopFileName": "decker-spike"
+    }
+  }
+}
