@@ -20,6 +20,7 @@ _BOLD_WEIGHT = 180  # fontconfig weight at or above which a face counts as reall
 _FONT_SUFFIXES = {".ttf", ".otf", ".ttc"}
 _index: dict[tuple[str, str], tuple[str, int]] | None = None  # pylint: disable=invalid-name
 _index_lock = threading.Lock()
+_bundled_index: dict[tuple[str, str], tuple[str, int]] | None = None  # pylint: disable=invalid-name
 
 
 def font_directories() -> list[Path]:
@@ -118,6 +119,43 @@ def _get_index() -> dict[_Key, _Face]:
         return _index
 
 
+def _bundled_key(family: str, style: str) -> tuple[str, str] | None:
+    """Index key for a bundled face; Pillow reports Condensed as a style word of the base family."""
+    words = style.split()
+    if "Condensed" in words:
+        family += " Condensed"
+        words.remove("Condensed")
+    kind = _style_of(" ".join(words))
+    return (family.lower(), kind) if family and kind else None
+
+
+def _get_bundled_index() -> dict[_Key, _Face]:
+    global _bundled_index  # pylint: disable=global-statement
+    with _index_lock:
+        if _bundled_index is None:
+            index: dict[_Key, _Face] = {}
+            for path in _font_files(BUNDLED_FONT_DIR):
+                try:
+                    family, style = ImageFont.truetype(str(path), 10).getname()
+                except (OSError, ValueError) as exc:
+                    logging.debug("skipping bundled font %s: %s", path, exc)
+                    continue
+                if key := _bundled_key(family or "", style or ""):
+                    index[key] = (str(path), 0)
+            _bundled_index = index
+        return _bundled_index
+
+
+def _from_bundled(family: str, bold: bool, italic: bool) -> tuple[str, bool, int] | None:
+    wanted = "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
+    found = _get_bundled_index().get((family.lower(), wanted))
+    return (found[0], bold, found[1]) if found else None
+
+
+def _is_bundled_family(family: str) -> bool:
+    return any(name == family.lower() for name, _ in _get_bundled_index())
+
+
 def _fc_match(pattern: str) -> tuple[str, bool, int] | None:
     if not shutil.which("fc-match"):
         return None
@@ -154,8 +192,18 @@ def _from_index(family: str, bold: bool, italic: bool) -> tuple[str, bool, int] 
     return None
 
 
+def _exact_from_index(family: str, bold: bool, italic: bool) -> tuple[str, bool, int] | None:
+    wanted = "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
+    found = _get_index().get((family.lower(), wanted))
+    return (found[0], bold, found[1]) if found else None
+
+
 @functools.lru_cache(maxsize=64)
 def _resolve(family: str, bold: bool, italic: bool) -> tuple[str, bool, int]:
+    if _is_bundled_family(family):
+        # fontconfig answers every query, so an unknown bundled family would get an unrelated fallback face
+        exact = _exact_from_index(family, bold, italic)
+        return exact or _from_bundled(family, bold, italic) or _bundled(bold)
     pattern = family + (":bold" if bold else "") + (":italic" if italic else "")
     return _fc_match(pattern) or _from_index(family, bold, italic) or _bundled(bold)
 
@@ -177,5 +225,8 @@ def font_face(path: str, family: str, bold: bool = False, italic: bool = False) 
 
 
 def clear_font_cache() -> None:
-    """Forget resolved fonts (the index itself is kept)."""
+    """Forget resolved fonts (the OS index is kept; the bundled index is rebuilt on next use)."""
+    global _bundled_index  # pylint: disable=global-statement
     _resolve.cache_clear()
+    with _index_lock:
+        _bundled_index = None
