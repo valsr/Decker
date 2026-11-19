@@ -11,6 +11,11 @@ from decker.server.windows.backend import WindowBackend
 LOGGER = logging.getLogger(__name__)
 
 
+def backoff_delay(base: float, cap: float, attempts: int) -> float:
+    """Exponential retry delay: base doubling per attempt, capped."""
+    return float(min(base * (2**attempts), cap))
+
+
 @dataclass(frozen=True)
 class WatcherTimings:
     """Injectable delays, in seconds."""
@@ -46,12 +51,18 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
         self._debounce_timer: threading.Timer | None = None
         self._retry_timer: threading.Timer | None = None
         self._attempts = 0
+        self._launching = False
+        self._launched = False
+        self._stopper: threading.Thread | None = None
         self._pick_token: object | None = None
+        self._pick_on_result: Callable[[WindowInfo | None], None] | None = None
         self._pick_timer: threading.Timer | None = None
 
     def start(self) -> None:
         """Start the backend; failures retry with backoff."""
         with self._lock:
+            if self._running:
+                return
             self._running = True
         self._launch()
 
@@ -63,8 +74,12 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
                 if timer is not None:
                     timer.cancel()
             self._debounce_timer = self._retry_timer = self._pick_timer = None
-            self._pick_token = None
+            self._pending = None
+            token, on_result = self._pick_token, self._pick_on_result
+            self._launched = False
         self._stop_backend()
+        if token is not None:
+            self._finish_pick(token, None, on_result)
 
     def status(self) -> dict[str, Any]:
         """Report state, reason, backend and the last window."""
@@ -90,6 +105,7 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
             if not self._backend.supports_pick or self._state != "active" or self._pick_token is not None:
                 return False
             self._pick_token = token
+            self._pick_on_result = on_result
             self._pick_timer = threading.Timer(self._timings.pick_timeout, self._finish_pick, (token, None, on_result))
             self._pick_timer.daemon = True
             self._pick_timer.start()
@@ -108,6 +124,7 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
             if self._pick_token is not token:
                 return
             self._pick_token = None
+            self._pick_on_result = None
             if self._pick_timer is not None:
                 self._pick_timer.cancel()
                 self._pick_timer = None
@@ -115,6 +132,20 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
             on_result(window)
 
     def _launch(self) -> None:
+        with self._lock:
+            if self._launching or self._launched or not self._running:
+                return
+            self._launching = True
+            stopper = self._stopper
+        if stopper is not None:
+            stopper.join(timeout=5)
+        try:
+            self._launch_backend()
+        finally:
+            with self._lock:
+                self._launching = False
+
+    def _launch_backend(self) -> None:
         try:
             status = self._backend.available()
             if status.state != "active":
@@ -124,10 +155,14 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
                 return
             self._backend.start(self._on_change)
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            self._fail(exc)
+            self._fail(exc, in_thread=False)
             return
         with self._lock:
-            self._attempts = 0
+            still_running = self._running
+            self._launched = still_running
+        if not still_running:
+            self._stop_backend()
+            return
         self._set_state("active", "")
 
     def _set_state(self, state: str, reason: str) -> None:
@@ -136,9 +171,20 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
             self._reason = reason
         self._on_status()
 
-    def _fail(self, exc: Exception) -> None:
+    def _fail(self, exc: Exception, in_thread: bool = True) -> None:
+        with self._lock:
+            if not self._running:
+                return
+            self._launched = False
         LOGGER.warning("window backend %s failed: %s", self._backend.name, exc)
-        self._stop_backend()
+        if in_thread:
+            # the failure may come from the backend's own thread, which must not stop itself
+            stopper = threading.Thread(target=self._stop_backend, daemon=True)
+            with self._lock:
+                self._stopper = stopper
+            stopper.start()
+        else:
+            self._stop_backend()
         self._set_state("unavailable", str(exc) or type(exc).__name__)
         self._schedule_retry()
 
@@ -152,7 +198,7 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
         with self._lock:
             if not self._running:
                 return
-            delay = min(self._timings.retry_base * (2**self._attempts), self._timings.retry_cap)
+            delay = backoff_delay(self._timings.retry_base, self._timings.retry_cap, self._attempts)
             self._attempts += 1
             if self._retry_timer is not None:
                 self._retry_timer.cancel()
@@ -161,9 +207,6 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
             self._retry_timer.start()
 
     def _retry(self) -> None:
-        with self._lock:
-            if not self._running:
-                return
         self._launch()
 
     def _on_change(self, window: WindowInfo) -> None:
@@ -189,5 +232,7 @@ class WindowWatcher:  # pylint: disable=too-many-instance-attributes
                 return
         try:
             self._on_window(window)
+            with self._lock:
+                self._attempts = 0
         except Exception as exc:  # pylint: disable=broad-exception-caught
             self._fail(exc)
