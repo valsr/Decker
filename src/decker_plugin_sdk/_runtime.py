@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, BinaryIO, TypeVar
 
+from . import _variables
 from ._context import MAX_LINE_BYTES, CardContext, encode_line
 from ._gestures import Gesture
 
@@ -121,6 +122,11 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
         self._contexts: dict[str, tuple[DeckerPlugin, CardContext]] = {}
         self._global_settings: dict[str, Any] = {}
         self._stopping = False
+        self._vars = _variables.VariableHost(self.send, self.log_error)
+
+    @property
+    def variables(self) -> _variables.VariableHost:
+        return self._vars
 
     def send(self, event: str, context: str | None = None, payload: dict[str, Any] | None = None) -> None:
         line = encode_line(event, context, payload)
@@ -149,6 +155,7 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
                     return 0
         finally:
             self._stopping = True
+            self._vars.stop()
             self._pool.shutdown(wait=False, cancel_futures=True)
 
     def _handle_line(self, line: bytes) -> bool:
@@ -175,6 +182,10 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
             self._on_hello(payload)
         elif event == "global_settings_changed":
             self._on_global_settings(payload)
+        elif event == "get_variable":
+            self._submit(self._vars.answer, payload)
+        elif event == "variables_changed":
+            self._vars.changed(payload)
         elif event == "run_action":
             self._submit_action(payload)
         elif event in _HANDLERS:
@@ -184,6 +195,12 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
     def _submit_action(self, payload: dict[str, Any]) -> None:
         try:
             self._pool.submit(self._run_action, payload)
+        except RuntimeError:
+            pass  # pool already shut down
+
+    def _submit(self, fn: Callable[[dict[str, Any]], None], payload: dict[str, Any]) -> None:
+        try:
+            self._pool.submit(fn, payload)
         except RuntimeError:
             pass  # pool already shut down
 
@@ -205,6 +222,7 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
         settings = payload.get("global_settings")
         self._global_settings = settings if isinstance(settings, dict) else {}
         self.send("ready")
+        self._vars.start()
 
     def _enqueue(self, key: str, item: dict[str, Any]) -> None:
         with self._state_lock:
@@ -300,4 +318,9 @@ def run(
     actions: Mapping[str, Callable[[dict[str, Any]], Any]] | None = None,
 ) -> int:
     """Serve the protocol on the given streams until shutdown or EOF; returns the exit code."""
-    return _Runtime(cards, stdout, actions).serve(stdin)
+    runtime = _Runtime(cards, stdout, actions)
+    _variables.set_current(runtime.variables)
+    try:
+        return runtime.serve(stdin)
+    finally:
+        _variables.set_current(None)
