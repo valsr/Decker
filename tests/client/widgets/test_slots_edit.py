@@ -14,8 +14,32 @@ _CARD = {"plugin_uuid": "p", "plugin_name": "P", "card_uuid": "c", "card_name": 
 _ACTION = {"plugin_uuid": "core", "card_uuid": "run", "preset_action": "http"}
 
 
+_URL = [{"key": "url", "type": "text", "label": "URL"}]
+_CFG_CARDS = [{**_CARDS[0], "settings_schema": _URL}]
+_CFG_ACTIONS = [{**_ACTIONS[0], "settings_schema": _URL}]
+
+
 def _edit() -> SlotsEdit:
     return SlotsEdit(catalog=lambda: (_CARDS, _ACTIONS))
+
+
+def _cfg_edit() -> SlotsEdit:
+    return SlotsEdit(catalog=lambda: (_CFG_CARDS, _CFG_ACTIONS))
+
+
+def _slot(edit: SlotsEdit, name: str) -> dict[str, Any]:
+    value = edit.slot_value(name)
+    assert value is not None
+    return value
+
+
+def _type_url(edit: SlotsEdit, text: str) -> None:
+    widget: Any = edit._config.settings_form._fields["url"].widget  # pylint: disable=protected-access
+    widget.setText(text)
+
+
+def _card_slot(url: str = "") -> dict[str, Any]:
+    return {"kind": "card", "plugin": "p", "card": "c", "settings": {"url": url}, "appearance": {}}
 
 
 def _mime(payload: dict[str, Any]) -> QMimeData:
@@ -123,3 +147,106 @@ class TestSlotsEdit:  # pylint: disable=protected-access
 
         assert_that(changes).is_empty()
         assert_that(edit.value()["press"]).is_equal_to({"kind": "action", "action": "http", "settings": {"a": 1}})
+
+
+class TestSlotConfig:  # pylint: disable=protected-access
+    def test_selecting_card_slot_shows_its_settings_form(self, qapp):  # pylint: disable=unused-argument
+        edit = _cfg_edit()
+        edit.set_value({"press": _card_slot("http://x")})
+
+        edit._select("press")
+
+        config = edit._config
+        assert_that(config.settings_form.values()).is_equal_to({"url": "http://x"})
+        assert_that(config.appearance_form.values()).contains_key("title")
+        assert_that(config.isHidden()).is_false()
+
+    def test_editing_card_slot_settings_updates_slot_value(self, qapp):  # pylint: disable=unused-argument
+        edit = _cfg_edit()
+        edit.set_value({"press": _card_slot("a")})
+        edit._select("press")
+        changes: list[int] = []
+        edit.changed.connect(lambda: changes.append(1))
+
+        _type_url(edit, "b")
+
+        assert_that(_slot(edit, "press")["settings"]).is_equal_to({"url": "b"})
+        assert_that(changes).is_not_empty()
+        assert_that(edit._config.settings_form.values()).is_equal_to({"url": "b"})
+
+    def test_editing_card_slot_appearance_updates_slot_value(self, qapp):  # pylint: disable=unused-argument
+        edit = _cfg_edit()
+        edit.set_value({"press": _card_slot()})
+        edit._select("press")
+
+        title: Any = edit._config.appearance_form._fields["title"].widget
+        line = title._line
+        line.setText("Hi")
+        line.textEdited.emit("Hi")
+
+        assert_that(_slot(edit, "press")["appearance"]["title"]["text"]).is_equal_to("Hi")
+
+    def test_selecting_action_slot_shows_action_settings(self, qapp):  # pylint: disable=unused-argument
+        edit = _cfg_edit()
+        edit.set_value({"press": {"kind": "action", "action": "http", "settings": {"url": "u"}}})
+        changes: list[int] = []
+        edit.changed.connect(lambda: changes.append(1))
+
+        edit._select("press")
+
+        assert_that(changes).is_empty()
+        assert_that(edit._config.settings_form.values()).is_equal_to({"url": "u"})
+        assert_that(edit._config.appearance_form.isHidden()).is_true()
+        _type_url(edit, "v")
+        assert_that(edit.slot_value("press")).is_equal_to(
+            {"kind": "action", "action": "http", "settings": {"url": "v"}}
+        )
+
+    def test_selecting_empty_slot_shows_nothing(self, qapp):  # pylint: disable=unused-argument
+        edit = _cfg_edit()
+
+        edit._select("press")
+
+        assert_that(edit._config.isHidden()).is_true()
+
+    def test_nothing_selected_shows_nothing(self, qapp):  # pylint: disable=unused-argument
+        edit = _cfg_edit()
+
+        assert_that(edit._config.isHidden()).is_true()
+
+    def test_clearing_selected_slot_hides_its_form(self, qapp):  # pylint: disable=unused-argument
+        edit = _cfg_edit()
+        edit.set_value({"press": _card_slot()})
+        edit._select("press")
+        assert_that(edit._config.isHidden()).is_false()
+
+        edit._buttons["press"].clear_button.click()
+
+        assert_that(edit._config.isHidden()).is_true()
+
+    def test_missing_card_shows_no_form(self, qapp):  # pylint: disable=unused-argument
+        edit = _edit()
+        edit.set_value({"press": {"kind": "card", "plugin": "x", "card": "y", "settings": {}, "appearance": {}}})
+
+        edit._select("press")
+
+        assert_that(edit._config.settings_form.values()).is_empty()
+
+
+class TestDropPinning:  # pylint: disable=protected-access
+    def test_run_action_card_without_preset_makes_card_slot_everywhere(self, qapp):  # pylint: disable=unused-argument
+        edit = _edit()
+        payload = {"plugin_uuid": "com.decker.core", "card_uuid": "com.decker.core.runaction"}
+
+        for name in edit._buttons:
+            _drop(edit._buttons[name], payload)
+            assert_that(_slot(edit, name)["kind"]).is_equal_to("card")
+
+    def test_plugin_preset_card_makes_card_slot_with_empty_settings(self, qapp):  # pylint: disable=unused-argument
+        edit = _edit()
+
+        _drop(edit._buttons["press"], {"plugin_uuid": "p", "card_uuid": "preset-card", "action": "http"})
+
+        assert_that(edit.slot_value("press")).is_equal_to(
+            {"kind": "card", "plugin": "p", "card": "preset-card", "settings": {}, "appearance": {}}
+        )
