@@ -154,6 +154,11 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._device_refresh_requested.set()
         self._wake_event.set()
 
+    @property
+    def devices(self) -> list[DeviceHardwareInfo]:
+        """The devices the server last listed (empty before the first list arrives)."""
+        return list(self._last_devices or [])
+
     def request_layout_refresh(self) -> None:
         """Re-fetch only the active device's profiles, pages and key faces (what a page or profile switch changes)."""
         self._layout_refresh_requested.set()

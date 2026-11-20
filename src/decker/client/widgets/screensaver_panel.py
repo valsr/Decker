@@ -1,4 +1,4 @@
-"""The settings dialog's Device tab: brightness and screensaver controls for the active device."""
+"""The settings dialog's Device tab: a device picker, its details, brightness and screensaver controls."""
 
 import ipaddress
 import math
@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -19,8 +20,10 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
+    QFrame,
     QVBoxLayout,
     QWidget,
 )
@@ -28,15 +31,19 @@ from PyQt6.QtWidgets import (
 from decker.client import config as client_config
 from decker.client.context import AppContext
 from decker.client.events import ScreensaverSettingsEvent, ScreensaverStateEvent
-from decker.common.model import ScreensaverSettings
+from decker.common.model import DeviceHardwareInfo, ScreensaverSettings
 
 _APPLY_DEBOUNCE_MS = 500
 _PREVIEW_DEBOUNCE_MS = 400
+_PREVIEW_WIDTH = 640
 _DEVICE_POLL_MS = 1000
 _REMOTE_HINT = "Only available when the client runs on the server's machine"
 _NO_DEVICE_HINT = "Connect a device to configure its brightness and screensaver"
 _FETCH_FAILED_HINT = "Could not load this device's settings from the server; retrying"
 _LIVE_HINT = "Changes on this tab are applied immediately; the Apply button does not affect them."
+_IMAGE_ROWS = ("image_path",)
+_GALLERY_ROWS = ("folder_path", "gallery_mode", "gallery_minutes")
+_PICTURE_ROWS = ("scaling", "bezel", "key_mm", "gap_mm")
 _CONTENT = ("none", "image", "gallery")
 _SCALING = ("center", "stretch")
 _GALLERY_MODE = ("activation", "interval")
@@ -143,6 +150,42 @@ def build_settings(values: dict[str, Any], base: ScreensaverSettings | None = No
     return sanitize_settings(replace(base or _DEFAULTS, **values))
 
 
+def _connected_devices() -> list[DeviceHardwareInfo]:
+    manager = AppContext.get().connection_manager
+    devices = getattr(manager, "devices", None)
+    return list(devices) if isinstance(devices, list) else []
+
+
+def _device_label(device: DeviceHardwareInfo) -> str:
+    return f"{device.type}  ·  {device.serial or device.id}"
+
+
+def _device_info_html(device: DeviceHardwareInfo) -> str:
+    rows = [
+        ("Type", device.type),
+        ("Serial number", device.serial or "unknown"),
+        ("Hardware id", f"{device.vendor_id:04x}:{device.product_id:04x}"),
+        ("Firmware", device.firmware or "unknown"),
+        ("Keys", str(device.num_keys)),
+        ("Device id", str(device.id)),
+    ]
+    return "<br>".join(f"<b>{label}:</b> {value}" for label, value in rows)
+
+
+def _separator(title: str) -> QWidget:
+    row = QWidget()
+    box = QHBoxLayout(row)
+    box.setContentsMargins(0, 8, 0, 0)
+    label = QLabel(title)
+    label.setProperty("role", "title")
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setFrameShadow(QFrame.Shadow.Sunken)
+    box.addWidget(label)
+    box.addWidget(line, 1)
+    return row
+
+
 def _slider(low: int, high: int) -> QSlider:
     slider = QSlider(Qt.Orientation.Horizontal)
     slider.setRange(low, high)
@@ -165,12 +208,17 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         rpc: Callable[[], ScreensaverRpc | None] | None = None,
         host: Callable[[], str] | None = None,
         parent: QWidget | None = None,
+        devices: Callable[[], list[DeviceHardwareInfo]] | None = None,
     ) -> None:
         super().__init__(parent)
         self._device_id_fn = device_id or (lambda: AppContext.get().active_device_id)
+        self._devices_fn = devices or _connected_devices
+        self._picked: str | None = None
+        self._listed: list[tuple[str, str]] = []
         self._rpc_fn: Callable[[], Any] = rpc or (lambda: AppContext.get().connection_manager)
         self._host_fn = host or client_config.get_server_host
         self._device: str | None = None
+        self._form: QFormLayout = QFormLayout()
         self._base: ScreensaverSettings = _DEFAULTS
         self._active = False
         self._loading = False
@@ -178,6 +226,7 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         self._loopback_cache: dict[str, bool] = {}
         self._dirty: set[str] = set()
         self._fields: dict[str, Any] = {}
+        self._path_hosts: dict[str, QWidget] = {}
         self._build_controls()
         self._build_layout()
         self._apply_timer = self._single_shot(self._flush_quietly)
@@ -188,7 +237,8 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
 
     def refresh_device(self) -> None:
         """Pick up a change of the active device and load its settings."""
-        device = self._device_id_fn()
+        self._sync_device_list()
+        device = self._target_device()
         if device == self._device:
             return
         self._device = device
@@ -208,6 +258,38 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
                 self._fetch_failed = True
         self._apply_enabled_states()
         self._schedule_preview()
+
+    def _target_device(self) -> str | None:
+        """The device being edited: the one picked in the drop-down, else the client's active device."""
+        if self._picked is not None and any(device_id == self._picked for device_id, _label in self._listed):
+            return self._picked
+        return self._device_id_fn()
+
+    def _sync_device_list(self) -> None:
+        devices = [d for d in self._devices_fn() if d.id]
+        listed = [(str(d.id), _device_label(d)) for d in devices]
+        if listed != self._listed:
+            self._listed = listed
+            self._device_combo.blockSignals(True)
+            self._device_combo.clear()
+            for device_id, label in listed:
+                self._device_combo.addItem(label, device_id)
+            self._device_combo.blockSignals(False)
+        self._device_combo.setVisible(bool(listed))
+        self._device_caption.setVisible(bool(listed))
+        shown = self._target_device()
+        index = self._device_combo.findData(shown)
+        if index >= 0 and index != self._device_combo.currentIndex():
+            self._device_combo.blockSignals(True)
+            self._device_combo.setCurrentIndex(index)
+            self._device_combo.blockSignals(False)
+        info = next((d for d in devices if d.id == shown), None)
+        self._info_label.setText(_device_info_html(info) if info is not None else "")
+        self._info_label.setVisible(info is not None)
+
+    def _on_device_picked(self) -> None:
+        self._picked = self._device_combo.currentData()
+        self.refresh_device()
 
     def handle_event(self, event: ScreensaverSettingsEvent | ScreensaverStateEvent) -> None:
         """Resync from a screensaver event for the active device."""
@@ -255,7 +337,7 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         pixmap = QPixmap()
         if data and pixmap.loadFromData(data):
             self._preview.setText("")
-            self._preview.setPixmap(pixmap.scaledToWidth(320, Qt.TransformationMode.SmoothTransformation))
+            self._preview.setPixmap(pixmap.scaledToWidth(_PREVIEW_WIDTH, Qt.TransformationMode.SmoothTransformation))
         else:
             self._show_preview_text(error or "No preview available")
 
@@ -305,26 +387,8 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
 
     def _set_state(self, active: bool, last_error: str) -> None:
         self._active = active
-        self._activate_btn.setText("Wake" if active else "Activate now")
         self._last_error_label.setText(last_error)
         self._last_error_label.setVisible(bool(last_error))
-
-    def _toggle_active(self) -> None:
-        rpc = self._rpc_fn()
-        if self._device is None or rpc is None:
-            return
-        if not self._active and (self._apply_timer.isActive() or self._dirty) and not self.flush():
-            return
-        if self._active:
-            ok = rpc.screensaver_deactivate(self._device)
-        else:
-            ok = rpc.screensaver_activate(self._device)
-        if ok:
-            self._set_state(not self._active, "")
-        else:
-            verb = "wake" if self._active else "activate"
-            self._set_error_label.setText(f"The server could not {verb} the screensaver")
-            self._set_error_label.setVisible(True)
 
     def _build_controls(self) -> None:
         f = self._fields
@@ -349,10 +413,16 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         self._folder_browse.clicked.connect(lambda: self._browse("folder_path", folder=True))
         self._preview = QLabel()
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview.setMinimumHeight(100)
+        self._preview.setMinimumHeight(200)
         self._preview.setWordWrap(True)
-        self._activate_btn = QPushButton("Activate now")
-        self._activate_btn.clicked.connect(self._toggle_active)
+        self._device_combo = QComboBox()
+        self._device_combo.currentIndexChanged.connect(lambda _i: self._on_device_picked())
+        self._device_caption = QLabel("Device:")
+        self._info_label = QLabel()
+        self._info_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._info_label.setProperty("role", "muted")
+        self._content_buttons = QButtonGroup(self)
+        self._content_buttons.setExclusive(True)
         self._set_error_label = self._label(role="error")
         self._last_error_label = self._label(role="error")
         self._hint_label = self._label()
@@ -390,11 +460,12 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
             widget.textEdited.connect(lambda _t, n=name: self._edited(n))
 
     def _build_layout(self) -> None:
-        form = QFormLayout()
+        form = self._form
         form.addRow("Brightness", self._fields["brightness"])
-        form.addRow("Start screensaver after", self._fields["timeout_minutes"])
-        form.addRow("Screensaver brightness", self._fields["saver_brightness"])
-        form.addRow("Content", self._fields["content"])
+        form.addRow(_separator("Screensaver"))
+        form.addRow("Start after", self._fields["timeout_minutes"])
+        form.addRow("Brightness", self._fields["saver_brightness"])
+        form.addRow(self._content_selector())
         form.addRow("Image", self._path_row("image_path", self._image_browse))
         form.addRow("Gallery folder", self._path_row("folder_path", self._folder_browse))
         form.addRow("Scaling", self._fields["scaling"])
@@ -403,21 +474,69 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         form.addRow("Key gap", self._fields["gap_mm"])
         form.addRow("Gallery advances", self._fields["gallery_mode"])
         form.addRow("Gallery interval", self._fields["gallery_minutes"])
+        form.addRow(self._preview)
         self._form_host = QWidget()
         self._form_host.setLayout(form)
-        layout = QVBoxLayout(self)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        picker = QHBoxLayout()
+        picker.addWidget(self._device_caption)
+        picker.addWidget(self._device_combo, 1)
+        layout.addLayout(picker)
+        layout.addWidget(self._info_label)
         live_hint = QLabel(_LIVE_HINT)
         live_hint.setWordWrap(True)
         layout.addWidget(live_hint)
         layout.addWidget(self._hint_label)
         layout.addWidget(self._form_host)
         layout.addWidget(self._set_error_label)
-        layout.addWidget(self._preview, 1)
-        row = QHBoxLayout()
-        row.addWidget(self._activate_btn)
-        row.addStretch(1)
-        layout.addLayout(row)
         layout.addWidget(self._last_error_label)
+        layout.addStretch(1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+        self._sync_content_buttons()
+
+    def _content_selector(self) -> QWidget:
+        """A NONE | IMAGE | GALLERY segmented control backed by the (hidden) content combo box."""
+        combo = self._fields["content"]
+        assert isinstance(combo, QComboBox)
+        row = QWidget()
+        box = QHBoxLayout(row)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(0)
+        for index in range(combo.count()):
+            button = QPushButton(combo.itemText(index).upper())
+            button.setCheckable(True)
+            button.clicked.connect(lambda _c=False, i=index: combo.setCurrentIndex(i))
+            self._content_buttons.addButton(button, index)
+            box.addWidget(button)
+        combo.currentIndexChanged.connect(self._sync_content_buttons)
+        return row
+
+    def _sync_content_buttons(self, _index: int = 0) -> None:
+        combo = self._fields["content"]
+        assert isinstance(combo, QComboBox)
+        button = self._content_buttons.button(combo.currentIndex())
+        if button is not None:
+            button.setChecked(True)
+        content = combo.currentData()
+        rows = {
+            **{name: content == "image" for name in _IMAGE_ROWS},
+            **{name: content == "gallery" for name in _GALLERY_ROWS},
+            **{name: content in ("image", "gallery") for name in _PICTURE_ROWS},
+        }
+        for name, visible in rows.items():
+            widget = self._row_widget(name)
+            self._form.setRowVisible(widget, visible)
+        self._form.setRowVisible(self._preview, content != "none")
+
+    def _row_widget(self, name: str) -> QWidget:
+        return self._path_hosts.get(name) or self._fields[name]
 
     def _path_row(self, name: str, button: QPushButton) -> QWidget:
         row = QWidget()
@@ -425,6 +544,7 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         box.setContentsMargins(0, 0, 0, 0)
         box.addWidget(self._fields[name], 1)
         box.addWidget(button)
+        self._path_hosts[name] = row
         return row
 
     def _browse(self, name: str, folder: bool) -> None:
@@ -493,7 +613,6 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         has_device = self._device is not None and self._rpc_fn() is not None
         remote = self._is_remote()
         self._form_host.setEnabled(has_device)
-        self._activate_btn.setEnabled(has_device)
         self._hint_label.setText(self._hint_text(has_device, remote))
         self._hint_label.setVisible(bool(self._hint_label.text()))
         paths_ok = not remote
