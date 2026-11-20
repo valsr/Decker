@@ -279,6 +279,34 @@ def test_settings_changed_rebuilds_gestures_and_child(env: SwitchEnv) -> None:
     assert_that(env.color()).is_equal_to(_BLUE_RGB)
 
 
+def test_settings_save_keeps_unchanged_shown_child(env: SwitchEnv) -> None:
+    env.place(display=_card(_REC_CARD, _REC))
+    assert _wait_for(lambda: env.received("will_appear"))
+    before = env.live()["sw:display"]
+
+    env.manager.store_settings(_SWITCH, {"slots": {"display": _card(_REC_CARD, _REC), "long_press": _action(_RECORD)}})
+    env.manager.dispatch_settings_changed(_SWITCH)
+
+    assert_that(env.live()["sw:display"]).is_same_as(before)
+    assert_that(env.received("will_disappear")).is_empty()
+    assert_that(env.live()["sw"].gestures).contains(Gesture.LONG_PRESS)
+
+
+def test_settings_save_delivers_changed_child_settings_in_place(env: SwitchEnv) -> None:
+    env.place(display=_card(_REC_CARD, _REC, {"n": 2}))
+    assert _wait_for(lambda: env.received("will_appear"))
+
+    env.manager.store_settings(_SWITCH, {"slots": {"display": _card(_REC_CARD, _REC, {"n": 5})}})
+    env.manager.dispatch_settings_changed(_SWITCH)
+
+    assert _wait_for(lambda: env.received("settings_changed"))
+    changed = env.received("settings_changed")
+    assert_that(changed).is_length(1)
+    assert_that(changed[0]["context"]).is_equal_to("sw:display")
+    assert_that(changed[0]["payload"]["settings"]["n"]).is_equal_to(5)
+    assert_that(env.received("will_disappear")).is_empty()
+
+
 def test_key_display_states_report_the_switch_key_once(env: SwitchEnv) -> None:
     env.place(display=_card(_REC_CARD, _REC), press=_card(_RED), appearance={"background": "#123456"})
     env.manager._on_plugin_message(_REC, Message("set_title", "sw:display", {"title": "Hi"}))

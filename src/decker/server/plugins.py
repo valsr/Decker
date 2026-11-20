@@ -158,7 +158,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._builtin_ids: set[str] = set()
         self._live: dict[str, _Live] = {}
         self._lock = threading.RLock()
-        self._switch_lock = threading.RLock()  # serialises child swaps; taken before self._lock, never inside it
+        # serialises child swaps; taken before self._lock, never inside it. Composing under it relies on
+        # PageController.active_page_id staying lock-free (page switches hold the controller lock while activating cards).
+        self._switch_lock = threading.RLock()
         self._switches = SwitchController()
         self._sdk_path: Path | None = None
         self._device_manager: Any = None
@@ -621,14 +623,32 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                 if self._live.get(context_id) is not live:
                     return
                 current = self._child_of(live)
+            slots = self._effective_slots(live.settings)
+            shown = self._switches.shown_slot(context_id, slots)
+            if current is not None and shown is not None and self._update_child_in_place(live, current, shown, slots):
+                live.gestures = self._switches.gestures(slots)
+                return
             if current is not None:
                 self.deactivate_card(current.target)
             self._clear_placeholder(live.target.device_id, live.target.key_index)
-            slots = self._effective_slots(live.settings)
             live.gestures = self._switches.gestures(slots)
-            shown = self._switches.shown_slot(context_id, slots)
             if shown is None or not self._activate_child(live, shown, slots[shown], draw):
                 self._recompose(live, poster=draw)
+
+    def _update_child_in_place(self, parent: _Live, current: _Live, shown: str, slots: Mapping[str, Any]) -> bool:
+        slot = slots[shown]
+        target = current.target
+        if (
+            target.context_id != f"{parent.target.context_id}:{shown}"
+            or (target.plugin_uuid, target.card_uuid) != (slot["plugin"], slot["card"])
+            or self._supervisor.is_failed(target.plugin_uuid)
+        ):
+            return False
+        current.settings = apply_schema(current.card.settings, dict(slot["settings"]))
+        current.appearance = dict(slot["appearance"])
+        self._send_context(current, "settings_changed", {"settings": self._delivery(current)})
+        self._recompose(current)
+        return True
 
     def _activate_child(self, parent: _Live, name: str, slot: Mapping[str, Any], draw: bool) -> bool:
         spec = self._child_spec(slot)
