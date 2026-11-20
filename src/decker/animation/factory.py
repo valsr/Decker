@@ -90,6 +90,7 @@ def _compose(spec: AnimationSpec, frames: Sequence[GifFrame], size: int) -> list
         layer=spec.layer,
         overlay=spec.overlay,
         overlay_color=spec.overlay_color,
+        background_image=spec.background,
     )
 
 

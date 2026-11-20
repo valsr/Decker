@@ -19,6 +19,7 @@ class AnimationSpec:
     layer: str = "foreground"
     overlay: bytes | None = None
     overlay_color: str | None = None
+    background: bytes | None = None  # static base drawn under every foreground frame (a GIF shows its first frame)
 
     @cached_property
     def gif_sha(self) -> str:
@@ -33,6 +34,8 @@ class AnimationSpec:
         if self.layer != "foreground" or self.overlay is not None:
             overlay_sha = hashlib.sha256(self.overlay).hexdigest() if self.overlay is not None else ""
             extra = f":{self.layer}:{overlay_sha}:{self.overlay_color or ""}"
+        if self.background is not None:  # only when set, so ids of specs without a background never change
+            extra += f":bg:{hashlib.sha256(self.background).hexdigest()}"
         return hashlib.sha256(f"{self.gif_sha}:{look}{extra}".encode()).hexdigest()
 
 

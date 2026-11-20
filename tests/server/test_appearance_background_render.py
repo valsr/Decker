@@ -1,5 +1,6 @@
 import io
 import logging
+from typing import Any
 
 import pytest
 from assertpy import assert_that
@@ -156,6 +157,11 @@ def _clear_reported() -> None:
     appearance_module._REPORTED_BAD_BACKGROUNDS.clear()  # pylint: disable=protected-access
 
 
+@pytest.fixture(autouse=True)
+def _clear_layer_cache() -> None:
+    appearance_module._LAYER_CACHE.clear()  # pylint: disable=protected-access
+
+
 def _gif_bytes(width: int, height: int) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", (width, height), RED).save(buf, format="GIF")
@@ -203,3 +209,72 @@ def test_reported_backgrounds_are_bounded() -> None:
     for index in range(300):
         appearance_module._report_bad_background(str(index).encode(), "x")  # pylint: disable=protected-access
     assert_that(len(appearance_module._REPORTED_BAD_BACKGROUNDS)).is_equal_to(256)  # pylint: disable=protected-access
+
+
+def _jpeg(image: Image.Image, orientation: int | None = None) -> bytes:
+    buf = io.BytesIO()
+    if orientation is None:
+        image.save(buf, format="JPEG", quality=95)
+    else:
+        exif = Image.Exif()
+        exif[0x0112] = orientation
+        image.save(buf, format="JPEG", quality=95, exif=exif.tobytes())
+    return buf.getvalue()
+
+
+def _dominant(pixel: Any) -> str:
+    return "red" if pixel[0] > 200 and pixel[2] < 60 else "blue" if pixel[2] > 200 and pixel[0] < 60 else "other"
+
+
+def _left_red_right_blue(width: int = 40, height: int = 20) -> Image.Image:
+    img = Image.new("RGB", (width, height), RED)
+    img.paste(Image.new("RGB", (width // 2, height), BLUE), (width // 2, 0))
+    return img
+
+
+def test_jpeg_background_covers_and_crops() -> None:
+    got = _render(_appearance("image"), background_image=_jpeg(_left_red_right_blue()))
+    assert_that(_dominant(got.getpixel((5, SIZE // 2)))).is_equal_to("red")
+    assert_that(_dominant(got.getpixel((SIZE - 6, SIZE // 2)))).is_equal_to("blue")
+
+
+@pytest.mark.parametrize(
+    "orientation,top,bottom,left,right",
+    [
+        (6, "red", "blue", None, None),  # stored sideways; shown turned 90 degrees clockwise
+        (8, "blue", "red", None, None),  # turned 90 degrees counter-clockwise
+        (3, None, None, "blue", "red"),  # upside down
+        (2, None, None, "blue", "red"),  # mirrored
+    ],
+)
+def test_exif_orientation_is_applied_to_jpeg_backgrounds(  # pylint: disable=too-many-arguments
+    orientation: int, top: str | None, bottom: str | None, left: str | None, right: str | None
+) -> None:
+    got = _render(_appearance("image"), background_image=_jpeg(_left_red_right_blue(), orientation))
+    middle = SIZE // 2
+    if top is not None:
+        assert_that(_dominant(got.getpixel((middle, 5)))).is_equal_to(top)
+        assert_that(_dominant(got.getpixel((middle, SIZE - 6)))).is_equal_to(bottom)
+    else:
+        assert_that(_dominant(got.getpixel((5, middle)))).is_equal_to(left)
+        assert_that(_dominant(got.getpixel((SIZE - 6, middle)))).is_equal_to(right)
+
+
+def test_exif_orientation_is_applied_to_png_backgrounds() -> None:
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    buf = io.BytesIO()
+    _left_red_right_blue().save(buf, format="PNG", exif=exif.tobytes())
+    got = _render(_appearance("image"), background_image=buf.getvalue())
+    assert_that(got.getpixel((SIZE // 2, 5))).is_equal_to(RED)
+    assert_that(got.getpixel((SIZE // 2, SIZE - 6))).is_equal_to(BLUE)
+
+
+def test_layer_cache_is_warmed_by_a_render() -> None:
+    _render(_appearance("image"), background_image=_wide())
+    assert_that(appearance_module._LAYER_CACHE).is_not_empty()  # pylint: disable=protected-access
+
+
+def test_layer_cache_starts_empty_in_every_test() -> None:
+    # Runs after the test above: a warm cache would skip the resize the spy test counts, so a rerun would fail.
+    assert_that(appearance_module._LAYER_CACHE).is_empty()  # pylint: disable=protected-access
