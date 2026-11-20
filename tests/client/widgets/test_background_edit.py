@@ -81,7 +81,9 @@ class TestBackgroundEdit:  # pylint: disable=protected-access
 
 
 class TestBackgroundEditImagePrompt:  # pylint: disable=protected-access
-    def test_empty_image_shows_placeholder_and_a_clickable_thumbnail(self, qapp, monkeypatch):  # pylint: disable=unused-argument
+    def test_empty_image_shows_placeholder_and_a_clickable_thumbnail(
+        self, qapp, monkeypatch
+    ):  # pylint: disable=unused-argument
         edit = BackgroundEdit()
         edit.set_value(_bg("image"))
         image = edit._image

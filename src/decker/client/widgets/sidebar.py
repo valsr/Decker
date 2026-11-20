@@ -49,7 +49,8 @@ class _DraggableActionList(QListWidget):
 
     def fit_height(self) -> None:
         """Size the list to all its rows, so the sidebar scrolls as a whole instead of each section."""
-        columns = max(1, self.viewport().width() // _TILE_SIZE.width())
+        viewport = self.viewport()
+        columns = max(1, (viewport.width() if viewport is not None else _TILE_SIZE.width()) // _TILE_SIZE.width())
         rows = math.ceil(self.count() / columns)
         self.setFixedHeight(rows * _TILE_SIZE.height() + 2 * self.frameWidth() + 4)
 

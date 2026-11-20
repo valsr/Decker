@@ -1186,7 +1186,9 @@ class TestProfiles:  # pylint: disable=protected-access
         view._page_tabs.profile_selector.edit_requested.emit(2)
 
         assert_that(_open_dialog(view)._rule_list.count()).is_equal_to(1)
-        assert_that(_open_dialog(view)._status.backend).is_equal_to("kwin")
+        status = _open_dialog(view)._status
+        assert status is not None
+        assert_that(status.backend).is_equal_to("kwin")
         _open_dialog(view).close()
 
     def test_pages_for_the_dialog_come_from_pages_list_of_that_profile(self, qapp, tmp_path):

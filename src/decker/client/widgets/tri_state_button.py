@@ -3,7 +3,16 @@
 from typing import Any
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QConicalGradient, QIcon, QPainter, QPen, QPixmap, QPolygonF
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QConicalGradient,
+    QIcon,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PyQt6.QtWidgets import QButtonGroup, QHBoxLayout, QToolButton, QWidget
 
 _ICON = 18
@@ -48,7 +57,9 @@ def image_icon() -> QIcon:
     painter.drawRect(QRectF(2, 3, _ICON - 4, _ICON - 6))
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QBrush(QColor(150, 150, 150)))
-    painter.drawPolygon(QPolygonF([QPointF(4, _ICON - 5), QPointF(8, 8), QPointF(11, 12), QPointF(13, 10), QPointF(15, _ICON - 5)]))
+    painter.drawPolygon(
+        QPolygonF([QPointF(4, _ICON - 5), QPointF(8, 8), QPointF(11, 12), QPointF(13, 10), QPointF(15, _ICON - 5)])
+    )
     painter.end()
     return QIcon(pixmap)
 

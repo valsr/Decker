@@ -3,12 +3,11 @@ import json
 import time
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
 from assertpy import assert_that
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPixmap
-from unittest.mock import patch
-
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from decker.client.action_icons import decode_icon

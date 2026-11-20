@@ -7,10 +7,13 @@ from PyQt6.QtWidgets import QHBoxLayout, QWidget
 
 from decker.client.widgets.color_button import ColorButton
 from decker.client.widgets.icon_edit import IconEdit
-from decker.client.widgets.tri_state_button import TriStateButton, colour_wheel_icon, cross_icon, image_icon
+from decker.client.widgets.tri_state_button import (
+    TriStateButton,
+    colour_wheel_icon,
+    cross_icon,
+    image_icon,
+)
 from decker.common.background import normalize_background
-
-
 
 
 class BackgroundEdit(QWidget):

@@ -1,6 +1,7 @@
 import base64
 import json
 from pathlib import Path
+from typing import Any
 
 from assertpy import assert_that
 from PyQt6.QtCore import QPoint, QSize, Qt
@@ -71,9 +72,15 @@ class TestSidebarWidget:
 
 
 class TestSections:  # pylint: disable=protected-access
-    _ACTIONS = [
+    _ACTIONS: list[dict[str, Any]] = [
         {"plugin_uuid": "z", "plugin_name": "Zed", "action_uuid": "z.a", "action_name": "Za"},
-        {"plugin_uuid": "b", "plugin_name": "Blank", "plugin_builtin": True, "action_uuid": "b.b", "action_name": "Blank"},
+        {
+            "plugin_uuid": "b",
+            "plugin_name": "Blank",
+            "plugin_builtin": True,
+            "action_uuid": "b.b",
+            "action_name": "Blank",
+        },
         {"plugin_uuid": "a", "plugin_name": "Alpha", "action_uuid": "a.x", "action_name": "Ax"},
         {"plugin_uuid": "a", "plugin_name": "Alpha", "action_uuid": "a.y", "action_name": "Ay"},
     ]
@@ -82,9 +89,7 @@ class TestSections:  # pylint: disable=protected-access
         sidebar = SidebarWidget()
         sidebar.set_actions(self._ACTIONS)
 
-        assert_that(sidebar.sections).is_equal_to(
-            [("Built in", ["Blank"]), ("Alpha", ["Ax", "Ay"]), ("Zed", ["Za"])]
-        )
+        assert_that(sidebar.sections).is_equal_to([("Built in", ["Blank"]), ("Alpha", ["Ax", "Ay"]), ("Zed", ["Za"])])
 
     def test_search_drops_sections_without_matches(self, qapp):  # pylint: disable=unused-argument
         sidebar = SidebarWidget()
@@ -110,7 +115,7 @@ class TestSections:  # pylint: disable=protected-access
 
 
 _COUNTER_PNG = Path(__file__).parents[2] / "fixtures" / "plugins" / "com.decker.testfixture" / "icons" / "counter.png"
-_COUNTER = {
+_COUNTER: dict[str, Any] = {
     "plugin_uuid": "com.decker.testfixture",
     "plugin_name": "Counter",
     "action_uuid": "com.decker.testfixture.counter",
