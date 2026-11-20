@@ -121,7 +121,9 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         grid.addWidget(self._profile_list, 1, 0)
         grid.addLayout(self._build_rules_pane(), 1, 1)
         grid.addLayout(_labelled("Name", self._name_edit), 2, 0)
-        grid.addLayout(_labelled("Icon", self._icon), 3, 0)  # Icon and Switch to share a row, as do the two button rows
+        grid.addLayout(
+            _labelled("Icon", self._icon, stretch=False), 3, 0
+        )  # Icon and Switch to share a row, as do the two button rows
         grid.addWidget(self._editor.switch_row, 3, 1)
         grid.addLayout(self._build_profile_buttons(), 4, 0)
         grid.addLayout(self._build_status_strip(), 4, 1)
@@ -540,12 +542,17 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._api.app_default_rule_set(self._device_id, default)
 
 
-def _labelled(text: str, widget: QWidget) -> QHBoxLayout:
+_LABEL_WIDTH = 48  # one width for every row label, so the fields below the profile list start in the same column
+
+
+def _labelled(text: str, widget: QWidget, stretch: bool = True) -> QHBoxLayout:
     row = QHBoxLayout()
     label = QLabel(f"{text}:")
-    label.setMinimumWidth(40)
+    label.setFixedWidth(_LABEL_WIDTH)
     row.addWidget(label)
-    row.addWidget(widget, 1)
+    row.addWidget(widget, 1 if stretch else 0)
+    if not stretch:
+        row.addStretch(1)
     return row
 
 

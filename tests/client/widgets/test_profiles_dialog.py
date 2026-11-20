@@ -553,3 +553,13 @@ class TestFocusAndResync:
         self._other_client_change(dialog, name="Theirs")
 
         assert_that(dialog._editor._profile.itemText(0)).is_equal_to("marker")
+
+
+def test_name_and_icon_fields_start_in_the_same_column(qapp, dialog):  # pylint: disable=unused-argument
+    dialog.show()
+    qapp.processEvents()
+
+    name_x = dialog._name_edit.mapTo(dialog, dialog._name_edit.rect().topLeft()).x()
+    icon_x = dialog._icon.mapTo(dialog, dialog._icon.rect().topLeft()).x()
+
+    assert_that(icon_x).is_equal_to(name_x)
