@@ -884,8 +884,13 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def delivered_settings(self, live: _Live) -> dict[str, Any]:
         """The settings a plugin receives: opted-in text expanded and page ids resolved; stored values stay raw."""
         layout = self._device_layout(live.target.device_id)
-        variables = VariableChain(page_variables(layout), self.variables.view())
-        return deliver_settings(live.card.settings, live.settings, layout, variables)
+        return deliver_settings(live.card.settings, live.settings, layout, self._expansion(page_variables(layout)))
+
+    def _expansion(self, page: dict[str, str]) -> Mapping[str, str] | None:
+        # None (leave templated text raw) only when neither pages nor any declared variable could expand.
+        if not page and not self.variables.has_declarations():
+            return None
+        return VariableChain(page, self.variables.view())
 
     def _delivery(self, live: _Live) -> dict[str, Any]:
         delivered = self.delivered_settings(live)
@@ -893,9 +898,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         return delivered
 
     def _expanded_appearance(self, device_id: str, appearance: dict[str, Any]) -> dict[str, Any]:
-        variables = self.template_variables(device_id)
+        variables = self._expansion(self.page_variables(device_id))
         title = appearance.get("title")
-        if variables and isinstance(title, dict) and isinstance(title.get("text"), str):
+        if variables is not None and isinstance(title, dict) and isinstance(title.get("text"), str):
             return {**appearance, "title": {**title, "text": expand_template(title["text"], variables)}}
         return appearance
 
