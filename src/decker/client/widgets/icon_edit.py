@@ -58,6 +58,7 @@ class IconEdit(QWidget):
         self._name = QLabel()
         self._compact = False
         self._show_colour = True
+        self._placeholder = "No icon"
         self._browse_btn = QPushButton("Browse…")
         self._browse_btn.clicked.connect(self.browse)
         self._clear = QToolButton()
@@ -86,6 +87,12 @@ class IconEdit(QWidget):
         )
         self._name.setVisible(not compact)
         self._browse_btn.setVisible(not compact)
+        self._refresh()
+
+    def set_texts(self, placeholder: str, clear_tooltip: str) -> None:
+        """Change the text shown when empty and the clear button's tooltip (for non-icon uses such as backgrounds)."""
+        self._placeholder = placeholder
+        self._clear.setToolTip(clear_tooltip)
         self._refresh()
 
     def set_show_colour(self, show: bool) -> None:
@@ -140,7 +147,7 @@ class IconEdit(QWidget):
 
     def _refresh(self) -> None:
         parsed = parse_icon_ref(self._ref)
-        self._name.setText(icon_display_name(parsed[1]) if parsed is not None else "No icon")
+        self._name.setText(icon_display_name(parsed[1]) if parsed is not None else self._placeholder)
         self._clear.setEnabled(parsed is not None)
         self._colour.setVisible(self._show_colour and (parsed is not None or not self._compact))
         self._preview.setPixmap(self._preview_pixmap(parsed))

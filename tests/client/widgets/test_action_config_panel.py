@@ -251,8 +251,8 @@ class TestDirtySave:  # pylint: disable=protected-access
         panel = ActionConfigPanel()
         _show(panel)
 
-        panel._appearance_form._fields["background"].set("#123456")
-        panel._on_edited()
+        edit = panel._appearance_form._fields["background"].widget
+        edit._mode.setCurrentIndex(edit._mode.findData("none"))  # type: ignore[attr-defined]
 
         assert_that(panel.is_dirty).is_true()
 

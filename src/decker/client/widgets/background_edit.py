@@ -27,7 +27,7 @@ class BackgroundEdit(QWidget):
         self._colour.setToolTip("Background colour")
         self._image = IconEdit()
         self._image.set_show_colour(False)
-        self._image.set_compact(True)
+        self._image.set_texts("No image (shows black)", "Remove the background image")
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(self._mode)
