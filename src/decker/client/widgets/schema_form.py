@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from decker.client.widgets.background_edit import BackgroundEdit
 from decker.client.widgets.color_button import ColorButton
 from decker.client.widgets.icon_edit import IconEdit
 from decker.client.widgets.page_edit import PageEdit
@@ -143,6 +144,11 @@ def _icon_field(_entry: dict[str, Any]) -> _Field:
     return _Field(edit, edit.value, edit.set_value)
 
 
+def _background_field(_entry: dict[str, Any]) -> _Field:
+    edit = BackgroundEdit()
+    return _Field(edit, edit.value, edit.set_value)
+
+
 def _page_field(_entry: dict[str, Any]) -> _Field:
     edit = PageEdit()
     return _Field(edit, edit.value, edit.set_value)
@@ -167,6 +173,7 @@ _BUILDERS: dict[str, Callable[[dict[str, Any]], _Field]] = {
     "color": _color_field,
     "font": _font_field,
     "icon": _icon_field,
+    "background": _background_field,
     "page": _page_field,
     "profile": _profile_field,
     "text_style": _text_style_field,
@@ -187,7 +194,7 @@ def _build_field(entry: dict[str, Any], values: dict[str, Any]) -> _Field | None
 
 def _watch(widget: QWidget, slot: Callable[[], None]) -> None:
     """Call ``slot`` once per user edit of ``widget``; controls inside a composite or spin box are not watched twice."""
-    if isinstance(widget, (IconEdit, PageEdit, ProfileEdit, TextStyleEdit)):
+    if isinstance(widget, (BackgroundEdit, IconEdit, PageEdit, ProfileEdit, TextStyleEdit)):
         widget.value_changed.connect(slot)
     elif isinstance(widget, ColorButton):
         widget.color_changed.connect(lambda _color: slot())

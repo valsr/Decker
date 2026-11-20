@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from decker.client.widgets.key_preview import KeyPreview
 from decker.client.widgets.schema_form import AppearanceForm, SchemaForm
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
+from decker.common.background import normalize_background
 from decker.common.text_style import fold_legacy_title
 
 _PAGE_PLACEHOLDER = 0
@@ -57,6 +58,8 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         self._save_cb: SaveCallback | None = None
         self._loaded: tuple[Any, ...] | None = None
         self._appearance_defaults: dict[str, Any] = {}
+        self._stored_background: Any = None
+        self._stored_norm: Any = None
         self._preview_provider: PreviewProvider | None = None
         self._dirty = False
         self._baseline: tuple[dict[str, Any], dict[str, Any]] | None = None
@@ -126,9 +129,13 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         """Populate and show the forms; identical values re-sent while shown leave edits in progress alone."""
         self._save_cb = save_cb
         self._header.setText(title)
-        appearance_defaults = fold_legacy_title(appearance_defaults)
+        appearance_defaults = _fold_background(fold_legacy_title(appearance_defaults), None)
         self._appearance_defaults = appearance_defaults
+        self._stored_background = appearance.get("background")
         appearance = _merged(appearance, appearance_defaults)
+        self._stored_norm = appearance.get("background")
+        if self._stored_norm == appearance_defaults.get("background"):
+            self._stored_background = None
         loaded = (
             settings_schema,
             dict(settings),
@@ -206,11 +213,16 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         return self._settings_form.values(), _resolved(self._appearance_form.values(), self._appearance_defaults)
 
     def _draft_appearance(self) -> dict[str, Any]:
-        return {
+        draft = {
             key: value
             for key, value in self._appearance_form.values().items()
             if value != self._appearance_defaults.get(key)
         }
+        if self._stored_background is not None and "background" in self._appearance_form.values():
+            # An untouched stored background keeps the shape it was stored in (a legacy colour string stays one).
+            if self._appearance_form.values()["background"] == self._stored_norm:
+                draft["background"] = self._stored_background
+        return draft
 
     def _request_preview(self) -> None:
         provider = self._preview_provider
@@ -239,17 +251,20 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
                 self._loaded[3],
             )
         self._baseline = self._current_values()
-        saved = self._save_cb(settings, self._draft_appearance())
+        draft = self._draft_appearance()
+        saved = self._save_cb(settings, draft)
         if saved is False:
             self._loaded, self._baseline = previous
         else:
+            self._stored_background = draft.get("background")
+            self._stored_norm = form_appearance.get("background")
             self.refresh_preview_soon()
         self._refresh_state()
 
 
 def _merged(appearance: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
     """Stored appearance with legacy title keys folded in and the title merged field-wise over the defaults."""
-    folded = fold_legacy_title(appearance)
+    folded = _fold_background(fold_legacy_title(appearance), defaults.get("background"))
     merged = {**defaults, **folded}
     if "title" in merged:
         merged["title"] = {**defaults.get("title", {}), **folded.get("title", {})}
@@ -259,3 +274,11 @@ def _merged(appearance: dict[str, Any], defaults: dict[str, Any]) -> dict[str, A
 def _resolved(appearance: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
     """Appearance with defaults applied; None means "unset" and is dropped so shapes compare equal."""
     return {k: v for k, v in {**defaults, **appearance}.items() if v is not None}
+
+
+def _fold_background(values: dict[str, Any], defaults: Any) -> dict[str, Any]:
+    """Copy of ``values`` whose background, if any, is a complete dict (a legacy colour string becomes one)."""
+    if "background" not in values:
+        return values
+    base = normalize_background(defaults) if defaults is not None else None
+    return {**values, "background": normalize_background(values["background"], base)}

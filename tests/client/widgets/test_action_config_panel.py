@@ -23,6 +23,10 @@ _DEFAULTS: dict[str, Any] = {
 }
 
 
+def _bg(color: str, kind: str = "color", ref: str = "") -> dict[str, Any]:
+    return {"type": kind, "color": color, "image": {"ref": ref}}
+
+
 def _show(panel: ActionConfigPanel, settings=None, appearance=None, save=None, title: str = "") -> None:
     panel.show_action_config(
         _COUNTER_SCHEMA,
@@ -72,7 +76,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
 
         settings, appearance = captured[0]
         assert_that(settings["step"]).is_equal_to(7)
-        assert_that(appearance).is_equal_to({"background": "#8a1c1c"})
+        assert_that(appearance).is_equal_to({"background": _bg("#8a1c1c")})
 
     def test_save_without_callback_is_noop(self, qapp):  # pylint: disable=unused-argument
         ActionConfigPanel()._on_save()  # pylint: disable=protected-access
@@ -168,7 +172,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
 
         panel._on_save()
 
-        assert_that(captured[0][1]).is_equal_to({"background": "#11223380"})
+        assert_that(captured[0][1]).is_equal_to({"background": _bg("#11223380")})
 
 
 class TestKeyEditorLayout:  # pylint: disable=protected-access
@@ -247,8 +251,8 @@ class TestDirtySave:  # pylint: disable=protected-access
         panel = ActionConfigPanel()
         _show(panel)
 
-        panel._appearance_form._fields["background"].widget.set_color("#123456")  # type: ignore[attr-defined]
-        panel._appearance_form._fields["background"].widget.color_changed.emit("#123456")  # type: ignore[attr-defined]
+        panel._appearance_form._fields["background"].set("#123456")
+        panel._on_edited()
 
         assert_that(panel.is_dirty).is_true()
 
@@ -536,3 +540,56 @@ class TestPreviewRefreshes:  # pylint: disable=protected-access
         panel.refresh_preview_soon()
 
         assert_that(panel._preview_timer.isActive()).is_true()
+
+
+class TestBackgroundIntegration:  # pylint: disable=protected-access
+    def test_legacy_string_background_is_clean_and_keeps_its_shape(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        captured: list[dict] = []
+        _show(panel, {"step": 1}, {**_DEFAULTS, "background": "#336699"}, save=lambda s, a: captured.append(a))
+
+        assert_that(panel.is_dirty).is_false()
+        assert_that(panel._appearance_form.values()["background"]).is_equal_to(_bg("#336699"))
+        panel._appearance_form._fields["title"].set({"text": "hi"})
+        panel._on_save()
+
+        assert_that(captured[0]["background"]).is_equal_to("#336699")
+        assert_that(captured[0]["title"]["text"]).is_equal_to("hi")
+
+    def test_stored_nested_background_survives_unrelated_edit(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        captured: list[dict] = []
+        stored = _bg("#445566", "image", "pack:x/y.png")
+        _show(panel, {"step": 1}, {**_DEFAULTS, "background": stored}, save=lambda s, a: captured.append(a))
+        panel._appearance_form._fields["title"].set({"text": "hi"})
+        panel._on_save()
+
+        assert_that(captured[0]["background"]).is_equal_to(stored)
+
+    def test_editing_background_saves_nested_dict_and_previews_it(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        captured: list[dict] = []
+        _show(panel, {"step": 1}, {**_DEFAULTS, "background": "#336699"}, save=lambda s, a: captured.append(a))
+        panel._appearance_form._fields["background"].set(_bg("#000000", "none"))
+        panel._on_edited()
+
+        assert_that(panel.is_dirty).is_true()
+        assert_that(panel._draft_appearance()["background"]).is_equal_to(_bg("#000000", "none"))
+        panel._on_save()
+        assert_that(captured[0]["background"]["type"]).is_equal_to("none")
+
+    def test_untouched_default_background_is_not_saved(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        _show(panel)
+
+        assert_that(panel._draft_appearance()).does_not_contain_key("background")
+        assert_that(panel.is_dirty).is_false()
+
+    def test_image_mode_with_empty_ref_is_dirty_and_keeps_type(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        _show(panel)
+        panel._appearance_form._fields["background"].set(_bg("#000000", "image", ""))
+        panel._on_edited()
+
+        assert_that(panel.is_dirty).is_true()
+        assert_that(panel._draft_appearance()["background"]["type"]).is_equal_to("image")
