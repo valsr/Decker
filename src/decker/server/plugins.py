@@ -17,7 +17,7 @@ from decker.asset.tint import tint_svg
 from decker.common import config
 from decker.common.manager import Manager
 from decker.common.platforms import detect_platform, platform_supports
-from decker.common.slots import SLOT_NAMES
+from decker.common.slots import SLOT_NAMES, normalize_slots
 from decker.common.template import expand_template
 from decker.common.text_style import is_color
 from decker.common.version import decker_version
@@ -120,6 +120,10 @@ class _Live:  # pylint: disable=too-many-instance-attributes
     state: int = 0
     delivered: dict[str, Any] = field(default_factory=dict)
     parent: str | None = None  # the Switch's context id, for the card a Switch shows
+
+
+def _where(target: CardTarget) -> tuple[str, int]:
+    return target.device_id, target.key_index
 
 
 def _uses_pack_icon(live: _Live) -> bool:
@@ -437,9 +441,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             live = self._live.get(target.context_id)
             if live is None:
                 return None
-            child = self._child_of(live)
-            # A shown card replaces the Switch's face entirely, so the Switch's draft appearance does not show.
-            draft = child if child is not None else replace(live, appearance=dict(stored))
+        draft = self._preview_subject(live, stored)
         try:
             return self._compose(draft).png
         except Exception:  # pylint: disable=broad-except
@@ -559,6 +561,35 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         context_id = live.target.context_id
         with self._lock:
             return next((self._live[c] for c in (f"{context_id}:{s}" for s in SLOT_NAMES) if c in self._live), None)
+
+    def _preview_subject(self, live: _Live, stored: dict[str, Any]) -> _Live:
+        """The throwaway instance a preview composes: a Switch's fresh-context card, else the draft-styled card."""
+        draft = replace(live, appearance=dict(stored))
+        if not live.card.switch:
+            return draft
+        # Draft slots win; otherwise the persisted ones. Never the live child or the controller's remembered slot.
+        raw = stored.get("slots")
+        if raw is None:
+            persisted = self._settings_store.get_settings(
+                live.target.plugin_uuid, live.target.card_uuid, live.target.context_id
+            )
+            raw = persisted.get("slots")
+        slots = self._effective_slots({"slots": normalize_slots(raw)})
+        name = SwitchController().shown_slot(live.target.context_id, slots)
+        spec = None if name is None else self._child_spec(slots[name])
+        if name is None or spec is None:
+            return draft
+        slot = slots[name]
+        target = CardTarget(slot["plugin"], slot["card"], f"{live.target.context_id}:{name}", *_where(live.target))
+        return _Live(
+            target=target,
+            card=spec,
+            recognizer=live.recognizer,
+            gestures=frozenset(),
+            settings=apply_schema(spec.settings, dict(slot["settings"])),
+            appearance=dict(slot["appearance"]),
+            parent=live.target.context_id,
+        )
 
     def _child_spec(self, slot: Mapping[str, Any]) -> CardSpec | None:
         with self._lock:
