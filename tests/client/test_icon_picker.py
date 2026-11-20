@@ -325,7 +325,7 @@ class TestIconBrowserTree:
 
         top = _top(dialog)
 
-        assert_that([i.text(0) for i in top]).is_equal_to(["All icons", "X Plugin", "Y Plugin"])
+        assert_that([i.text(0) for i in top]).is_equal_to(["All images", "X Plugin", "Y Plugin"])
         assert_that([top[1].child(i).text(0) for i in range(top[1].childCount())]).is_equal_to(["Pack A", "Pack B"])
         assert_that(top[2].childCount()).is_equal_to(1)
 
@@ -355,7 +355,7 @@ class TestIconBrowserTree:
 
         current = dialog._tree.currentItem()  # pylint: disable=protected-access
         assert current is not None
-        assert_that(current.text(0)).is_equal_to("All icons")
+        assert_that(current.text(0)).is_equal_to("All images")
         assert_that(_names(dialog)).is_length(5)
 
     def test_empty_pack_shows_message(self, qapp):  # pylint: disable=unused-argument
@@ -363,7 +363,7 @@ class TestIconBrowserTree:
 
         _select(dialog, 1, 0)
 
-        assert_that(dialog._status.text()).contains("no icons")  # pylint: disable=protected-access
+        assert_that(dialog._status.text()).contains("no images")  # pylint: disable=protected-access
 
 
 class TestIconBrowserSearch:
@@ -394,7 +394,7 @@ class TestIconBrowserSearch:
         _wait(qapp)
 
         assert_that(_names(dialog)).is_empty()
-        assert_that(dialog._status.text()).is_equal_to("No icons match.")  # pylint: disable=protected-access
+        assert_that(dialog._status.text()).is_equal_to("No images match.")  # pylint: disable=protected-access
 
     def test_empty_search_restores_everything(self, qapp):
         dialog = IconBrowserDialog(None, _manager())
@@ -588,7 +588,7 @@ class TestIconBrowserChoice:
     def test_shows_empty_state_without_packs(self, qapp):  # pylint: disable=unused-argument
         dialog = IconBrowserDialog(None, FakeConnectionManager([]))
 
-        assert_that(dialog._status.text()).contains("No icon packs")  # pylint: disable=protected-access
+        assert_that(dialog._status.text()).contains("image library is empty")  # pylint: disable=protected-access
 
     def test_works_without_a_connection_manager(self, qapp):  # pylint: disable=unused-argument
         dialog = IconBrowserDialog(None, None)
@@ -763,7 +763,7 @@ class TestSystemIconsInTheLibrary:
 
         top = _top(dialog)
 
-        assert_that([i.text(0) for i in top]).is_equal_to(["All icons", "X Plugin", "Y Plugin", "System Icons"])
+        assert_that([i.text(0) for i in top]).is_equal_to(["All images", "X Plugin", "Y Plugin", "System Icons"])
         system = top[3]
         assert_that([system.child(i).text(0) for i in range(system.childCount())]).is_equal_to(
             ["Actions", "Mimetypes", "Other"]

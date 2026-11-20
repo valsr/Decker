@@ -37,7 +37,7 @@ class IconImportDialog(QDialog):  # pylint: disable=too-many-instance-attributes
 
     def __init__(self, parent: QWidget | None, connection_manager: _RpcCaller, filename: str, data: bytes) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Import icon")
+        self.setWindowTitle("Import image")
         self._cm = connection_manager
         self._filename = filename
         self._data = data
