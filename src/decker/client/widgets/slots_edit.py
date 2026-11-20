@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from decker.client.card_icons import asset_pixmap, card_pixmap, placeholder_pixmap
 from decker.client.context import AppContext
 from decker.client.icon_picker import RpcCaller
+from decker.common.appearance_schema import APPEARANCE_SCHEMA
 from decker.common.slots import SLOT_NAMES, SWITCH_CARD_ID, normalize_slots
 
 CARD_MIME_TYPE = "application/x-decker-card"
@@ -151,6 +152,52 @@ class _SlotButton(QFrame):
         a0.acceptProposedAction()
 
 
+class _SlotConfig(QWidget):
+    """The settings (and, for a card, appearance) forms of the selected slot; hidden when there is nothing to edit."""
+
+    edited = pyqtSignal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from decker.client.widgets.schema_form import (  # pylint: disable=import-outside-toplevel,cyclic-import; schema_form imports this module for its ``slots`` field
+            AppearanceForm,
+            SchemaForm,
+        )
+
+        self.settings_form = SchemaForm()
+        self.appearance_form = AppearanceForm()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.appearance_form)
+        layout.addWidget(self.settings_form)
+        self.appearance_form.changed.connect(self.edited.emit)
+        self.settings_form.changed.connect(self.edited.emit)
+        self.setVisible(False)
+
+    def show_forms(self, schema: list[dict[str, Any]] | None, value: dict[str, Any] | None) -> None:
+        """Fill the forms from slot ``value`` (``schema`` None or no value hides them). Emits nothing."""
+        for form in (self.settings_form, self.appearance_form):
+            form.blockSignals(True)
+        if schema is None or value is None:
+            self.settings_form.set_schema([], {})
+            self.appearance_form.set_schema([], {})
+        else:
+            is_card = value["kind"] == "card"
+            self.appearance_form.set_schema(APPEARANCE_SCHEMA if is_card else [], value.get("appearance", {}))
+            self.settings_form.set_schema(schema, value["settings"])
+        for form in (self.settings_form, self.appearance_form):
+            form.blockSignals(False)
+        self.appearance_form.setVisible(value is not None and value["kind"] == "card")
+        self.setVisible(schema is not None and value is not None)
+
+    def edited_value(self, value: dict[str, Any]) -> dict[str, Any]:
+        """``value`` with the forms' current entries."""
+        edited = {**value, "settings": self.settings_form.values()}
+        if value["kind"] == "card":
+            edited["appearance"] = self.appearance_form.values()
+        return edited
+
+
 class SlotsEdit(QWidget):
     """The four slots (Display, Press, Double Press, Long Press) as drop-target buttons; one may be selected."""
 
@@ -165,6 +212,9 @@ class SlotsEdit(QWidget):
         self._slots: dict[str, dict[str, Any] | None] = normalize_slots(None)
         self._selected: str | None = None
         self._buttons: dict[str, _SlotButton] = {}
+        self._shown: tuple[str | None, Any] = (None, None)
+        self._config = _SlotConfig()
+        self._config.edited.connect(self._on_config_edited)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         for name in SLOT_NAMES:
@@ -174,6 +224,7 @@ class SlotsEdit(QWidget):
             button.dropped.connect(self._on_dropped)
             self._buttons[name] = button
             layout.addWidget(button)
+        layout.addWidget(self._config)
         self.reload()
 
     def reload(self) -> None:
@@ -224,6 +275,39 @@ class SlotsEdit(QWidget):
             label, pixmap = self._describe(value)
             button.show_item(value, label, pixmap)
             button.set_selected(name == self._selected)
+        self._refresh_config()
+
+    def _refresh_config(self) -> None:
+        value = self._slots.get(self._selected) if self._selected else None
+        if (self._selected, value) == self._shown:
+            return  # the form already shows it (e.g. it is the source of this very change)
+        self._shown = (self._selected, value)
+        self._config.show_forms(self._config_schema(value), value)
+
+    def _config_schema(self, value: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+        if value is None:
+            return None
+        if value["kind"] == "action":
+            found = next((a for a in self._actions if a.get("action_uuid") == value["action"]), None)
+        else:
+            found = next(
+                (
+                    c
+                    for c in self._cards
+                    if c.get("plugin_uuid") == value["plugin"] and c.get("card_uuid") == value["card"]
+                ),
+                None,
+            )
+        return None if found is None else list(found.get("settings_schema") or [])
+
+    def _on_config_edited(self) -> None:
+        name = self._selected
+        value = self._slots.get(name) if name else None
+        if name is None or value is None:
+            return
+        edited = self._config.edited_value(value)
+        self._shown = (name, edited)
+        self.set_slot_value(name, edited)
 
     def _describe(self, value: dict[str, Any] | None) -> tuple[str, QPixmap | None]:
         if value is None:
