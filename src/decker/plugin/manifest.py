@@ -119,6 +119,19 @@ class IconPackSpec:
 
 
 @dataclass(frozen=True)
+class VariableSpec:
+    """A global template variable a plugin declares, by exact name or by name pattern."""
+
+    name: str | None
+    pattern: str | None
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        if (self.name is None) == (self.pattern is None):
+            raise ValueError("a variable declares exactly one of name and pattern")
+
+
+@dataclass(frozen=True)
 class PluginManifest:
     """Validated contents of a plugin's manifest.json."""
 
