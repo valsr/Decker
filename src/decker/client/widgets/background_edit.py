@@ -35,8 +35,9 @@ class BackgroundEdit(QWidget):
         self._colour.setToolTip("Background colour")
         self._image = IconEdit()
         self._image.set_toolbar(True)
-        self._image.set_show_colour(False)
-        self._image.set_tint_thumbnail(False)  # the server draws backgrounds untinted
+        self._image.set_tint_thumbnail(False)  # until a fill colour is chosen, the server draws the image as it is
+        self._tinted = False
+        self._seen_colour = "#ffffff"
         self._image.set_texts("No image (shows black)", "Remove the background image")
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
@@ -46,14 +47,17 @@ class BackgroundEdit(QWidget):
         self._apply_mode()
         self._mode.currentIndexChanged.connect(self._on_mode_changed)
         self._colour.color_changed.connect(lambda _color: self.value_changed.emit())
-        self._image.value_changed.connect(self.value_changed.emit)
+        self._image.value_changed.connect(self._on_image_changed)
 
     def value(self) -> dict[str, Any]:
         """The background: ``{"type": "none"|"color"|"image", "color": "#rrggbb[aa]", "image": {"ref": ...}}``."""
         return {
             "type": str(self._mode.currentData()),
             "color": self._colour.color,
-            "image": {"ref": self._image.value()["ref"]},
+            "image": {
+                "ref": self._image.value()["ref"],
+                **({"color": self._image.value()["color"]} if self._tinted else {}),
+            },
         }
 
     def set_value(self, value: Any) -> None:
@@ -63,8 +67,20 @@ class BackgroundEdit(QWidget):
         self._mode.setCurrentIndex(max(self._mode.findData(normalized["type"]), 0))
         self._mode.blockSignals(False)
         self._colour.set_color(normalized["color"])
-        self._image.set_value(normalized["image"])
+        image = normalized["image"]
+        self._tinted = "color" in image
+        self._image.set_tint_thumbnail(self._tinted)
+        self._image.set_value({"ref": image["ref"], "color": image.get("color", "#ffffff")})
+        self._seen_colour = str(self._image.value()["color"])
         self._apply_mode()
+
+    def _on_image_changed(self) -> None:
+        colour = str(self._image.value()["color"])
+        if colour != self._seen_colour:  # choosing a fill colour is what turns the tint on
+            self._seen_colour = colour
+            self._tinted = True
+            self._image.set_tint_thumbnail(True)
+        self.value_changed.emit()
 
     def _on_mode_changed(self, _index: int) -> None:
         self._apply_mode()

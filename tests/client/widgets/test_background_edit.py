@@ -140,3 +140,22 @@ def test_background_image_thumbnail_and_browser_are_untinted(qapp, monkeypatch):
     assert_that(edit._image._thumb_tint()).is_none()  # pylint: disable=protected-access
     assert_that(seen).is_length(1)
     assert_that(seen[0][2]).is_equal_to(NO_TINT)
+
+
+class TestImageFillColour:  # pylint: disable=protected-access
+    def test_untinted_until_a_colour_is_chosen_then_it_is_stored(self, qapp):  # pylint: disable=unused-argument
+        edit = BackgroundEdit()
+        edit.set_value(_bg("image", "#000000", "pack:p/a.svg"))
+        assert_that(edit.value()["image"]).is_equal_to({"ref": "pack:p/a.svg"})
+
+        edit._image._on_colour_changed("#336699")
+
+        assert_that(edit.value()["image"]).is_equal_to({"ref": "pack:p/a.svg", "color": "#336699"})
+
+    def test_a_stored_colour_round_trips(self, qapp):  # pylint: disable=unused-argument
+        edit = BackgroundEdit()
+        value = {"type": "image", "color": "#000000", "image": {"ref": "pack:p/a.svg", "color": "#112233"}}
+
+        edit.set_value(value)
+
+        assert_that(edit.value()).is_equal_to(value)

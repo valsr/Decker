@@ -16,6 +16,7 @@ from decker.asset.iconpack import IconPackRegistry
 from decker.common import config
 from decker.common.manager import Manager
 from decker.common.platforms import detect_platform, platform_supports
+from decker.asset.tint import tint_svg
 from decker.common.template import expand_template
 from decker.common.text_style import is_color
 from decker.common.version import decker_version
@@ -528,7 +529,11 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if background["type"] != "image":
             return None
         try:
-            return intern_background(self.icon_packs.read_ref(background["image"]["ref"]))
+            data = self.icon_packs.read_ref(background["image"]["ref"])
+            color = background["image"].get("color")
+            if data is not None and color:
+                data = tint_svg(data, color)  # a no-op for anything but an SVG
+            return intern_background(data)
         except Exception:  # pylint: disable=broad-except
             logging.debug("Could not read background image %r", background["image"]["ref"], exc_info=True)
             return None
