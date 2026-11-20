@@ -46,6 +46,16 @@ class Rig:
             if message["event"] == event:
                 return message
 
+    def collect_until_log(self, text: str) -> list[dict]:
+        seen: list[dict] = []
+        while True:
+            line = self.from_plugin.readline()
+            assert line, "plugin closed stdout"
+            message = json.loads(line)
+            seen.append(message)
+            if message["event"] == "log" and message["payload"]["message"] == text:
+                return seen
+
     def hello(self) -> None:
         self.send("hello", {"protocol": 1, "decker_version": "x", "plugin_id": "t", "global_settings": {}})
         self.recv_until("ready")
@@ -315,27 +325,78 @@ def test_register_and_unregister_send_events(rigs: list[Rig]) -> None:
 
 
 def test_register_without_matching_getter_sends_nothing(rigs: list[Rig]) -> None:
-    done = threading.Event()
-
     @sdk.init
     def setup(ctx: sdk.PluginContext) -> None:
         ctx.register_variable("ghost")
         ctx.log("marker")
-        done.set()
 
     rig = _start(rigs)
     rig.hello()
-    seen: list[str] = []
-    while True:
-        message = rig.recv_until("log")
-        seen.append(message["payload"]["message"])
-        if message["payload"]["message"] == "marker":
-            break
-    assert_that(seen[0]).contains("ghost")
-    assert_that(seen[0]).is_not_equal_to("marker")
+    seen = rig.collect_until_log("marker")
+    assert_that([m["event"] for m in seen]).does_not_contain("register_variable")
+    ghost = [m for m in seen if m["event"] == "log" and "ghost" in m["payload"]["message"]]
+    assert_that(ghost).is_length(1)
+    assert_that(ghost[0]["payload"]["level"]).is_equal_to("warning")
 
 
-def test_helpers_without_runtime_raise() -> None:
-    _variables.reset()
-    with pytest.raises(RuntimeError):
-        sdk.get_variable("x")
+def test_ready_is_written_before_init_runs_on_another_thread(rigs: list[Rig]) -> None:
+    seen: dict[str, Any] = {}
+
+    @sdk.init
+    def setup(ctx: sdk.PluginContext) -> None:
+        seen["thread"] = threading.current_thread()
+        ctx.log("marker")
+
+    rig = _start(rigs)
+    rig.send("hello", {"protocol": 1, "decker_version": "x", "plugin_id": "t", "global_settings": {}})
+    events = [m["event"] for m in rig.collect_until_log("marker")]
+    assert_that(events).is_equal_to(["ready", "log"])
+    assert_that(seen["thread"]).is_not_equal_to(rig.thread)
+    assert_that(seen["thread"].name).is_equal_to("decker-sdk-lifecycle")
+
+
+def test_async_init_runs(rigs: list[Rig]) -> None:
+    ran: list[int] = []
+
+    @sdk.init
+    async def setup(ctx: sdk.PluginContext) -> None:
+        await asyncio.sleep(0)
+        ran.append(1)
+
+    _start(rigs).hello()
+    _wait_for(lambda: ran)
+
+
+def test_async_main_with_interval_is_called_repeatedly(rigs: list[Rig]) -> None:
+    calls: list[int] = []
+
+    @sdk.main(0.02)
+    async def loop(ctx: sdk.PluginContext) -> None:
+        await asyncio.sleep(0)
+        calls.append(1)
+
+    _start(rigs).hello()
+    _wait_for(lambda: len(calls) >= 3)
+
+
+def test_sync_main_without_interval_runs_exactly_once(rigs: list[Rig]) -> None:
+    calls: list[int] = []
+
+    @sdk.main(interval=None)
+    def loop(ctx: sdk.PluginContext) -> None:
+        calls.append(1)
+
+    _start(rigs).hello()
+    _wait_for(lambda: calls)
+    time.sleep(0.2)
+    assert_that(calls).is_length(1)
+
+
+def test_reads_without_runtime_are_empty(rigs: list[Rig]) -> None:
+    assert_that(sdk.get_variable("x")).is_none()
+    assert_that(sdk.has_variable("x")).is_false()
+    rig = _start(rigs)
+    rig.hello()
+    rig.stop()
+    assert_that(sdk.get_variable("x")).is_none()
+    assert_that(sdk.has_variable("x")).is_false()

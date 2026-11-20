@@ -107,13 +107,15 @@ def signal_variable_updated(name: str) -> None:
 
 
 def get_variable(name: str) -> str | None:
-    """The current text of a variable known to this plugin, or None."""
-    return _host().get_variable(name)
+    """The current text of a variable known to this plugin, or None (also when no runtime is running)."""
+    host = _current
+    return host.get_variable(name) if host is not None else None
 
 
 def has_variable(name: str) -> bool:
-    """Whether a variable of this name currently has a value."""
-    return _host().has_variable(name)
+    """Whether a variable of this name currently has a value (False when no runtime is running)."""
+    host = _current
+    return host.has_variable(name) if host is not None else False
 
 
 def value_text(value: Any) -> str | None:
