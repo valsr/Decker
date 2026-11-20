@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+from typing import Any
 
 from assertpy import assert_that
 from PIL import Image
@@ -8,7 +9,11 @@ from PIL import Image
 from decker.animation import factory as factory_module
 from decker.animation.gif import MAX_FRAME_SIZE
 from decker.animation.model import AnimationSpec
-from decker.server.appearance import compose_key_frames, resolve_appearance
+from decker.server.appearance import (
+    compose_key_face,
+    compose_key_frames,
+    resolve_appearance,
+)
 
 SIZE = 72
 RED = (255, 0, 0)
@@ -116,3 +121,64 @@ def test_background_layer_frames_are_square_and_sharp() -> None:
         AnimationSpec(spec.gif, _appearance(), "", 1.0)
     )
     assert_that(foreground[0].image.size).is_equal_to((MAX_FRAME_SIZE, 72))
+
+
+def _gif(colors: list[tuple[int, int, int]], side: int = 16) -> bytes:
+    frames = [Image.new("RGB", (side, side), c) for c in colors]
+    buf = io.BytesIO()
+    frames[0].save(buf, format="GIF", save_all=True, append_images=frames[1:], duration=100, loop=0)
+    return buf.getvalue()
+
+
+def _red_png() -> bytes:
+    return _png_bytes(RED + (255,))
+
+
+def _face_frames(background: bytes) -> tuple[Any, list[Any], AnimationSpec]:
+    foreground = _gif([(0, 255, 0), (255, 255, 0)])
+    face = compose_key_face(_appearance(), foreground, "", image_scale=0.5, background_image=background)
+    spec = face.animation
+    assert spec is not None and spec.layer == "foreground"
+    poster = Image.open(io.BytesIO(face.png)).convert("RGB").getpixel((1, 1))
+    frames = factory_module._compose(spec, factory_module._decode(spec), SIZE)  # pylint: disable=protected-access
+    return poster, [frame.getpixel((1, 1)) for frame in frames], spec
+
+
+def test_animated_foreground_frames_show_a_static_background_like_the_poster() -> None:
+    poster, corners, _spec = _face_frames(_red_png())
+    assert_that(poster).is_equal_to(RED)
+    assert_that(corners).is_length(2)
+    assert_that(set(corners)).is_equal_to({RED})
+
+
+def test_animated_foreground_frames_show_the_first_frame_of_an_animated_background() -> None:
+    poster, corners, _spec = _face_frames(_gif([RED, BLUE]))
+    assert_that(poster).is_equal_to(RED)
+    assert_that(set(corners)).is_equal_to({RED})
+
+
+def test_animated_foreground_full_build_frames_match_the_poster_background() -> None:
+    _poster, _corners, spec = _face_frames(_red_png())
+    frames = compose_key_frames(
+        spec.appearance, [Image.new("RGBA", (8, 8), (0, 0, 0, 0))], "", SIZE, 0.5, background_image=spec.background
+    )
+    assert_that(frames[0].getpixel((SIZE // 2, SIZE // 2))).is_equal_to(RED)  # transparent icon shows it too
+
+
+def test_replacing_the_background_image_changes_the_foreground_animation_id() -> None:
+    _p, _c, red = _face_frames(_red_png())
+    _p, _c, blue = _face_frames(_png_bytes(BLUE + (255,)))
+    _p, _c, red_again = _face_frames(_red_png())
+    assert_that(red.animation_id).is_not_equal_to(blue.animation_id)
+    assert_that(red.animation_id).is_equal_to(red_again.animation_id)
+
+
+def test_foreground_spec_without_a_background_image_keeps_its_id() -> None:
+    foreground = _gif([(0, 255, 0), (255, 255, 0)])
+    for appearance, background in ((_appearance("color"), _red_png()), (_appearance("image"), None)):
+        spec = compose_key_face(appearance, foreground, "t", image_scale=0.5, background_image=background).animation
+        assert spec is not None
+        assert_that(spec.background).is_none()
+        look = json.dumps([dict(appearance), "t", repr(0.5)], sort_keys=True, default=str)
+        expected = hashlib.sha256(f"{hashlib.sha256(foreground).hexdigest()}:{look}".encode()).hexdigest()
+        assert_that(spec.animation_id).is_equal_to(expected)

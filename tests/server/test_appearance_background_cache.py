@@ -107,3 +107,28 @@ def test_threads_composing_the_same_background_agree():
 
     assert_that(results).is_length(60)
     assert_that(set(results)).is_length(1)
+
+
+def test_intern_background_returns_one_shared_object_per_content() -> None:
+    ap._INTERNED.clear()  # pylint: disable=protected-access
+    first = ap.intern_background(bytes(_png("#ff0000")))
+    copy = ap.intern_background(bytes(_png("#ff0000")))
+    assert_that(copy is first).is_true()
+    assert_that(ap.intern_background(None)).is_none()
+
+
+def test_intern_background_is_bounded_by_count_and_bytes(monkeypatch) -> None:
+    ap._INTERNED.clear()  # pylint: disable=protected-access
+    for index in range(40):
+        ap.intern_background(f"image-{index}".encode())
+    assert_that(ap._INTERNED).is_length(32)  # pylint: disable=protected-access
+    monkeypatch.setattr(ap, "_MAX_INTERNED_BYTES", 100)
+    ap._INTERNED.clear()  # pylint: disable=protected-access
+    big = b"x" * 101
+    assert_that(ap.intern_background(big) is big).is_true()
+    assert_that(ap._INTERNED).is_empty()  # pylint: disable=protected-access
+    for index in range(5):
+        ap.intern_background(bytes([index]) * 30)
+    assert_that(sum(len(v) for v in ap._INTERNED.values())).is_less_than_or_equal_to(
+        100
+    )  # pylint: disable=protected-access

@@ -41,6 +41,20 @@ _MAX_REPORTED = 256
 _LAYER_CACHE: OrderedDict[tuple[str, int], bytes] = OrderedDict()
 _LAYER_LOCK = threading.Lock()
 _MAX_CACHED_LAYERS = 64
+_EXIF_ORIENTATION = 0x0112
+_EXIF_TRANSPOSE: dict[int, Image.Transpose] = {
+    2: Image.Transpose.FLIP_LEFT_RIGHT,
+    3: Image.Transpose.ROTATE_180,
+    4: Image.Transpose.FLIP_TOP_BOTTOM,
+    5: Image.Transpose.TRANSPOSE,
+    6: Image.Transpose.ROTATE_270,
+    7: Image.Transpose.TRANSVERSE,
+    8: Image.Transpose.ROTATE_90,
+}
+_INTERNED: OrderedDict[str, bytes] = OrderedDict()
+_INTERN_LOCK = threading.Lock()
+_MAX_INTERNED = 32
+_MAX_INTERNED_BYTES = 64 * 1024 * 1024
 
 
 def _font(
@@ -199,7 +213,10 @@ def _background_image(data: bytes, size: int) -> Image.Image | None:
         with Image.open(io.BytesIO(data)) as image:
             if image.width * image.height > MAX_RASTER_PIXELS:
                 raise GifError(f"image is too large ({image.width}x{image.height})")
-            return cover_fit(image, size)
+            orientation = _EXIF_TRANSPOSE.get(image.getexif().get(_EXIF_ORIENTATION, 1))
+            fitted = cover_fit(image, size)
+        # A centred square crop commutes with these flips and quarter turns, so the small result is turned.
+        return fitted.transpose(orientation) if orientation is not None else fitted
     except Exception as exc:  # pylint: disable=broad-exception-caught
         _report_bad_background(data, exc)
         return None
@@ -223,6 +240,26 @@ def _cached_background_layer(data: bytes, size: int) -> Image.Image | None:
         while len(_LAYER_CACHE) > _MAX_CACHED_LAYERS:
             _LAYER_CACHE.popitem(last=False)
     return layer
+
+
+def intern_background(data: bytes | None) -> bytes | None:
+    """The one shared bytes object for this background content (bounded LRU), so specs never hold copies."""
+    if data is None:
+        return None
+    key = hashlib.sha256(data).hexdigest()
+    with _INTERN_LOCK:
+        shared = _INTERNED.get(key)
+        if shared is not None:
+            _INTERNED.move_to_end(key)
+            return shared
+        if len(data) > _MAX_INTERNED_BYTES:
+            return data
+        _INTERNED[key] = data
+        total = sum(len(value) for value in _INTERNED.values())
+        while len(_INTERNED) > _MAX_INTERNED or total > _MAX_INTERNED_BYTES:
+            _, dropped = _INTERNED.popitem(last=False)
+            total -= len(dropped)
+    return data
 
 
 def _background_layer(appearance: Mapping[str, Any], size: int, background_image: bytes | None = None) -> Image.Image:
@@ -317,11 +354,12 @@ def compose_key_face(  # pylint: disable=too-many-arguments,too-many-positional-
         else b""
     )
     # is_animated_gif never raises. A GIF that fails only when fully decoded keeps this poster; the factory warns once.
+    image_background = background_image if background_image and appearance["background"]["type"] == "image" else None
     if image is not None and is_animated_gif(image):
-        return Composed(png, AnimationSpec(image, appearance, title, image_scale))
-    if background_image and appearance["background"]["type"] == "image" and is_animated_gif(background_image):
+        return Composed(png, AnimationSpec(image, appearance, title, image_scale, background=image_background))
+    if image_background is not None and is_animated_gif(image_background):
         spec = AnimationSpec(
-            background_image,
+            image_background,
             appearance,
             title,
             image_scale,
@@ -363,17 +401,19 @@ def compose_key_frames(  # pylint: disable=too-many-arguments,too-many-positiona
     layer: str = "foreground",
     overlay: bytes | None = None,
     overlay_color: str | None = None,
+    background_image: bytes | None = None,
 ) -> list[Image.Image]:
     """Compose background, each animation frame and the title into size x size RGB images.
 
-    With layer="background" the frames are the key's background and the static overlay is drawn over them.
+    With layer="background" the frames are the key's background and the static overlay is drawn over them;
+    otherwise background_image (its first frame, for a GIF) is the static base under every frame.
     """
     inner = _inner_size(size, plugin_image_scale)
     offset = (size - inner) // 2
     background = (
         Image.new("RGBA", (size, size), (0, 0, 0, 255))
         if layer == "background"
-        else _background_layer(appearance, size)
+        else _background_layer(appearance, size, background_image)
     )
     overlay_image = _overlay_layer(overlay, inner, overlay_color) if layer == "background" else None
     title = _title_layer(appearance, plugin_title, size)
