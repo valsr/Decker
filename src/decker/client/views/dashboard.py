@@ -459,6 +459,10 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     def _on_rename_profile(self, profile_id: int, name: str) -> None:
         self._page_call("profile_rename", profile_id, name)
 
+    def _on_edit_active_profile(self) -> None:
+        if self._profiles is not None:
+            self._on_edit_profile(self._profiles.active_profile_id)
+
     def _on_edit_profile(self, profile_id: int) -> None:
         cm = AppContext.get().connection_manager
         profiles = self._profiles
@@ -514,6 +518,9 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         menu.addAction("Show Sidebar" if self._is_sidebar_collapsed() else "Hide Sidebar", self._toggle_sidebar)
         menu.addMenu(self._build_device_menu(menu))
         menu.addSeparator()
+        edit = menu.addAction("Edit Profiles…", self._on_edit_active_profile)
+        if edit is not None:
+            edit.setEnabled(self._profiles is not None)
         menu.addAction("Settings", self._open_settings)
 
     def _build_device_menu(self, parent: QMenu) -> QMenu:

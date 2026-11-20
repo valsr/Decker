@@ -1,4 +1,4 @@
-"""Non-modal settings dialog with General, Server, UI and Plugins tabs, applied with an Apply button."""
+"""Non-modal settings dialog with General, Server, Plugins and Device tabs, applied with an Apply button."""
 
 from collections.abc import Callable
 from typing import Any
@@ -92,10 +92,8 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._tabs: QTabWidget = QTabWidget()
         self._general_tab = self._build_general_tab()
         self._server_tab = self._build_server_tab()
-        self._ui_tab = self._build_ui_tab()
         self._tabs.addTab(self._general_tab, "General")
         self._tabs.addTab(self._server_tab, "Server")
-        self._tabs.addTab(self._ui_tab, "UI")
         self._tabs.addTab(self._plugins_tab, "Plugins")
         self._tabs.addTab(self._screensaver_panel, "Device")
         self.add_screensaver_listener(self._screensaver_panel.handle_event)
@@ -146,12 +144,12 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         theme = self._selected_theme()
         custom_path = self._custom_path_input.text().strip()
         if theme == client_config.THEME_CUSTOM and not custom_path:
-            return self._fail(self._ui_tab, "Choose a stylesheet file for the custom theme.")
+            return self._fail(self._general_tab, "Choose a stylesheet file for the custom theme.")
         colors: ThemeColors | None = None
         if theme == client_config.THEME_CUSTOM:
             stylesheet = read_custom_stylesheet(custom_path)
             if stylesheet is None:
-                return self._fail(self._ui_tab, f"Cannot read stylesheet: {custom_path}")
+                return self._fail(self._general_tab, f"Cannot read stylesheet: {custom_path}")
         else:
             stylesheet, colors = resolve_theme(theme)
 
@@ -188,11 +186,22 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         hint = QLabel("When off, closing the window quits Decker.")
         hint.setProperty("role", "muted")
         hint.setWordWrap(True)
+        for theme, label in _THEME_LABELS.items():
+            self._theme_combo.addItem(label, theme)
+        self._theme_combo.currentIndexChanged.connect(self._update_custom_enabled)
+        self._custom_path_input.setPlaceholderText("Path to a .qss file")
+        self._browse_btn.clicked.connect(self._browse_stylesheet)
+
+        path_row = QHBoxLayout()
+        path_row.addWidget(self._custom_path_input, 1)
+        path_row.addWidget(self._browse_btn)
+
         tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.addWidget(self._close_to_tray_check)
-        layout.addWidget(hint)
-        layout.addStretch()
+        form = QFormLayout(tab)
+        form.addRow("", self._close_to_tray_check)
+        form.addRow("", hint)
+        form.addRow("Theme", self._theme_combo)
+        form.addRow("Stylesheet", path_row)
         return tab
 
     def _build_server_tab(self) -> QWidget:
@@ -212,23 +221,6 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         form.addRow("", self._stop_check)
         form.addRow("Status", self._status_label)
         form.addRow("", self._apply_error_label)
-        return tab
-
-    def _build_ui_tab(self) -> QWidget:
-        for theme, label in _THEME_LABELS.items():
-            self._theme_combo.addItem(label, theme)
-        self._theme_combo.currentIndexChanged.connect(self._update_custom_enabled)
-        self._custom_path_input.setPlaceholderText("Path to a .qss file")
-        self._browse_btn.clicked.connect(self._browse_stylesheet)
-
-        path_row = QHBoxLayout()
-        path_row.addWidget(self._custom_path_input, 1)
-        path_row.addWidget(self._browse_btn)
-
-        tab = QWidget()
-        form = QFormLayout(tab)
-        form.addRow("Theme", self._theme_combo)
-        form.addRow("Stylesheet", path_row)
         return tab
 
     def _load_from_config(self) -> None:

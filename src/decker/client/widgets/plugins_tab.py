@@ -146,6 +146,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         self._repositories: Any = None
         self._get_more_dialog: Any = None
         self._uninstall_btn: QPushButton = QPushButton("Uninstall")
+        self._update_btn: QPushButton = QPushButton("Update")
         self._status_label: QLabel = QLabel()
         self._settings_form: SchemaForm = SchemaForm()
         self._apply_settings_btn: QPushButton = QPushButton("Apply plugin settings")
@@ -197,6 +198,8 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         self._get_more_btn.clicked.connect(self._on_get_more_clicked)
         self._uninstall_btn.clicked.connect(self._on_uninstall_clicked)
         self._uninstall_btn.setEnabled(False)
+        self._update_btn.clicked.connect(self._on_update_clicked)
+        self._update_btn.setEnabled(False)
         self._apply_settings_btn.clicked.connect(self._on_apply_settings)
         self._status_label.setWordWrap(True)
         self._status_label.setProperty("role", "muted")
@@ -206,6 +209,7 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
 
         buttons = QHBoxLayout()
         buttons.addWidget(self._install_btn)
+        buttons.addWidget(self._update_btn)
         buttons.addWidget(self._uninstall_btn)
         buttons.addStretch()
         buttons.addWidget(self._get_more_btn)
@@ -258,12 +262,32 @@ class PluginsTab(QWidget):  # pylint: disable=too-many-instance-attributes
         self._uninstall_btn.setToolTip(
             "This plugin is built into Decker" if builtin else "" if install_allowed() else NOT_ALLOWED_TOOLTIP
         )
+        self._show_update_button(plugin)
         schema = plugin.get("global_settings_schema") if plugin else None
         if plugin is None or not schema:
             self._set_settings_visible(False)
             return
         self._settings_form.set_schema(schema, plugin.get("global_settings") or {})
         self._set_settings_visible(True)
+
+    def _show_update_button(self, plugin: dict[str, Any] | None) -> None:
+        available = self._updates.get(str(plugin["id"])) if plugin else None
+        self._update_btn.setEnabled(available is not None and install_allowed())
+        if available is None:
+            self._update_btn.setToolTip("No update available for this plugin")
+        else:
+            self._update_btn.setToolTip(f"Update to {available}" if install_allowed() else NOT_ALLOWED_TOOLTIP)
+
+    def _on_update_clicked(self) -> None:
+        plugin = self._plugins.get(self._selected_id or "")
+        manager = AppContext.get().connection_manager
+        if plugin is None or manager is None or str(plugin["id"]) not in self._updates:
+            return
+        reply = manager.call("plugin_install_from_repository", plugin["id"])
+        if not reply or str(reply).startswith("error:"):
+            self._status_label.setText(f"Could not update {plugin['name']}. {reply or _FAILURE_HINT}")
+        else:
+            self._status_label.setText(f"Updating {plugin['name']}…")
 
     def _set_settings_visible(self, visible: bool) -> None:
         for widget in (self._settings_title, self._settings_form, self._apply_settings_btn):

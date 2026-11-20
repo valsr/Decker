@@ -338,3 +338,30 @@ def test_installed_plugin_rows_show_the_badge(manager):
     texts = {str(it.data(plugins_tab._PLUGIN_ID_ROLE)): it.text() for it in items if it is not None}
     assert_that(texts["com.acme.extra"]).contains("Not supported on Linux (KDE, Wayland)")
     assert_that(texts["com.decker.core"]).does_not_contain("Not supported")
+
+
+def test_update_button_follows_the_selected_plugins_update(tab, manager):
+    update = {"id": "com.acme.extra", "name": "Extra", "installed": "2.1.0", "available": "2.2.0"}
+    EventManager.get().emit(PluginUpdatesAvailableEvent(updates=[update], missing=[]))
+
+    _select(tab, "com.decker.core")
+    assert_that(tab._update_btn.isEnabled()).is_false()
+    _select(tab, "com.acme.extra")
+    assert_that(tab._update_btn.isEnabled()).is_true()
+
+    manager.answers["plugin_install_from_repository"] = "job-9"
+    tab._update_btn.click()
+
+    manager.call.assert_any_call("plugin_install_from_repository", "com.acme.extra")
+    assert_that(tab._status_label.text()).is_equal_to("Updating Extra…")
+
+
+def test_update_failure_reports_the_server_error(tab, manager):
+    update = {"id": "com.acme.extra", "name": "Extra", "installed": "2.1.0", "available": "2.2.0"}
+    EventManager.get().emit(PluginUpdatesAvailableEvent(updates=[update], missing=[]))
+    _select(tab, "com.acme.extra")
+    manager.answers["plugin_install_from_repository"] = "error: nope"
+
+    tab._update_btn.click()
+
+    assert_that(tab._status_label.text()).contains("Could not update Extra", "error: nope")
