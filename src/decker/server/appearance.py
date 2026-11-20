@@ -4,6 +4,8 @@ import hashlib
 import io
 import logging
 import re
+import threading
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -33,7 +35,9 @@ _LINE_BREAKS = re.compile(r"\s*[\r\n\v\f\x85\u2028\u2029]+\s*")
 _PARSED_SCHEMA = parse_settings_schema(APPEARANCE_SCHEMA, "appearance")
 _RENDERER = AssetRenderer()
 _SVG_SNIFF_BYTES = 64 * 1024
-_REPORTED_BAD_BACKGROUNDS: set[str] = set()
+_REPORTED_BAD_BACKGROUNDS: OrderedDict[str, None] = OrderedDict()
+_REPORTED_LOCK = threading.Lock()
+_MAX_REPORTED = 256
 
 
 def _font(
@@ -153,20 +157,22 @@ def _single_line(text: str) -> str:
 
 
 def cover_fit(image: Image.Image, size: int) -> Image.Image:
-    """Scale image to cover a size x size square and centre-crop it (RGBA)."""
-    rgba = image.convert("RGBA")
-    ratio = max(size / rgba.width, size / rgba.height)
-    width, height = max(size, round(rgba.width * ratio)), max(size, round(rgba.height * ratio))
-    scaled = rgba.resize((width, height), Image.Resampling.LANCZOS)
-    left, top = (width - size) // 2, (height - size) // 2
-    return scaled.crop((left, top, left + size, top + size))
+    """Centre-crop image to a square in source coordinates, then resize it once to size x size (RGBA)."""
+    side = min(image.width, image.height)
+    left, top = (image.width - side) // 2, (image.height - side) // 2
+    square = image.crop((left, top, left + side, top + side)).convert("RGBA")
+    return square.resize((size, size), Image.Resampling.LANCZOS)
 
 
 def _report_bad_background(data: bytes, reason: object) -> None:
     key = hashlib.sha256(data).hexdigest()[:12]
-    if key not in _REPORTED_BAD_BACKGROUNDS:
-        _REPORTED_BAD_BACKGROUNDS.add(key)
-        logging.debug("background image %s is unusable, using black: %s", key, reason)
+    with _REPORTED_LOCK:
+        if key in _REPORTED_BAD_BACKGROUNDS:
+            return
+        _REPORTED_BAD_BACKGROUNDS[key] = None
+        while len(_REPORTED_BAD_BACKGROUNDS) > _MAX_REPORTED:
+            _REPORTED_BAD_BACKGROUNDS.popitem(last=False)
+    logging.debug("background image %s is unusable, using black: %s", key, reason)
 
 
 def _is_svg(data: bytes) -> bool:
@@ -181,7 +187,10 @@ def _background_image(data: bytes, size: int) -> Image.Image | None:
     """
     try:
         if _is_svg(data):
-            return _RENDERER.render_bytes(data, size, size)
+            rendered = _RENDERER.render_bytes(data, size, size)
+            if rendered is None:
+                _report_bad_background(data, "unparseable SVG")
+            return rendered
         if is_gif(data):
             check_gif_bounds(data)
         with Image.open(io.BytesIO(data)) as image:

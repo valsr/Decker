@@ -13,9 +13,9 @@ from PIL import Image
 
 from decker.animation.cache import SizedLru
 from decker.animation.encode import KeyFormat, encode_native
-from decker.animation.gif import GifError, GifFrame, decode_gif
+from decker.animation.gif import MAX_FRAME_SIZE, GifError, GifFrame, decode_gif
 from decker.animation.model import Animation, AnimationSpec, Frame
-from decker.server.appearance import compose_key_frames
+from decker.server.appearance import compose_key_frames, cover_fit
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,12 @@ class _DaemonPool:
     def _work(self) -> None:
         while (task := self._queue.get()) is not None:
             task()
+
+
+def _decode(spec: AnimationSpec) -> list[GifFrame]:
+    if spec.layer == "background":
+        return decode_gif(spec.gif, lambda frame: cover_fit(frame, MAX_FRAME_SIZE))
+    return decode_gif(spec.gif)
 
 
 def _png(image: Image.Image) -> bytes:
@@ -97,7 +103,7 @@ def _reports_by_quality(
 
 
 def _build_animation(spec: AnimationSpec, fmt: KeyFormat, quality: int) -> tuple[Animation, int]:
-    gif_frames = decode_gif(spec.gif)
+    gif_frames = _decode(spec)
     images = _compose(spec, gif_frames, max(fmt.size))
     encoded = [encode_native(image, fmt, quality) for image in images]
     frames = tuple(
@@ -112,7 +118,7 @@ def _build_animation(spec: AnimationSpec, fmt: KeyFormat, quality: int) -> tuple
 
 
 def _build_preview(spec: AnimationSpec) -> tuple[bytes, int]:
-    gif_frames = decode_gif(spec.gif)
+    gif_frames = _decode(spec)
     images = _compose(spec, gif_frames, PREVIEW_SIZE)
     delays = [frame.delay_ms for frame in gif_frames]
     try:
