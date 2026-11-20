@@ -4,7 +4,7 @@ import io
 import threading
 import time
 from collections.abc import Iterator
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from assertpy import assert_that
@@ -14,6 +14,7 @@ from decker.animation.factory import AnimationFactory
 from decker.common.error import DeckNotOpenedError
 from decker.server.devices import Device
 from tests.server.animation_fixture import (
+    opened_deck_manager,
     WRITER_THREAD,
     WriteLog,
     lifecycle,
@@ -372,3 +373,18 @@ class TestClosedDevice:
         device.set_image_bytes(3, _png("red"))
 
         assert_that(reported).is_empty()
+
+
+def test_resetting_the_same_bytes_neither_renders_nor_writes_again(tmp_path) -> None:
+    buf = io.BytesIO()
+    Image.new("RGB", (72, 72), (10, 20, 30)).save(buf, "PNG")
+    with opened_deck_manager(tmp_path) as (manager, device_id, log):
+        device = manager.open_device(device_id)
+        assert device is not None
+        device.set_image_bytes(0, buf.getvalue())
+        writes = len(log.writes)
+        with patch.object(device, "_render", wraps=device._render) as render:  # pylint: disable=protected-access
+            device.set_image_bytes(0, buf.getvalue())
+
+        assert_that(render.call_count).is_zero()
+        assert_that(len(log.writes)).is_equal_to(writes)

@@ -7,7 +7,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QActionGroup, QIcon
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -92,7 +92,11 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._select_after_refresh: int | None = None  # the key to open once its data arrives after a move or copy
         self._active_device_id: str | None = None
         self._actions: list[dict[str, Any]] = []  # action list from the server (with settings schemas)
-        self._bridge = CallBridge(self)  # runs the animation fetches off the GUI thread
+        self._bridge = CallBridge(self)  # runs the animation fetches and page switches off the GUI thread
+        self._refresh_panel_timer = QTimer(self)  # one panel rebuild per burst of key-state events
+        self._refresh_panel_timer.setSingleShot(True)
+        self._refresh_panel_timer.setInterval(0)
+        self._refresh_panel_timer.timeout.connect(self._refresh_config_panel)
         self._key_animation_ids: dict[int, str] = {}  # key index → its applied (or being fetched) animation id
         self._animation_cache: OrderedDict[str, str] = OrderedDict()  # id → base64 image, least recently used first
         self._empty_animations: OrderedDict[str, None] = OrderedDict()  # ids the server had no image for
@@ -361,6 +365,14 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             return
         self._page_tabs.set_pages(self._pages.pages, self._pages.active_page_id, self._pages.default_page_id)
 
+    def _page_call_async(self, method: str, *args: Any) -> None:
+        """Like _page_call but off the GUI thread: a page or profile switch waits for the hardware redraw."""
+        device_id = AppContext.get().active_device_id
+        cm = AppContext.get().connection_manager
+        if not device_id or cm is None:
+            return
+        self._bridge.submit(lambda: cm.call(method, device_id, *args), lambda _result: None)
+
     def _page_call(self, method: str, *args: Any) -> Any:
         """Call a page RPC for the active device; the server's pages_changed push refreshes the tabs."""
         device_id = AppContext.get().active_device_id
@@ -372,8 +384,17 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     def _on_page_selected(self, page_id: str) -> None:
         if page_id == self._active_page_id:
             return
-        if not self._page_call("page_activate", page_id):
-            self._render_page_tabs()  # undo the tab bar's optimistic selection
+        device_id = AppContext.get().active_device_id
+        cm = AppContext.get().connection_manager
+        if not device_id or cm is None:
+            self._render_page_tabs()
+            return
+
+        def done(result: Any) -> None:
+            if not result:
+                self._render_page_tabs()  # undo the tab bar's optimistic selection
+
+        self._bridge.submit(lambda: cm.call("page_activate", device_id, page_id), done)
 
     def _on_add_page(self) -> None:
         raw = self._page_call("page_add")
@@ -424,7 +445,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         selector.show()
 
     def _on_profile_selected(self, profile_id: int) -> None:
-        self._page_call("profile_activate", profile_id)
+        self._page_call_async("profile_activate", profile_id)
 
     def _on_add_profile(self) -> None:
         raw = self._page_call("profile_add")
@@ -557,7 +578,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if device_id and index in self._key_slots:
             cm = AppContext.get().connection_manager
             if cm is not None:
-                cm.call("key_simulate_press", device_id, index)
+                self._bridge.submit(lambda: cm.call("key_simulate_press", device_id, index), lambda _result: None)
 
     def _on_key_long_pressed(self, index: int) -> None:
         device_id = AppContext.get().active_device_id
@@ -565,7 +586,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             return
         cm = AppContext.get().connection_manager
         if cm is not None:
-            cm.call("key_simulate_long_press", device_id, index)
+            self._bridge.submit(lambda: cm.call("key_simulate_long_press", device_id, index), lambda _result: None)
 
     def _on_action_dropped(self, key_index: int, action_data: Any) -> None:
         device_id = AppContext.get().active_device_id
@@ -628,7 +649,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if pending is not None and pending in self._key_slots:
             self._select_after_refresh = None
             self._on_key_edit_requested(pending)
-        self._refresh_config_panel()
+        self._refresh_panel_timer.start()
 
     def _refresh_config_panel(self) -> None:
         index = self._selected_key

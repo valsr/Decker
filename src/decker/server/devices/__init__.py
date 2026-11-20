@@ -40,6 +40,7 @@ class _KeyTracker:
     def __init__(self) -> None:
         self.state: KeyPressState = KeyPressState.UP
         self.image: bytes | None = None  # cached PNG of the last image pushed to this key
+        self.source: bytes | None = None  # the bytes that PNG was rendered from
         self.shown: object = _UNKNOWN  # what the hardware shows: the PNG sent, None when blanked, or _UNKNOWN
         self._tap_count: int = 0
         self._last_up: float = 0.0
@@ -349,8 +350,11 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
     def set_image_bytes(self, key_index: int, image: bytes) -> None:
         """Render image bytes (SVG/PNG/JPEG) and push to the hardware key."""
         try:
-            png, native = self._render(image)
             tracker = self._key_trackers.setdefault(key_index, _KeyTracker())
+            if image == tracker.source and tracker.image is not None and tracker.shown == tracker.image:
+                return  # the key already shows exactly this: skip rendering it again
+            png, native = self._render(image)
+            tracker.source = image if png is not None else None
             if png is not None:
                 tracker.image = png
             shown: object = _UNKNOWN if png is None else png
@@ -382,6 +386,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         try:
             tracker = self._key_trackers.setdefault(key_index, _KeyTracker())
             tracker.image = None
+            tracker.source = None
             with self._gate_lock:
                 if self._gated or tracker.shown is None:
                     return  # held back, or already blank
