@@ -32,6 +32,8 @@ from decker.client.events import (
     PluginLoadFailedEvent,
     PluginUpdatesAvailableEvent,
     ProfilesUpdatedEvent,
+    ScreensaverSettingsEvent,
+    ScreensaverStateEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
     ViewActivatedEvent,
@@ -255,6 +257,11 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
             em.subscribe(event_type, self._forward_to_active_view)
         for event_type in DASHBOARD_EVENTS:
             em.subscribe(event_type, self._forward_to_dashboard)
+        em.subscribe(ScreensaverSettingsEvent, self._forward_to_settings_dialog)
+        em.subscribe(ScreensaverStateEvent, self._forward_to_settings_dialog)
+
+    def _forward_to_settings_dialog(self, event: ScreensaverSettingsEvent | ScreensaverStateEvent) -> None:
+        self._settings_dialog.handle_screensaver_event(event)
 
     def _forward_to_dashboard(self, event: Any) -> bool | None:
         return self._views[ViewName.DASHBOARD].handle_event(event)

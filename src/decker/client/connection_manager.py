@@ -1,11 +1,13 @@
 """Owns the RPyC connection and its background worker thread. No Qt imports."""
 
+import base64
+import binascii
 import json
 import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from enum import StrEnum
 from typing import Any
 
@@ -31,6 +33,8 @@ from decker.client.events import (
     PluginUpdatesAvailableEvent,
     ProfilesUpdatedEvent,
     RepositoriesCheckFinishedEvent,
+    ScreensaverSettingsEvent,
+    ScreensaverStateEvent,
     ServerConnectedEvent,
     ServerDisconnectedEvent,
     WindowFocusedEvent,
@@ -49,11 +53,14 @@ from decker.common.model import (
     MatchCondition,
     PageInfo,
     ProfileInfo,
+    ScreensaverSettings,
     WindowInfo,
 )
 
+_SERVER_UNAVAILABLE = "server unavailable"
 _RETRY_INTERVAL_S = 3.0
 _WINDOW_EVENT_TYPES = ("app_rules_changed", "window_detection_changed", "window_focused", "window_picked")
+_SCREENSAVER_EVENT_TYPES = ("screensaver_changed", "screensaver_settings_changed")
 _HEARTBEAT_INTERVAL_S = 5.0
 _LONG_CALL_TIMEOUTS: dict[str, float] = {"plugin_install": 120.0, "repositories_check": 120.0, "repository_add": 60.0}
 
@@ -99,6 +106,8 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._actions_refresh_requested = threading.Event()
         self._devices_refresh_requested = threading.Event()
         self._rules_refresh_requested = threading.Event()
+        self._screensaver_refresh_lock = threading.Lock()
+        self._screensaver_refresh_devices: set[str] = set()
         self._detection_refresh_requested = threading.Event()
         self._thread: threading.Thread | None = None
         self.state: ServerState = ServerState.DISCONNECTED
@@ -194,6 +203,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         if self._rules_refresh_requested.is_set():
             self._rules_refresh_requested.clear()
             self.refresh_app_rules()
+        self._refresh_requested_screensavers()
         if self._detection_refresh_requested.is_set():
             self._detection_refresh_requested.clear()
             self.refresh_detection_status()
@@ -353,6 +363,9 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._refresh_profiles()
         self._refresh_pages()
         self.refresh_app_rules()
+        device_id = _active_device_id()
+        if device_id is not None:
+            self.refresh_screensaver(device_id)
         self._refresh_key_display_states()
 
     def _refresh_pages(self) -> None:
@@ -388,6 +401,67 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             logging.warning("Could not fetch app rules for %s: %s", device_id, exc)
             return
         EventManager.get().push(AppRulesUpdatedEvent(rules=rules))
+
+    def refresh_screensaver(self, device_id: str) -> None:
+        """Fetch a device's screensaver settings and push them as a ScreensaverSettingsEvent."""
+        status = self.screensaver_get(device_id)
+        if status is not None:
+            EventManager.get().push(status)
+
+    def screensaver_get(self, device_id: str) -> ScreensaverSettingsEvent | None:
+        """Fetch a device's screensaver settings and state; None when unknown or the server is unavailable."""
+        try:
+            return _parse_screensaver(device_id, self._call_json("screensaver_get", device_id))
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Could not fetch screensaver settings for %s: %s", device_id, exc)
+            return None
+
+    def screensaver_set(self, device_id: str, settings: ScreensaverSettings) -> tuple[bool, str]:
+        """Save a device's screensaver settings; returns (ok, error)."""
+        try:
+            data = self._call_json("screensaver_set", device_id, json.dumps(asdict(settings)))
+            if not isinstance(data, dict):
+                return False, _SERVER_UNAVAILABLE
+            return bool(data.get("ok")), str(data.get("error", ""))
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Could not save screensaver settings for %s: %s", device_id, exc)
+            return False, _SERVER_UNAVAILABLE
+
+    def screensaver_activate(self, device_id: str) -> bool:
+        """Activate a device's screensaver now; False when refused or the server is unavailable."""
+        return self._screensaver_toggle("screensaver_activate", device_id)
+
+    def screensaver_deactivate(self, device_id: str) -> bool:
+        """Deactivate a device's screensaver; False when refused or the server is unavailable."""
+        return self._screensaver_toggle("screensaver_deactivate", device_id)
+
+    def screensaver_preview(self, device_id: str, settings: ScreensaverSettings) -> tuple[bytes | None, str]:
+        """Render a draft screensaver; returns (PNG bytes, error), exactly one of which is set."""
+        try:
+            data = self._call_json("screensaver_preview", device_id, json.dumps(asdict(settings)))
+            if not isinstance(data, dict):
+                return None, _SERVER_UNAVAILABLE
+            if data.get("png"):
+                return base64.b64decode(str(data["png"]), validate=True), ""
+            return None, str(data.get("error") or "no preview")
+        except (binascii.Error, ValueError) as exc:
+            return None, f"bad preview data: {exc}"
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("Could not preview screensaver for %s: %s", device_id, exc)
+            return None, _SERVER_UNAVAILABLE
+
+    def _screensaver_toggle(self, method: str, device_id: str) -> bool:
+        try:
+            return self._call_json(method, device_id) is True
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning("RPC %s failed for %s: %s", method, device_id, exc)
+            return False
+
+    def _refresh_requested_screensavers(self) -> None:
+        with self._screensaver_refresh_lock:
+            devices, self._screensaver_refresh_devices = self._screensaver_refresh_devices, set()
+        for device_id in sorted(devices):
+            self.refresh_screensaver(device_id)
 
     def refresh_detection_status(self) -> None:
         """Fetch the window detection status and push it as a DetectionStatusEvent."""
@@ -507,11 +581,22 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             EventManager.get().push(RepositoriesCheckFinishedEvent(repositories=list(data.get("repositories") or [])))
         elif event_type in _WINDOW_EVENT_TYPES:
             self._on_window_event(event_type, data)
+        elif event_type in _SCREENSAVER_EVENT_TYPES:
+            self._on_screensaver_event(event_type, data)
         elif event_type == "plugins_changed":
             self.request_actions_refresh()
             EventManager.get().push(PluginsChangedEvent())
         else:
             logging.debug("Unknown server event type: %s", event_type)
+
+    def _on_screensaver_event(self, event_type: str, data: dict[str, Any]) -> None:
+        device_id = str(data.get("device_id", ""))
+        if event_type == "screensaver_changed":
+            EventManager.get().push(ScreensaverStateEvent(device_id=device_id, active=bool(data.get("active"))))
+        else:
+            with self._screensaver_refresh_lock:
+                self._screensaver_refresh_devices.add(device_id)
+            self._wake_event.set()
 
     def _on_window_event(self, event_type: str, data: dict[str, Any]) -> None:
         if event_type == "app_rules_changed":
@@ -690,4 +775,20 @@ def _parse_install_finished(data: dict[str, Any]) -> PluginInstallFinishedEvent:
         version=str(data.get("version") or ""),
         previous_version=str(data.get("previous_version") or ""),
         message=str(data.get("message") or ""),
+    )
+
+
+def _parse_screensaver(device_id: str, data: Any) -> ScreensaverSettingsEvent | None:
+    """Parse a screensaver_get response; unknown keys are ignored so newer servers stay compatible."""
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise ValueError(f"unexpected screensaver response: {data!r}")
+    known = {f.name for f in fields(ScreensaverSettings)}
+    settings = ScreensaverSettings(**{k: v for k, v in data.items() if k in known})
+    return ScreensaverSettingsEvent(
+        device_id=device_id,
+        settings=settings,
+        active=bool(data.get("active", False)),
+        last_error=str(data.get("last_error", "")),
     )

@@ -1,5 +1,6 @@
 """Non-modal settings dialog with General, Server, UI and Plugins tabs, applied with an Apply button."""
 
+from collections.abc import Callable
 from typing import Any
 
 from PyQt6.QtCore import QTimer
@@ -24,6 +25,7 @@ from PyQt6.QtWidgets import (
 from decker.client import config as client_config
 from decker.client.assets import read_custom_stylesheet, resolve_theme
 from decker.client.context import AppContext
+from decker.client.events import ScreensaverSettingsEvent, ScreensaverStateEvent
 from decker.client.server_settings import ServerSettingsInfo
 from decker.client.themes import ThemeColors, apply_theme
 from decker.client.widgets.plugins_tab import PluginsTab
@@ -59,6 +61,7 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self.setWindowTitle("Settings")
         self.setModal(False)
 
+        self._screensaver_listeners: list[Callable[[ScreensaverSettingsEvent | ScreensaverStateEvent], None]] = []
         self._host_input: QLineEdit = QLineEdit()
         self._port_input: QLineEdit = QLineEdit()
         self._status_label: QLabel = QLabel()
@@ -109,6 +112,17 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
 
         self._status_timer: QTimer = QTimer(self)
         self._status_timer.timeout.connect(self._refresh_status)
+
+    def add_screensaver_listener(
+        self, listener: Callable[[ScreensaverSettingsEvent | ScreensaverStateEvent], None]
+    ) -> None:
+        """Register a callback for screensaver events, delivered whether or not the dialog is visible."""
+        self._screensaver_listeners.append(listener)
+
+    def handle_screensaver_event(self, event: ScreensaverSettingsEvent | ScreensaverStateEvent) -> None:
+        """Deliver a screensaver event to the registered listeners."""
+        for listener in list(self._screensaver_listeners):
+            listener(event)
 
     def open_dialog(self) -> None:
         """Load current settings into the form and show the dialog, or raise it if already open."""
