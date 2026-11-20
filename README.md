@@ -24,8 +24,9 @@ Decker supports the following Elgato Stream Deck models:
 | Device discovery, stable device ids | Supported |
 | Profiles and pages per device, per-key actions and long press | Supported |
 | Key appearance: title, fonts, colours, icon override, live preview | Supported |
-| Icon packs (plugins, User pack, System Icons on Linux) | Supported |
+| Image library (icon packs from plugins, User pack, System Icons on Linux) | Supported |
 | Animated GIF key faces | Supported |
+| Key background images (none, solid colour or image from the image library; see [docs/key-backgrounds.md](docs/key-backgrounds.md)) | Supported |
 | Plugins (out of process, `.deckerplugin` packages, repositories, updates) | Supported |
 | PyQt6 desktop client | Supported |
 | Command line client (`poe cli`) | Supported |
@@ -51,6 +52,7 @@ Early alpha: the table shows what exists, not that it is stable. Plugins are lis
 | System Icons | ✅ | ✅ [13] | ⚠️ | ❌ [9] | ❌ [9] |
 | User icon import | ✅ | ✅ [13] | ⚠️ | ✅ [10] | ✅ [10] |
 | GIF animations | ✅ | ✅ [13] | ⚠️ | ✅ | ✅ |
+| Key background images | ✅ | ✅ [13] | ⚠️ | ✅ | ✅ |
 | CLI | ✅ | ✅ [13] | ⚠️ | ✅ [11] | ✅ [11] |
 | Server settings from the client | ✅ [14] | ✅ [14] | ⚠️ | ✅ [14] | ✅ [14] |
 | Switch profile by focused app | ✅ [15] | ⚠️ [15] | ⚠️ [15] | ⚠️ [15] | ❌ [15] |
@@ -220,7 +222,7 @@ this). Install [uv](https://docs.astral.sh/uv/) as well. Device permissions on m
 
 ## Plugins
 
-Key actions and icon packs come from plugins, shipped as `.deckerplugin` packages. Each plugin runs in its own
+Key actions and icon packs (shown together in the image library) come from plugins, shipped as `.deckerplugin` packages. Each plugin runs in its own
 process, so a misbehaving plugin cannot take the server down. Plugins run with your user's permissions and are not
 sandboxed: only install plugins you trust.
 

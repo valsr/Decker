@@ -122,7 +122,7 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
         cache: IconThumbnailCache | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Choose icon")
+        self.setWindowTitle("Choose image")
         self.resize(820, 520)
         self._cm = connection_manager
         self._tint = tint or self.palette().text().color().name()
@@ -138,7 +138,7 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Search icons by name")
+        self._search.setPlaceholderText("Search images by name")
         self._search.setClearButtonEnabled(True)
         self._model = _IconModel(self._pixmap_for, self._pack_label, self)
         self._icon_list = QListView()
@@ -190,17 +190,17 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
     def _populate_packs(self) -> None:
         packs = self._call_json("iconpacks_list")
         if not isinstance(packs, list):
-            self._status.setText("Couldn't load icon packs from the server.")
+            self._status.setText("Couldn't load the image library from the server.")
             return
         if not packs:
-            self._status.setText("No icon packs are installed on the server.")
+            self._status.setText("The image library is empty: no packs are installed on the server.")
             return
         self._packs = [p for p in packs if isinstance(p, dict) and "id" in p]
         try:
             self._cache.update_packs(self._packs)
         except Exception:  # pylint: disable=broad-exception-caught
             logging.warning("Icon thumbnail cache could not be updated", exc_info=True)
-        everything = QTreeWidgetItem(["All icons"])
+        everything = QTreeWidgetItem(["All images"])
         everything.setData(0, _DATA_ROLE, ("all", ""))
         self._tree.addTopLevelItem(everything)
         plugins: dict[str, QTreeWidgetItem] = {}
@@ -329,8 +329,8 @@ def _status_text(has_entries: bool, failed: bool, searching: bool) -> str:
     if has_entries:
         return ""
     if failed:
-        return "Couldn't load this pack's icons."
-    return "No icons match." if searching else "This pack has no icons."
+        return "Couldn't load this pack's images."
+    return "No images match." if searching else "This pack has no images."
 
 
 class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
@@ -345,7 +345,7 @@ class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
 
         choose_file_btn = QPushButton("Choose file...")
         choose_file_btn.clicked.connect(self._choose_file)
-        from_pack_btn = QPushButton("From icon pack...")
+        from_pack_btn = QPushButton("From image library...")
         from_pack_btn.clicked.connect(self._browse_icon_packs)
 
         layout = QHBoxLayout(self)
@@ -362,9 +362,9 @@ class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
 
     def _choose_file(self) -> None:
         if self.connection_manager is None or not self._import_allowed():
-            QMessageBox.information(self, "Import icon", "Importing icons needs a local connection to the server.")
+            QMessageBox.information(self, "Import image", "Importing images needs a local connection to the server.")
             return
-        path_str, _filter = QFileDialog.getOpenFileName(self, "Choose icon", "", _IMAGE_FILE_FILTER)
+        path_str, _filter = QFileDialog.getOpenFileName(self, "Choose image", "", _IMAGE_FILE_FILTER)
         if not path_str:
             return
         path = Path(path_str)
@@ -379,7 +379,7 @@ class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
         try:
             info = path.stat()
             if not stat.S_ISREG(info.st_mode):
-                QMessageBox.warning(self, "Import icon", f"{path.name} is not a regular file.")
+                QMessageBox.warning(self, "Import image", f"{path.name} is not a regular file.")
                 return None
             if info.st_size <= MAX_IMPORT_BYTES:
                 with path.open("rb") as handle:
@@ -387,9 +387,9 @@ class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
                 if len(data) <= MAX_IMPORT_BYTES:
                     return data
         except OSError as exc:
-            QMessageBox.warning(self, "Import icon", f"Cannot read {path.name}: {exc}")
+            QMessageBox.warning(self, "Import image", f"Cannot read {path.name}: {exc}")
             return None
-        QMessageBox.warning(self, "Import icon", f"{path.name} is larger than 4 MiB and cannot be imported.")
+        QMessageBox.warning(self, "Import image", f"{path.name} is larger than 4 MiB and cannot be imported.")
         return None
 
     def _browse_icon_packs(self) -> None:

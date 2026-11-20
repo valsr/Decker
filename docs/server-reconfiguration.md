@@ -26,7 +26,7 @@ itself the right. The server has no authentication: allow only networks you trus
 The host field only sets where the client connects; the server's own listen host (`server.host`) is never changed from
 a client. Without the flag, the port field also only sets the client's target.
 
-`icons.max_file_size` is the largest image file the icon library accepts (imports, icon packs, GIFs, plugin icons);
+`icons.max_file_size` is the largest image file the image library accepts (imports, icon packs, GIFs, plugin icons);
 the default is 4 MiB. Limits when set from a client: port 1-65535, memory 128 MiB and up, image size 64 KiB - 64 MiB.
 
 ## How a change is applied

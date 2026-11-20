@@ -19,7 +19,7 @@ Plugins run with your user's permissions and are not sandboxed. Only install plu
 | Kind | What it is | Needs a runtime |
 |------|------------|-----------------|
 | `actions` | Key actions that appear in the action list and run as a separate process | yes |
-| `icon_packs` | A folder of icons browsable from the key icon picker | no |
+| `icon_packs` | A folder of images browsable from the image library | no |
 
 Decker draws the key background and title (the user's appearance settings). Your plugin supplies the key image with
 `set_image` and may supply a fallback title with `set_title`.

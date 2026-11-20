@@ -120,7 +120,7 @@ platform, and older Decker versions ignore both fields.
 | `name`, `tooltip`, `icon` | Display data. |
 | `gestures` | Default gesture set: any of `press`, `double_press`, `long_press` (default `["press"]`). A running plugin can change it per key with `set_gestures`. |
 | `states` | Optional list of `{image, title}`; selected by `set_state` (index into the list). |
-| `appearance` | Optional defaults for the Decker-drawn appearance: `background`, `icon` (an icon value `{"ref": "pack:<pack id>/<path>", "color": "#rrggbb"}`; users can also override it per key, which replaces the action's static `icon`/state image and any image the plugin sets itself; older Decker releases reject an unknown appearance key, so set `decker` to a release that supports it) and `title` (a [`text_style`](settings-schema.md#text-style) object; give only the fields you want to change, e.g. `{"position": "top"}`). The older flat `show_title`, `title_position`, `title_font`, `title_size`, `title_color`, `title_outline` and `title_outline_width` keys, and a plain-string `title`, are still accepted and folded into `title`. |
+| `appearance` | Optional defaults for the Decker-drawn appearance: `background` (a plain colour string such as `"#1f618d"`, which stays valid, or the nested form `{"type": "none"|"color"|"image", "color": "#rrggbb", "image": {"ref": "pack:<pack id>/<path>"}}`; see [Key backgrounds](../key-backgrounds.md); a manifest may keep the string), `icon` (an icon value `{"ref": "pack:<pack id>/<path>", "color": "#rrggbb"}`; users can also override it per key, which replaces the action's static `icon`/state image and any image the plugin sets itself; older Decker releases reject an unknown appearance key, so set `decker` to a release that supports it) and `title` (a [`text_style`](settings-schema.md#text-style) object; give only the fields you want to change, e.g. `{"position": "top"}`). The older flat `show_title`, `title_position`, `title_font`, `title_size`, `title_color`, `title_outline` and `title_outline_width` keys, and a plain-string `title`, are still accepted and folded into `title`. |
 | `settings` | [Settings schema](settings-schema.md) for the per-key form. |
 | `static` | `true` makes a preset: no code handles it, no process is started, a press does nothing, and the key shows only its Decker-drawn `appearance` (and `states[0]`). A static action cannot declare `settings` or `gestures`. A plugin whose actions are all static needs no `runtime`. |
 
@@ -128,7 +128,7 @@ platform, and older Decker versions ignore both fields.
 
 `{id, name, path, description?}`. `id` starts with the plugin id. `path` is a folder inside the package holding
 image files (`svg`, `png`, `jpg`, `jpeg`, `gif`; GIFs animate on keys), optionally ordered by an `icons.json` index. Icon packs
-need no `runtime`. Packs are served to clients over RPC; individual icons are limited to 4 MiB.
+need no `runtime`. Packs are served to clients over RPC and appear in the client's image library, where users can also pick them as key backgrounds; individual icons are limited to 4 MiB.
 
 ## Where plugins come from
 
