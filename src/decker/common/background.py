@@ -24,8 +24,12 @@ def normalize_background(value: Any, defaults: Mapping[str, Any] | None = None) 
     color = source.get("color", base["color"])
     image = source.get("image", base["image"])
     ref = normalize_icon_value(image, {"ref": base["image"]["ref"], "color": "#ffffff"})["ref"]
+    image_color = image.get("color") if isinstance(image, Mapping) else None
+    if not is_color(image_color):
+        image_color = base["image"].get("color") if isinstance(base["image"], Mapping) else None
     return {
         "type": kind if kind in BACKGROUND_TYPES else base["type"],
         "color": color if is_color(color) else base["color"],
-        "image": {"ref": ref},
+        # the fill colour of an SVG image; absent means the image is drawn as it is
+        "image": {"ref": ref, **({"color": image_color} if is_color(image_color) else {})},
     }
