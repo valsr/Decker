@@ -44,7 +44,7 @@ def test_package_declares_0_5_0():
     from pathlib import Path
 
     data = tomllib.loads((Path(__file__).parents[2] / "pyproject.toml").read_text(encoding="utf-8"))
-    assert_that(data["tool"]["poetry"]["version"]).is_equal_to("0.5.0")
+    assert_that(data["tool"]["poetry"]["version"]).is_equal_to("0.6.0")
 
 
 def test_gates_across_the_0_3_bump():

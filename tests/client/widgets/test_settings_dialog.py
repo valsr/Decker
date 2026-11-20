@@ -50,7 +50,7 @@ class TestLayout:
         tabs = [dialog._tabs.tabText(i) for i in range(dialog._tabs.count())]
 
         assert_that(dialog.isModal()).is_false()
-        assert_that(tabs).is_equal_to(["General", "Server", "UI", "Plugins", "Device"])
+        assert_that(tabs).is_equal_to(["General", "Server", "Plugins", "Device"])
 
     def test_bottom_buttons_are_apply_and_close(self, dialog):
         buttons = [dialog._buttons.standardButton(b) for b in dialog._buttons.buttons()]
@@ -129,7 +129,7 @@ class TestApplyServer:
     @pytest.mark.parametrize("port", ["abc", "", "0", "65536", "-1"])
     def test_invalid_port_saves_nothing(self, dialog, manager, port):
         dialog.open_dialog()
-        dialog._tabs.setCurrentWidget(dialog._ui_tab)
+        dialog._tabs.setCurrentWidget(dialog._general_tab)
         dialog._port_input.setText(port)
         _select_theme(dialog, "light")
 
@@ -196,7 +196,7 @@ class TestApplyTheme:
         assert_that(dialog.apply()).is_false()
 
         assert_that(client_config.get_theme()).is_equal_to("dark")
-        assert_that(dialog._tabs.currentWidget()).is_same_as(dialog._ui_tab)
+        assert_that(dialog._tabs.currentWidget()).is_same_as(dialog._general_tab)
 
     def test_browse_fills_path(self, dialog, monkeypatch):
         monkeypatch.setattr(
