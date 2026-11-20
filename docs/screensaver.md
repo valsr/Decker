@@ -99,7 +99,7 @@ screensaver brightness (0-100) is applied only while the screensaver shows; 0 tu
 
 A missing, unreadable, oversized or undecodable image, a missing folder, or a gallery with no readable image does not
 break the deck. The screen goes dark at the screensaver brightness, and the reason is reported as `last_error` by
-`screensaver_get`. The Device tab shows it under the **Activate now** button; it refetches `last_error` whenever the
+`screensaver_get`. The Device tab shows it below the settings; it refetches `last_error` whenever the
 screensaver starts or stops.
 
 ## Hot-plug and shutdown
@@ -117,9 +117,11 @@ drawn by the server and does not travel with the deck to another machine.
 
 ## The Device tab
 
-Settings has a **Device** tab for the selected device: brightness, timeout, saver brightness, content, image and folder
-pickers, scaling, bezel with key and gap sizes, gallery mode and interval, a preview and an **Activate now** button
-(it reads **Wake** while the screensaver shows).
+Settings has a **Device** tab. A drop-down at the top picks the device being edited (the client's active device by
+default), with its type, serial number, hardware ids and firmware below it, then the device's brightness. Under a
+**Screensaver** separator come the start delay, the saver brightness and a **None | Image | Gallery** selector; the rows
+below it (image or folder pickers, scaling, bezel with key and gap sizes, gallery mode and interval) show only what the
+selection needs, followed by a preview. There is no Activate or Wake button.
 
 - Changes on this tab apply live, a moment after you edit; the dialog's Apply button does not affect them.
 - The pickers are disabled with a hint when the client is not on the server's machine.
