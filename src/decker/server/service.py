@@ -296,6 +296,14 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
 
     @exposed
     @api_response
+    def variables_list(self) -> list:
+        """List every plugin variable (declared names and registered concrete names) with its owner and value."""
+        if self._context is None:
+            return []
+        return self._context.plugin_manager.variables.listing()
+
+    @exposed
+    @api_response
     def plugins_list(self) -> list:
         """List installed plugins with their metadata, card and icon pack counts, and global settings."""
         if self._context is None:

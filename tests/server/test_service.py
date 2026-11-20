@@ -164,6 +164,23 @@ class TestPluginsActionsList:
         )
 
 
+class TestVariablesList:
+    def test_returns_empty_list_when_no_context_configured(self):
+        assert_that(json.loads(DeckerService().variables_list())).is_equal_to([])
+
+    def test_variables_list_returns_declared_and_registered_with_values(self, store, manager):
+        rows = [
+            {"name": "count", "pattern": "", "description": "Count", "owner": "com.p", "value": "3"},
+            {"name": "item_a", "pattern": "item_{x}", "description": "", "owner": "com.p", "value": None},
+        ]
+        manager.variables.listing.return_value = rows
+        DeckerService.configure_context(_make_context(manager, store))
+        assert_that(json.loads(DeckerService().variables_list())).is_equal_to(rows)
+
+    def test_is_listed_by_commands(self, service):
+        assert_that(json.loads(service.commands())).contains_key("variables.list")
+
+
 class TestKeyAssign:
     def test_assign_activates_action(self, service, manager, store):
         result = service.key_assign("dev1", P1, 0, "com.p", "com.p.a", "ctx1", json.dumps({"step": 2}))

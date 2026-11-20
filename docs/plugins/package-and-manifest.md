@@ -165,6 +165,28 @@ action and fill in its settings, or through a preset card that plugins ship (see
 A plugin with actions needs a `runtime`: Decker starts the plugin and sends `run_action` (see the [protocol](protocol.md)).
 Decker itself ships one action, **HTTP Request** (`com.decker.core.httprequest`), in the built-in Core plugin.
 
+### `variables[]`
+
+Global text variables the plugin exports for templated text (see [settings schema](settings-schema.md) and the
+[protocol](protocol.md#variables)). Each entry has exactly one of:
+
+| Field | Notes |
+|-------|-------|
+| `name` | An exact variable: lowercase `[a-z][a-z0-9_]*`, at most 64 characters. |
+| `pattern` | A family such as `media_{device}_volume`; each `{placeholder}` stands for one or more `[a-z0-9_]` characters, placeholders are unique and not adjacent, and the name with the placeholders filled must be a valid name. The plugin registers the concrete names at runtime. |
+| `description` | Optional text, listed by the `variables_list` RPC. |
+
+- At most 256 entries per plugin; a name or pattern may not be declared twice.
+- A name or pattern that collides with a core variable (`page_name`, `page_index`, `page_count`, `current_profile`,
+  `profile_id`) makes the manifest invalid. At load, a plugin is rejected and recorded as a plugin load failure when
+  one of its exact names is already owned by another plugin (exactly or through that plugin's pattern), when a pattern
+  has the same shape as another plugin's pattern, or when a pattern would match another plugin's exact name; the other
+  plugin keeps working.
+- A plugin that declares variables needs a `runtime` and a `decker` version constraint (older Decker refuses it), and a
+  plugin with only `variables` (no cards, actions or icon packs) is valid.
+- Plugins that declare variables are started with the server and kept running; every other plugin stays lazy (see
+  [limits](limits.md#process-lifecycle)).
+
 ### `icon_packs[]`
 
 `{id, name, path, description?}`. `id` starts with the plugin id. `path` is a folder inside the package holding

@@ -21,12 +21,13 @@ discarded.
 2. Send `ready` when you are set up. Until then the server queues events for you; if `ready` does not arrive
    within the ping timeout (10 s) the process is killed.
 3. The server sends `will_appear` for every key showing one of your cards, then any events queued meanwhile.
+4. After `ready` the server also sends the full snapshot of the [variables](#variables) that have a value (`variables_changed`) and asks a plugin that declares variables for each of them.
 
 ## Server to plugin
 
 | Event | Context | Payload |
 |-------|---------|---------|
-| `hello` | | `{"protocol": 1, "decker_version": "0.6.0", "plugin_id": "com.example.hello", "global_settings": {...}}` (first message) |
+| `hello` | | `{"protocol": 2, "decker_version": "0.6.0", "plugin_id": "com.example.hello", "global_settings": {...}}` (first message) |
 | `will_appear` | yes | `{"card": "<card id>", "device": "<device id>", "key": {"index": 0, "column": 0, "row": 0}, "settings": {...}, "state": 0}` |
 | `will_disappear` | yes | none |
 | `key_down`, `key_up` | yes | none (raw key events) |
@@ -35,6 +36,8 @@ discarded.
 | `run_action` | | `{"action": "<action id>", "request": "<id>", "settings": {...}}`: run one of your [actions](package-and-manifest.md#actions) with its validated settings and answer with `action_result` carrying the same `request`. Runs are independent of any key and may overlap |
 | `global_settings_changed` | | `{"global_settings": {...}}` |
 | `device_connected` | | `{"device": "<device id>"}` |
+| `get_variable` | | `{"request": "<id>", "name": "<variable>"}`: answer with `variable_value` carrying the same `request` (see [Variables](#variables)) |
+| `variables_changed` | | `{"set": {"name": "value", ...}, "removed": ["name", ...]}`: the global variables that changed; the full set of values is sent once after `ready` |
 | `ping` | | none; reply with `pong` |
 | `shutdown` | | none; exit promptly |
 
@@ -56,6 +59,10 @@ discarded.
 | `set_global_settings` | | `{"settings": {...}}`, validated against `global_settings` and saved |
 | `set_gestures` | yes | `{"gestures": ["press", "long_press"]}`; replaces the key's gesture set |
 | `action_result` | | `{"request": "<id>", "ok": true}` or `{"request": "<id>", "ok": false, "error": "text"}`, answering `run_action`. The server gives up after 30 s and shows the user the error |
+| `register_variable` | | `{"name": "<concrete name>"}`: announce a name inside one of your declared patterns (see [Variables](#variables)) |
+| `unregister_variable` | | `{"name": "<concrete name>"}`: withdraw it and its value |
+| `variable_updated` | | `{"name": "<variable>"}`: the value changed; the server asks for it with `get_variable` |
+| `variable_value` | | `{"request": "<id>", "ok": true, "value": "text"\|null}` or `{"request": "<id>", "ok": false, "error": "text"}`, answering `get_variable` |
 | `log` | | `{"level": "info", "message": "text"}`; levels `debug`, `info`, `warning`, `error` |
 | `open_url` | | `{"url": "https://..."}`; only `http`/`https` with a host are accepted. Every connected client asks the user before opening it |
 
@@ -85,6 +92,25 @@ one is handed out, so ids are reused after a deletion). `switch_profile` acts on
 profile. The device then shows the profile's default page. Unknown or non-integer ids, a device with one profile and
 malformed payloads are ignored. A `profile` setting arrives resolved (see [settings schema](settings-schema.md)); its
 `icon` is a ref a plugin can pass to `set_icon`, including `decker:logo`, the Decker icon.
+
+## Variables
+
+A plugin that declares [`contributes.variables`](package-and-manifest.md#variables) exports global text values that any
+templated text can use as `{name}` (see [settings schema](settings-schema.md)). Ownership is the manifest declaration:
+only the declaring plugin can set a name, and `register_variable` only accepts a concrete name that fits one of the
+plugin's own patterns and is not taken. Malformed events (no string `name`), a `variable_updated` for a name the plugin
+does not own and a `variable_value` that matches no open request are ignored (logged by the server).
+
+- Exact names declared in the manifest need no `register_variable`. The server asks for each of them after `ready`
+  and asks for a pattern name when it is registered.
+- The server asks with `get_variable` and waits 5 s (see [limits](limits.md)). `variable_value` carries the text
+  (`null` clears the value; numbers and booleans are turned into text, a value over 1024 characters is refused). When
+  the plugin answers `ok: false`, sends an invalid value or does not answer in time, the old value stays and the
+  server logs it.
+- `variable_updated` is how a plugin says that a value changed. Repeated signals for one name while an ask is open are
+  collapsed into one more ask after it.
+- `variables_changed` goes to every ready plugin whenever any global variable changes, so a plugin can keep a local
+  copy. Values of a plugin that stops or crashes are removed (they are never shown stale) and return after a restart.
 
 ## Images
 

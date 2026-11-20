@@ -53,6 +53,72 @@ def send_wave(settings: dict) -> None:
 Actions run on a worker thread, independently of any key. Return normally for success; an exception is reported to
 the user as the action's error.
 
+## Variables, `init` and `main`
+
+A plugin that declares [`contributes.variables`](package-and-manifest.md#variables) exports global text values for
+templated text, and keeps running with no card on screen. Three decorators (sync or `async def`) shape the plugin:
+
+- `@init` runs once per process start with a `PluginContext`, in its own thread **after** `ready` has been sent, so a
+  slow `init` cannot trip the 10 s ready timeout or delay `will_appear`. Register variables and read initial state
+  there. If it raises, the error is logged and `main` does not start; cards and actions keep working.
+- `@main(interval=2.0)` runs repeatedly in its own thread, pausing `interval` seconds between calls (bare `@main` means
+  2.0), until the plugin shuts down. An exception is logged and the loop continues. `shutdown` stops it. An
+  `async def` main with `@main(interval=None)` is called once and runs for the life of the plugin (an event-driven
+  watcher); it is cancelled at shutdown. Without `main` the thread simply ends and the process stays up.
+- `@variable("name")` or `@variable("pattern_{x}")` marks the getter of a manifest variable. A pattern getter receives
+  the placeholder values as keyword arguments. A getter returns `str`, `int`, `float`, `bool` (as `"true"`/`"false"`) or
+  `None` (unset); a longer value than 1024 characters or another type fails the getter and the old value stays.
+
+```python
+from decker_plugin_sdk import PluginContext, init, main, signal_variable_updated, variable
+
+_count = 0
+_items = {"red": 3, "blue": 5}   # pattern: item_{color}_stock
+
+@init
+def setup(ctx: PluginContext) -> None:
+    for color in _items:
+        ctx.register_variable(f"item_{color}_stock")
+
+@main(interval=2.0)
+def poll(ctx: PluginContext) -> None:
+    global _count
+    _count += 1
+    ctx.signal_variable_updated("ticks")
+
+@variable("ticks")
+def ticks() -> int:
+    return _count
+
+@variable("item_{color}_stock")
+def stock(color: str) -> int | None:
+    return _items.get(color)
+```
+
+with `"variables": [{"name": "ticks"}, {"pattern": "item_{color}_stock"}]` in the manifest. A key text `Ticks {ticks}`
+then shows the counter and redraws on each signal.
+
+`PluginContext` (and the same functions at module level in `decker_plugin_sdk`, usable from cards and actions too):
+
+| Function | Meaning |
+|----------|---------|
+| `register_variable(name)` | announce a concrete name inside one of your patterns; needs a matching `@variable` getter (logged and skipped otherwise). Exact manifest names need no call |
+| `unregister_variable(name)` | withdraw a registered name, for example when a device went away |
+| `signal_variable_updated(name)` | the value changed: the getter is evaluated, the local copy updated and the server told to refresh the cache |
+| `get_variable(name)` | the current text of any global variable, or `None`; reads a local copy fed by the server, so it is instant |
+| `has_variable(name)` | whether the variable has a value |
+
+`PluginContext` also has `log(message, level="info")`. Behaviours to know:
+
+- Getters are registered when the module is imported and answer as soon as `ready` is sent, even before `init`
+  finishes.
+- An exact getter wins over a pattern getter; among patterns the first registered wins.
+- Each async hook or getter call runs on its own event loop, so an async client created in `init` cannot be reused in
+  `main` or in getters; create it where you use it.
+- Calling a sync SDK function from an async hook blocks that hook's loop while an async getter runs.
+- `get_variable` and `has_variable` return `None` and `False` when no runtime is running (for example in unit tests);
+  the other functions raise `RuntimeError` then.
+
 ## Handlers (override what you need)
 
 `on_will_appear`, `on_will_disappear`, `on_key_down`, `on_key_up`, `on_press`, `on_double_press`, `on_long_press`,
