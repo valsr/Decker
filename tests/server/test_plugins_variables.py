@@ -279,6 +279,18 @@ def test_removing_plugin_releases_its_pending_asks(tmp_path: Path) -> None:
         manager.remove_plugin("com.t.one")
 
         runner = manager._variable_runner  # pylint: disable=protected-access
-        assert_that(_wait_until(lambda: not runner._pending, timeout=2.0)).is_true()
+        assert_that(_wait_until(lambda: not runner._pending and not runner._inflight, timeout=2.0)).is_true()
     finally:
         manager.destroy()
+
+
+def test_destroy_releases_pending_asks(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    procs = _fake_processes(manager)
+    proc = _started(manager, procs, _plugin(tmp_path, "com.t.one", [{"name": "a_vol"}]))
+    assert_that(_wait_until(lambda: len(_asks(proc, "a_vol")) == 1)).is_true()
+    runner = manager._variable_runner  # pylint: disable=protected-access
+
+    manager.destroy()
+
+    assert_that(_wait_until(lambda: not runner._pending and not runner._inflight, timeout=1.0)).is_true()

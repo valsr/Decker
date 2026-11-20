@@ -3,7 +3,7 @@
 import logging
 import threading
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,10 +34,23 @@ class VariableRunner:
         self._lock: threading.Lock = threading.Lock()
         self._push_lock: threading.Lock = threading.Lock()
         self._pending: dict[str, _Pending] = {}
+        self._inflight: set[tuple[str, str]] = set()
+        self._dirty: set[tuple[str, str]] = set()
+        self._failing: set[tuple[str, str]] = set()
+        self._closed: bool = False
 
     def ask(self, plugin_id: str, name: str) -> None:
-        """Ask the plugin for a value without waiting; the answer lands in the store."""
-        threading.Thread(target=self._ask, args=(plugin_id, name), name="ask-variable", daemon=True).start()
+        """Ask the plugin for a value without waiting; repeats during an ask collapse into one more ask after it."""
+        key = (plugin_id, name)
+        with self._lock:
+            if self._closed:
+                return
+            if key in self._inflight:
+                self._dirty.add(key)
+                return
+            self._inflight.add(key)
+            request, pending = self._new_request_locked(plugin_id)
+        threading.Thread(target=self._ask_loop, args=(key, request, pending), name="ask-variable", daemon=True).start()
 
     def on_value(self, plugin_id: str, payload: Mapping[str, Any]) -> None:
         """A plugin answered a ``get_variable`` request."""
@@ -64,10 +77,21 @@ class VariableRunner:
     def plugin_stopped(self, plugin_id: str) -> None:
         """Wake every ask waiting on the plugin; they end without changing the store."""
         with self._lock:
-            waiting = [p for p in self._pending.values() if p.plugin_id == plugin_id]
-        for pending in waiting:
-            pending.stopped = True
-            pending.done.set()
+            self._release_locked(lambda pid: pid == plugin_id)
+
+    def stop_all(self) -> None:
+        """Server shutdown: wake every waiting ask and refuse new ones."""
+        with self._lock:
+            self._closed = True
+            self._release_locked(lambda _pid: True)
+
+    def _release_locked(self, matches: Callable[[str], bool]) -> None:
+        for pending in self._pending.values():
+            if matches(pending.plugin_id):
+                pending.stopped = True
+                pending.done.set()
+        self._dirty = {key for key in self._dirty if not matches(key[0])}
+        self._failing = {key for key in self._failing if not matches(key[0])}
 
     def push(self, plugin_id: str | None, changed: Mapping[str, str], removed: Sequence[str]) -> None:
         """Send ``variables_changed`` to one ready plugin, or to every ready plugin when plugin_id is None."""
@@ -91,13 +115,27 @@ class VariableRunner:
         for target in targets:
             self._supervisor.send_if_ready(target, message)
 
-    def _ask(self, plugin_id: str, name: str) -> None:
+    def _new_request_locked(self, plugin_id: str) -> tuple[str, _Pending]:
         request = uuid.uuid4().hex
         pending = _Pending(plugin_id)
-        with self._lock:
-            self._pending[request] = pending
+        self._pending[request] = pending
+        return request, pending
+
+    def _ask_loop(self, key: tuple[str, str], request: str, pending: _Pending) -> None:
+        while True:
+            self._ask_once(key, request, pending)
+            with self._lock:
+                if key not in self._dirty or self._closed:
+                    self._inflight.discard(key)
+                    return
+                self._dirty.discard(key)
+                request, pending = self._new_request_locked(key[0])
+
+    def _ask_once(self, key: tuple[str, str], request: str, pending: _Pending) -> None:
+        plugin_id, name = key
         try:
-            self._supervisor.send(plugin_id, Message("get_variable", None, {"request": request, "name": name}))
+            if not pending.stopped:
+                self._supervisor.send(plugin_id, Message("get_variable", None, {"request": request, "name": name}))
             answered = pending.done.wait(self._timeout)
         finally:
             with self._lock:
@@ -105,8 +143,17 @@ class VariableRunner:
         if pending.stopped:
             logging.debug("[%s] variable %s: the plugin stopped before answering", plugin_id, name)
         elif not answered:
-            logging.warning("[%s] variable %s: the getter timed out", plugin_id, name)
+            self._failed(key, "the getter timed out")
         elif pending.error:
-            logging.warning("[%s] variable %s: %s", plugin_id, name, pending.error)
+            self._failed(key, pending.error)
         else:
+            with self._lock:
+                self._failing.discard(key)
             self._store.set_value(plugin_id, name, pending.value)
+
+    def _failed(self, key: tuple[str, str], error: str) -> None:
+        with self._lock:
+            first = key not in self._failing
+            self._failing.add(key)
+        level = logging.WARNING if first else logging.DEBUG
+        logging.log(level, "[%s] variable %s: %s", key[0], key[1], error)
