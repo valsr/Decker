@@ -20,3 +20,8 @@ def expand_template(text: str, variables: Mapping[str, str]) -> str:
         return variables.get(match.group(1), token)
 
     return _TOKEN.sub(_replace, text)
+
+
+def template_names(text: str) -> frozenset[str]:
+    """Return the ``{name}`` tokens in text, ignoring literal ``{{``/``}}``."""
+    return frozenset(match.group(1) for match in _TOKEN.finditer(text) if match.group(1))
