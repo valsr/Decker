@@ -25,3 +25,9 @@ Switching profiles by focused window (see [app profile switching](app-profile-sw
 Plasma 6 Wayland (KWin), X11 and Windows. GNOME Wayland and macOS report "unsupported" and come later; the standing rule
 above still applies, so they stay marked in the README table until a backend exists. The Windows and X11 backends are
 only tested against fakes so far.
+
+## Screensaver and brightness
+
+The screensaver (see [screensaver](screensaver.md)) is drawn by the server with Pillow and written over the same HID path
+as key faces, so it has no OS-specific code and targets all five tiers alike. It is only tested against fakes so far, not
+on real hardware, and image and folder paths are set only from the server's machine.
