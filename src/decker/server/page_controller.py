@@ -134,9 +134,9 @@ class PageController(Manager):
             self._notify(device_id, profiles=True)
         return renamed
 
-    def set_profile_icon(self, device_id: str, profile_id: int, icon: str) -> bool:
-        """Set a profile's icon ref ("" = the Decker icon). Returns False for an unknown profile."""
-        updated = self._ctx.page_store.set_profile_icon(device_id, profile_id, icon)
+    def set_profile_icon(self, device_id: str, profile_id: int, icon: str, color: str = "") -> bool:
+        """Set a profile's icon ref ("" = the Decker icon) and fill colour. Returns False for an unknown profile."""
+        updated = self._ctx.page_store.set_profile_icon(device_id, profile_id, icon, color)
         if updated:
             self._notify(device_id, profiles=True)
         return updated

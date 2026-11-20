@@ -74,6 +74,7 @@ class ProfileInfo:
     profile_id: int
     name: str
     icon: str = ""
+    icon_color: str = ""  # fill colour of an SVG icon; empty means the default
 
 
 @dataclass(frozen=True)

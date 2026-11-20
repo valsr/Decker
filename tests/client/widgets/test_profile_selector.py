@@ -56,7 +56,7 @@ class TestDisplay:
         widget = ProfileSelector()
         asked: list = []
 
-        def provider(ref):
+        def provider(ref, _color=""):
             asked.append(ref)
             return QIcon() if ref.startswith("pack:") else None
 

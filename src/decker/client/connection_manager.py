@@ -689,7 +689,12 @@ def _parse_device_profiles(data: Any) -> DeviceProfiles:
     if not isinstance(data, dict):
         raise ValueError(f"unexpected profiles response: {data!r}")
     profiles = [
-        ProfileInfo(profile_id=_int_id(p["profile_id"]), name=str(p["name"]), icon=str(p.get("icon", "")))
+        ProfileInfo(
+            profile_id=_int_id(p["profile_id"]),
+            name=str(p["name"]),
+            icon=str(p.get("icon", "")),
+            icon_color=str(p.get("icon_color", "")),
+        )
         for p in data.get("profiles") or []
     ]
     if not profiles:

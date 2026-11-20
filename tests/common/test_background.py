@@ -39,7 +39,9 @@ def test_image_ref_validated() -> None:
 
 
 def test_image_fill_colour_is_kept_only_when_valid():
-    from decker.common.background import normalize_background  # pylint: disable=import-outside-toplevel
+    from decker.common.background import (
+        normalize_background,  # pylint: disable=import-outside-toplevel
+    )
 
     kept = normalize_background({"type": "image", "image": {"ref": "pack:p/a.svg", "color": "#112233"}})
     dropped = normalize_background({"type": "image", "image": {"ref": "pack:p/a.svg", "color": "nope"}})

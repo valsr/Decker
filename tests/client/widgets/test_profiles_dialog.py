@@ -147,7 +147,7 @@ class TestProfiles:
         assert_that(calls).is_equal_to(
             [
                 ("profile_rename", 2, "Games"),
-                ("profile_set_icon", 2, "pack:a/c.svg"),
+                ("profile_set_icon", 2, "pack:a/c.svg", ""),
                 ("profile_clone", 2),
                 ("profile_delete", 2),
                 ("profile_add",),

@@ -135,7 +135,6 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._name_edit = QLineEdit()
         self._icon = IconEdit()
         self._icon.set_toolbar(True)
-        self._icon.set_show_colour(False)
         self._icon.setToolTip("Leave empty to use the Decker icon")
         self._add_profile_button = QPushButton("+ New")
         self._delete_profile_button = QPushButton("Delete")
@@ -218,7 +217,7 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._profile_list.blockSignals(True)
         self._profile_list.clear()
         for profile in self._profiles:
-            item = QListWidgetItem(profile_qicon(profile.icon, self._icon_for), profile.name)
+            item = QListWidgetItem(profile_qicon(profile.icon, self._icon_for, None, profile.icon_color), profile.name)
             item.setData(_ID_ROLE, profile.profile_id)
             self._profile_list.addItem(item)
         self._profile_list.blockSignals(False)
@@ -298,7 +297,9 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
             widget.setEnabled(profile is not None)
         self._name_edit.setText(profile.name if profile else "")
         self._icon.blockSignals(True)
-        self._icon.set_value({"ref": profile.icon if profile else ""})
+        self._icon.set_value(
+            {"ref": profile.icon if profile else "", "color": (profile.icon_color if profile else "") or "#ffffff"}
+        )
         self._icon.blockSignals(False)
 
     def _profile_call(self, method: str, *args: Any) -> Any:
@@ -312,9 +313,14 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._profile_call("profile_rename", name)
 
     def _on_icon(self) -> None:
-        profile, ref = self._selected_profile(), str(self._icon.value()["ref"])
-        if profile is not None and ref != profile.icon:
-            self._profile_call("profile_set_icon", ref)
+        profile, value = self._selected_profile(), self._icon.value()
+        ref, color = str(value["ref"]), str(value["color"])
+        if profile is None:
+            return
+        # a colour only matters for an SVG; "" keeps the default
+        stored = color if ref.lower().endswith(".svg") and color != "#ffffff" else ""
+        if ref != profile.icon or stored != profile.icon_color:
+            self._profile_call("profile_set_icon", ref, stored)
 
     def _on_add_profile(self) -> None:
         raw = self._call("profile_add")

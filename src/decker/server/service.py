@@ -38,6 +38,7 @@ from decker.common.platforms import (
     detect_platform,
     platform_supports,
 )
+from decker.common.text_style import is_color
 from decker.common.utils import api_response
 from decker.common.version import is_compatible
 from decker.plugin.icons import read_icon
@@ -926,11 +927,12 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         )
 
     @exposed
-    def profile_set_icon(self, device_id: str, profile_id: int, icon: str) -> bool:
-        """Set a profile's icon ref ("" = the Decker icon). Returns False for an unknown profile or a bad ref."""
+    def profile_set_icon(self, device_id: str, profile_id: int, icon: str, color: str = "") -> bool:
+        """Set a profile's icon ref ("" = the Decker icon) and SVG fill colour; False for an unknown profile or bad input."""
         controller = self._controller_for(profile_id)
         valid = isinstance(icon, str) and (icon in ("", DECKER_ICON_REF) or parse_icon_ref(icon) is not None)
-        return valid and controller is not None and controller.set_profile_icon(device_id, profile_id, icon)
+        valid = valid and isinstance(color, str) and (color == "" or is_color(color))
+        return valid and controller is not None and controller.set_profile_icon(device_id, profile_id, icon, color)
 
     @exposed
     def profile_delete(self, device_id: str, profile_id: int) -> bool:

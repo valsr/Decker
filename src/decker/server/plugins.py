@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from decker.asset.iconpack import IconPackRegistry
+from decker.asset.tint import tint_svg
 from decker.common import config
 from decker.common.manager import Manager
 from decker.common.platforms import detect_platform, platform_supports
-from decker.asset.tint import tint_svg
 from decker.common.template import expand_template
 from decker.common.text_style import is_color
 from decker.common.version import decker_version
