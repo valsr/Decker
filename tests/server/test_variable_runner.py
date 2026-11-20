@@ -3,6 +3,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ from assertpy import assert_that
 from decker.plugin.manifest import VariableSpec
 from decker.plugin.protocol import Message
 from decker.plugin.runtime.supervisor import PluginSupervisor, SupervisorPolicy
+from decker.server import variable_runner
 from decker.server.variable_runner import VariableRunner
 from decker.server.variables import VariableStore
 from tests.plugin.runtime.test_supervisor import FakeProcess
@@ -32,7 +34,9 @@ class Rig:
         self.sup = PluginSupervisor(SupervisorPolicy(), self._factory, self._on_message, lambda _pid, _why: None)
         self.runner = VariableRunner(self.sup, self.store, timeout=timeout)
 
-    def _factory(self, pid: str, _cmd: list[str], _cwd: Path, _env: dict[str, str], on_message: Any, on_exit: Any):
+    def _factory(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, pid: str, _cmd: list[str], _cwd: Path, _env: dict[str, str], on_message: Any, on_exit: Any
+    ) -> Any:  # a FakeProcess standing in for PluginProcess
         proc = FakeProcess(on_message, on_exit)
         self.procs[pid] = proc
         return proc
@@ -61,6 +65,14 @@ class Rig:
     def answer(self, plugin_id: str, payload: dict[str, Any]) -> None:
         self.procs[plugin_id].on_message(Message("variable_value", None, payload))
 
+    def asks(self, plugin_id: str, name: str) -> int:
+        return sum(
+            1 for m in list(self.procs[plugin_id].sent) if m.event == "get_variable" and m.payload["name"] == name
+        )
+
+    def idle(self) -> bool:
+        return not self.runner._pending and not self.runner._inflight
+
 
 def _warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     return [r for r in caplog.records if r.levelno == logging.WARNING]
@@ -78,7 +90,7 @@ def test_ask_sets_value_from_variable_value() -> None:
     rig.answer("p", {"request": rig.request("p", "vol"), "ok": True, "value": 42})
 
     assert_that(_wait_until(lambda: rig.store.snapshot().get("vol") == "42")).is_true()
-    assert_that(_wait_until(lambda: not rig.runner._pending)).is_true()
+    assert_that(_wait_until(rig.idle)).is_true()
 
 
 def test_ask_null_value_clears() -> None:
@@ -101,7 +113,7 @@ def test_ask_timeout_keeps_old_value(caplog: pytest.LogCaptureFixture) -> None:
         rig.runner.ask("p", "vol")
         request = rig.request("p", "vol")
         assert_that(_wait_until(lambda: len(_warnings(caplog)) == 1)).is_true()
-        assert_that(_wait_until(lambda: not rig.runner._pending)).is_true()
+        assert_that(_wait_until(rig.idle)).is_true()
         rig.answer("p", {"request": request, "ok": True, "value": "late"})
 
     assert_that(rig.store.snapshot()).is_equal_to({"vol": "1"})
@@ -118,7 +130,7 @@ def test_ask_not_ok_keeps_old_value_and_logs_once(caplog: pytest.LogCaptureFixtu
     with caplog.at_level(logging.WARNING):
         rig.runner.ask("p", "vol")
         rig.answer("p", {"request": rig.request("p", "vol"), "ok": False, "error": "ValueError: boom"})
-        assert_that(_wait_until(lambda: _warnings(caplog) != [] and _ask_threads() == 0)).is_true()
+        assert_that(_wait_until(rig.idle)).is_true()
 
     assert_that(rig.store.snapshot()).is_equal_to({"vol": "1"})
     assert_that(_warnings(caplog)).is_length(1)
@@ -148,7 +160,7 @@ def test_value_from_another_plugin_or_unknown_request_is_dropped() -> None:
     request = rig.request("p", "vol")
     rig.answer("q", {"request": request, "ok": True, "value": "stolen"})
     rig.answer("p", {"request": "nope", "ok": True, "value": "unknown"})
-    assert_that(_wait_until(lambda: not rig.runner._pending)).is_true()
+    assert_that(_wait_until(rig.idle)).is_true()
 
     assert_that(rig.store.snapshot()).is_empty()
 
@@ -162,20 +174,105 @@ def test_malformed_values_are_ignored() -> None:
     assert_that(rig.runner._pending).is_empty()
 
 
-def test_concurrent_asks_for_one_name_settle_on_the_last_answer() -> None:
+def test_signal_during_an_ask_asks_once_more_and_keeps_the_newest_value() -> None:
     rig = Rig()
     rig.plugin("p", "vol")
 
     rig.runner.ask("p", "vol")
-    rig.runner.ask("p", "vol")
-    first, second = rig.request("p", "vol", 0), rig.request("p", "vol", 1)
-    assert_that(first).is_not_equal_to(second)
+    first = rig.request("p", "vol", 0)
+    for _ in range(20):
+        rig.runner.ask("p", "vol")
+    assert_that(rig.asks("p", "vol")).is_equal_to(1)
     rig.answer("p", {"request": first, "ok": True, "value": "a"})
-    assert_that(_wait_until(lambda: rig.store.snapshot().get("vol") == "a")).is_true()
-    rig.answer("p", {"request": second, "ok": True, "value": "b"})
+    rig.answer("p", {"request": rig.request("p", "vol", 1), "ok": True, "value": "b"})
 
-    assert_that(_wait_until(lambda: rig.store.snapshot().get("vol") == "b")).is_true()
-    assert_that(_wait_until(lambda: not rig.runner._pending)).is_true()
+    assert_that(_wait_until(rig.idle)).is_true()
+    assert_that(rig.store.snapshot()).is_equal_to({"vol": "b"})
+    assert_that(rig.asks("p", "vol")).is_equal_to(2)
+
+
+def test_flood_of_asks_while_failing_sends_two_asks_and_warns_once(caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig()
+    rig.plugin("p", "vol")
+
+    with caplog.at_level(logging.WARNING):
+        rig.runner.ask("p", "vol")
+        first = rig.request("p", "vol", 0)
+        for _ in range(200):
+            rig.runner.ask("p", "vol")
+        rig.answer("p", {"request": first, "ok": False, "error": "boom"})
+        rig.answer("p", {"request": rig.request("p", "vol", 1), "ok": False, "error": "boom"})
+        assert_that(_wait_until(rig.idle)).is_true()
+
+    assert_that(rig.asks("p", "vol")).is_equal_to(2)
+    assert_that(_warnings(caplog)).is_length(1)
+
+
+def test_failure_warns_again_only_after_a_success(caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig()
+    rig.plugin("p", "vol")
+
+    def run(index: int, payload: dict[str, Any]) -> None:
+        rig.runner.ask("p", "vol")
+        rig.answer("p", {"request": rig.request("p", "vol", index), **payload})
+        assert_that(_wait_until(rig.idle)).is_true()
+
+    with caplog.at_level(logging.WARNING):
+        run(0, {"ok": False, "error": "one"})
+        run(1, {"ok": False, "error": "two"})
+        run(2, {"ok": True, "value": 1})
+        run(3, {"ok": False, "error": "three"})
+
+    assert_that([r.getMessage() for r in _warnings(caplog)]).is_length(2)
+    assert_that(_warnings(caplog)[1].getMessage()).contains("three")
+    assert_that(rig.runner._failing).contains(("p", "vol"))
+    rig.runner.plugin_stopped("p")
+    assert_that(rig.runner._failing).is_empty()
+
+
+def test_plugin_stopped_before_the_ask_thread_runs_is_not_missed(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    deferred: list[tuple[Callable[..., None], tuple[Any, ...]]] = []
+
+    class DeferredThread:
+        def __init__(self, target: Callable[..., None], args: tuple[Any, ...] = (), **_kwargs: Any) -> None:
+            self._call = (target, args)
+
+        def start(self) -> None:
+            deferred.append(self._call)
+
+    fake = SimpleNamespace(Thread=DeferredThread, Lock=threading.Lock, Event=threading.Event)
+    monkeypatch.setattr(variable_runner, "threading", fake)
+    rig = Rig(timeout=30.0)
+    rig.plugin("p", "vol")
+
+    with caplog.at_level(logging.WARNING):
+        rig.runner.ask("p", "vol")
+        rig.runner.plugin_stopped("p")
+        for target, args in deferred:
+            threading.Thread(target=target, args=args, daemon=True).start()
+        assert_that(_wait_until(rig.idle, timeout=2.0)).is_true()
+
+    assert_that(deferred).is_length(1)
+    assert_that(rig.asks("p", "vol")).is_equal_to(0)
+    assert_that(_warnings(caplog)).is_empty()
+
+
+def test_stop_all_releases_every_pending_ask() -> None:
+    rig = Rig(timeout=30.0)
+    rig.plugin("p", "vol")
+    rig.plugin("q", "other")
+    rig.runner.ask("p", "vol")
+    rig.runner.ask("q", "other")
+    rig.request("p", "vol")
+    rig.request("q", "other")
+
+    rig.runner.stop_all()
+
+    assert_that(_wait_until(rig.idle, timeout=2.0)).is_true()
+    rig.runner.ask("p", "vol")
+    assert_that(rig.idle()).is_true()
 
 
 def test_plugin_stopped_releases_pending_ask(caplog: pytest.LogCaptureFixture) -> None:
@@ -191,16 +288,12 @@ def test_plugin_stopped_releases_pending_ask(caplog: pytest.LogCaptureFixture) -
         rig.request("q", "other")
         rig.runner.plugin_stopped("p")
 
-        assert_that(_wait_until(lambda: len(rig.runner._pending) == 1, timeout=2.0)).is_true()
-        assert_that(_wait_until(lambda: _ask_threads() == 1, timeout=2.0)).is_true()
+        assert_that(_wait_until(lambda: list(rig.runner._inflight) == [("q", "other")], timeout=2.0)).is_true()
+        assert_that([p.plugin_id for p in rig.runner._pending.values()]).is_equal_to(["q"])
     assert_that(rig.store.snapshot()).is_equal_to({"vol": "1"})
     assert_that(_warnings(caplog)).is_empty()
     rig.runner.plugin_stopped("q")
-    assert_that(_wait_until(lambda: not rig.runner._pending and _ask_threads() == 0, timeout=2.0)).is_true()
-
-
-def _ask_threads() -> int:
-    return sum(1 for t in threading.enumerate() if t.name == "ask-variable" and t.is_alive())
+    assert_that(_wait_until(rig.idle, timeout=2.0)).is_true()
 
 
 def test_push_reaches_one_ready_plugin() -> None:

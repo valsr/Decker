@@ -247,6 +247,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._live.clear()
         for item in live:
             item.recognizer.cancel()
+        self._variable_runner.stop_all()
         self._supervisor.stop_all()
         self._settings_store.close()
 
