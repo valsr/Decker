@@ -324,6 +324,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                 {
                     "plugin_uuid": manifest.id,
                     "plugin_name": manifest.name,
+                    "plugin_builtin": self.is_builtin(manifest.id),
                     "action_uuid": spec.id,
                     "action_name": spec.name,
                     "icon_b64": self._icon_b64(plugin.plugin_dir, spec.icon or manifest.icon),

@@ -27,7 +27,10 @@ class CallBridge(QObject):
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 logging.exception("Background call failed")
                 result = exc
-            self._delivered.emit(done, result)
+            try:
+                self._delivered.emit(done, result)
+            except RuntimeError:  # the owner was deleted while the call ran; nobody is waiting for the result
+                logging.debug("Call result dropped: its bridge is gone")
 
         self._threads = [t for t in self._threads if t.is_alive()]
         thread = threading.Thread(target=target, daemon=True)
