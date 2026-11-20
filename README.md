@@ -27,6 +27,7 @@ Decker supports the following Elgato Stream Deck models:
 | Image library (icon packs from plugins, User pack, System Icons on Linux) | Supported |
 | Animated GIF key faces | Supported |
 | Key background images (none, solid colour or image from the image library; see [docs/key-backgrounds.md](docs/key-backgrounds.md)) | Supported |
+| Switch card (one key with Display, Press, Double press and Long press slots that hold cards or actions) | Supported |
 | Plugins (out of process, `.deckerplugin` packages, repositories, updates) | Supported |
 | PyQt6 desktop client | Supported |
 | Command line client (`poe cli`) | Supported |
