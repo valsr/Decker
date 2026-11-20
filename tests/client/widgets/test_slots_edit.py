@@ -19,6 +19,10 @@ _CFG_CARDS = [{**_CARDS[0], "settings_schema": _URL}]
 _CFG_ACTIONS = [{**_ACTIONS[0], "settings_schema": _URL}]
 
 
+_DEFAULTS = {"background": "#336699", "title": {"text": "Hi", "position": "middle"}}
+_DEF_CARDS = [{**_CFG_CARDS[0], "appearance": _DEFAULTS}]
+
+
 def _edit() -> SlotsEdit:
     return SlotsEdit(catalog=lambda: (_CARDS, _ACTIONS))
 
@@ -186,6 +190,38 @@ class TestSlotConfig:  # pylint: disable=protected-access
 
         assert_that(_slot(edit, "press")["appearance"]["title"]["text"]).is_equal_to("Hi")
 
+    def test_card_manifest_appearance_defaults_show_in_the_form(self, qapp):  # pylint: disable=unused-argument
+        edit = SlotsEdit(catalog=lambda: (_DEF_CARDS, _ACTIONS))
+        edit.set_value({"press": _card_slot()})
+
+        edit._select("press")
+
+        values = edit._config.appearance_form.values()
+        assert_that(values["title"]["text"]).is_equal_to("Hi")
+        assert_that(values["background"]["color"]).is_equal_to("#336699")
+
+    def test_editing_settings_does_not_pin_appearance_defaults(self, qapp):  # pylint: disable=unused-argument
+        edit = SlotsEdit(catalog=lambda: (_DEF_CARDS, _ACTIONS))
+        edit.set_value({"press": _card_slot()})
+        edit._select("press")
+
+        _type_url(edit, "b")
+
+        assert_that(_slot(edit, "press")["appearance"]).is_equal_to({})
+
+    def test_changing_one_appearance_field_stores_only_that_difference(self, qapp):  # pylint: disable=unused-argument
+        edit = SlotsEdit(catalog=lambda: (_DEF_CARDS, _ACTIONS))
+        edit.set_value({"press": _card_slot()})
+        edit._select("press")
+
+        title: Any = edit._config.appearance_form._fields["title"].widget
+        title._line.setText("Yo")
+        title._line.textEdited.emit("Yo")
+
+        appearance = _slot(edit, "press")["appearance"]
+        assert_that(appearance).contains_key("title").does_not_contain_key("background")
+        assert_that(appearance["title"]["text"]).is_equal_to("Yo")
+
     def test_selecting_action_slot_shows_action_settings(self, qapp):  # pylint: disable=unused-argument
         edit = _cfg_edit()
         edit.set_value({"press": {"kind": "action", "action": "http", "settings": {"url": "u"}}})
@@ -230,7 +266,7 @@ class TestSlotConfig:  # pylint: disable=protected-access
 
         edit._select("press")
 
-        assert_that(edit._config.settings_form.values()).is_empty()
+        assert_that(edit._config.isHidden()).is_true()
 
 
 class TestDropPinning:  # pylint: disable=protected-access
