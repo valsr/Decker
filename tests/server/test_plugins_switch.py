@@ -327,6 +327,38 @@ def test_preview_of_an_empty_switch_uses_the_draft(env: SwitchEnv) -> None:
     assert_that(_pixel(preview, 2, 2)).is_equal_to((0xFF, 0xFF, 0x00))
 
 
+def test_preview_of_switch_shows_display_card_face(env: SwitchEnv) -> None:
+    env.place(display=_card(_RED), press=_card(_BLUE))
+    env.press()  # the live Switch now remembers Press; a preview starts fresh
+
+    preview = env.manager.preview_image(_SWITCH, {"background": "#ffff00"})
+
+    assert_that(_pixel(preview, 2, 2)).is_equal_to(_RED_RGB)
+    assert_that(env.live()).contains_key("sw:press").does_not_contain_key("sw:display")
+    assert_that(env.color()).is_equal_to(_BLUE_RGB)
+
+
+def test_preview_of_switch_without_display_shows_press_card_face(env: SwitchEnv) -> None:
+    env.place(press=_card(_BLUE), long_press=_card(_GREEN))
+
+    preview = env.manager.preview_image(_SWITCH, {})
+
+    assert_that(_pixel(preview, 2, 2)).is_equal_to(_BLUE_RGB)
+
+
+def test_preview_uses_draft_slots_and_leaves_live_state_alone(env: SwitchEnv) -> None:
+    env.place(display=_card(_RED))
+    child = env.live()["sw:display"]
+    draft = {"slots": {"display": _card(_GREEN)}, "background": "#ffff00"}
+
+    preview = env.manager.preview_image(_SWITCH, draft)
+
+    assert_that(_pixel(preview, 2, 2)).is_equal_to(_GREEN_RGB)
+    assert_that(env.live()["sw:display"]).is_same_as(child)
+    assert_that(env.live()).is_length(2)
+    assert_that(env.color()).is_equal_to(_RED_RGB)
+
+
 def test_concurrent_presses_and_page_switches_leave_no_orphan_child(env: SwitchEnv) -> None:
     env.place(display=_card(_RED), press=_card(_BLUE), long_press=_card(_GREEN))
     stop = threading.Event()

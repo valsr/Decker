@@ -6,9 +6,11 @@ from unittest.mock import MagicMock
 import pytest
 from assertpy import assert_that
 
+from decker.plugin.gestures import Gesture
 from decker.plugin.target import CardTarget
 from decker.server.key_assignments import KeyAssignment, KeyAssignmentStore
 from decker.server.pages import initial_page_id
+from decker.server.switch import SwitchController
 
 
 def _target(device_id="dev1", key_index=0, plugin="com.p", action="com.p.a", ctx="ctx1"):
@@ -339,6 +341,23 @@ class TestMoveAndCopyKey:
         assert_that(copied.appearance).is_equal_to({"background": {"color": "#ff0000"}})
         assert_that(store.get("dev1", "p1", 3)).is_equal_to(copied)
         assert_that(store.get("dev1", "p1", 0).target.context_id).is_equal_to("c0")
+
+    def test_key_copy_carries_slots_and_starts_at_display(self, store):
+        def card(name: str) -> dict:
+            return {"kind": "card", "plugin": "com.k", "card": name, "settings": {}, "appearance": {}}
+
+        slots = {"display": card("com.k.red"), "press": card("com.k.blue")}
+        store.assign("dev1", "p1", 0, _target(ctx="orig"), {"slots": slots})
+        controller = SwitchController()
+        controller.handle("orig", slots, Gesture.PRESS)
+        assert_that(controller.shown_slot("orig", slots)).is_equal_to("press")
+
+        copied = store.copy_key("dev1", "p1", 0, 3, "new-ctx")
+
+        assert copied is not None
+        assert_that(copied.settings).is_equal_to({"slots": slots})
+        assert_that(copied.target.context_id).is_equal_to("new-ctx")
+        assert_that(controller.shown_slot("new-ctx", copied.settings["slots"])).is_equal_to("display")
 
     def test_copy_key_replaces_an_occupied_target(self, store):
         self._seed(store)
