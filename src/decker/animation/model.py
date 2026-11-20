@@ -16,6 +16,9 @@ class AnimationSpec:
     appearance: Mapping[str, Any]
     title: str
     scale: float
+    layer: str = "foreground"
+    overlay: bytes | None = None
+    overlay_color: str | None = None
 
     @cached_property
     def gif_sha(self) -> str:
@@ -26,7 +29,11 @@ class AnimationSpec:
     def animation_id(self) -> str:
         """Stable id of the composed animation; independent of key size and quality."""
         look = json.dumps([dict(self.appearance), self.title, repr(float(self.scale))], sort_keys=True, default=str)
-        return hashlib.sha256(f"{self.gif_sha}:{look}".encode()).hexdigest()
+        extra = ""
+        if self.layer != "foreground" or self.overlay is not None:
+            overlay_sha = hashlib.sha256(self.overlay).hexdigest() if self.overlay is not None else ""
+            extra = f":{self.layer}:{overlay_sha}:{self.overlay_color or ""}"
+        return hashlib.sha256(f"{self.gif_sha}:{look}{extra}".encode()).hexdigest()
 
 
 @dataclass(frozen=True)

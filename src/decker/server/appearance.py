@@ -1,5 +1,6 @@
 """Decker-drawn key appearance: resolves appearance settings and composes the final key image."""
 
+import hashlib
 import io
 import logging
 import re
@@ -9,7 +10,13 @@ from typing import Any
 
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
-from decker.animation.gif import is_animated_gif
+from decker.animation.gif import (
+    MAX_RASTER_PIXELS,
+    GifError,
+    check_gif_bounds,
+    is_animated_gif,
+    is_gif,
+)
 from decker.animation.model import AnimationSpec
 from decker.asset.renderer import AssetRenderer
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
@@ -25,6 +32,8 @@ _MIN_IMAGE_SCALE = 0.1
 _LINE_BREAKS = re.compile(r"\s*[\r\n\v\f\x85\u2028\u2029]+\s*")
 _PARSED_SCHEMA = parse_settings_schema(APPEARANCE_SCHEMA, "appearance")
 _RENDERER = AssetRenderer()
+_SVG_SNIFF_BYTES = 64 * 1024
+_REPORTED_BAD_BACKGROUNDS: set[str] = set()
 
 
 def _font(
@@ -143,12 +152,57 @@ def _single_line(text: str) -> str:
     return _LINE_BREAKS.sub(" ", text)
 
 
-def _background_layer(appearance: Mapping[str, Any], size: int) -> Image.Image:
+def cover_fit(image: Image.Image, size: int) -> Image.Image:
+    """Scale image to cover a size x size square and centre-crop it (RGBA)."""
+    rgba = image.convert("RGBA")
+    ratio = max(size / rgba.width, size / rgba.height)
+    width, height = max(size, round(rgba.width * ratio)), max(size, round(rgba.height * ratio))
+    scaled = rgba.resize((width, height), Image.Resampling.LANCZOS)
+    left, top = (width - size) // 2, (height - size) // 2
+    return scaled.crop((left, top, left + size, top + size))
+
+
+def _report_bad_background(data: bytes, reason: object) -> None:
+    key = hashlib.sha256(data).hexdigest()[:12]
+    if key not in _REPORTED_BAD_BACKGROUNDS:
+        _REPORTED_BAD_BACKGROUNDS.add(key)
+        logging.debug("background image %s is unusable, using black: %s", key, reason)
+
+
+def _is_svg(data: bytes) -> bool:
+    head = data[:_SVG_SNIFF_BYTES].lstrip(b"\xef\xbb\xbf \t\r\n")
+    return head.startswith(b"<") and b"<svg" in head
+
+
+def _background_image(data: bytes, size: int) -> Image.Image | None:
+    """The cover-fitted background image, or None (reported once per image) when it cannot be read.
+
+    SVG backgrounds are rendered at size x size, so they are expected to be authored square to fill the key.
+    """
+    try:
+        if _is_svg(data):
+            return _RENDERER.render_bytes(data, size, size)
+        if is_gif(data):
+            check_gif_bounds(data)
+        with Image.open(io.BytesIO(data)) as image:
+            if image.width * image.height > MAX_RASTER_PIXELS:
+                raise GifError(f"image is too large ({image.width}x{image.height})")
+            return cover_fit(image, size)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        _report_bad_background(data, exc)
+        return None
+
+
+def _background_layer(appearance: Mapping[str, Any], size: int, background_image: bytes | None = None) -> Image.Image:
     """Opaque black with the appearance background composited on top (the hardware has no transparency)."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 255))
     background = appearance["background"]
     if background["type"] == "color" and ImageColor.getcolor(background["color"], "RGBA")[3]:  # type: ignore[index]
         img.alpha_composite(Image.new("RGBA", (size, size), background["color"]))
+    elif background["type"] == "image" and background_image:
+        layer = _background_image(background_image, size)
+        if layer is not None:
+            img.alpha_composite(layer)
     return img
 
 
@@ -174,9 +228,10 @@ def compose_key_image(  # pylint: disable=too-many-arguments,too-many-positional
     size: int = 144,
     plugin_image_color: str | None = None,
     plugin_image_scale: float = 1.0,
+    background_image: bytes | None = None,
 ) -> bytes:
     """Compose background, plugin image and title into a size x size PNG."""
-    img = _background_layer(appearance, size)
+    img = _background_layer(appearance, size, background_image)
     if plugin_image:
         try:
             inner = _inner_size(size, plugin_image_scale)
@@ -209,40 +264,95 @@ def compose_key_face(  # pylint: disable=too-many-arguments,too-many-positional-
     image_color: str | None = None,
     image_scale: float = 1.0,
     poster: bool = True,
+    background_image: bytes | None = None,
 ) -> Composed:
-    """Compose a key PNG; a multi-frame GIF image also yields the AnimationSpec whose first frame the PNG shows.
+    """Compose a key PNG; an animated GIF image (or, failing that, background) also yields the AnimationSpec.
 
-    With poster=False the PNG is not composed (it is empty): the caller only wants to know the animation.
+    An animated foreground GIF wins over an animated background. With poster=False the PNG is not composed
+    (it is empty): the caller only wants to know the animation.
     """
     # The renderer draws a GIF's first frame, so for an animated GIF this PNG is already the poster.
     png = (
-        compose_key_image(appearance, image, title, plugin_image_color=image_color, plugin_image_scale=image_scale)
+        compose_key_image(
+            appearance,
+            image,
+            title,
+            plugin_image_color=image_color,
+            plugin_image_scale=image_scale,
+            background_image=background_image,
+        )
         if poster
         else b""
     )
     # is_animated_gif never raises. A GIF that fails only when fully decoded keeps this poster; the factory warns once.
-    if image is None or not is_animated_gif(image):
-        return Composed(png, None)
-    return Composed(png, AnimationSpec(image, appearance, title, image_scale))
+    if image is not None and is_animated_gif(image):
+        return Composed(png, AnimationSpec(image, appearance, title, image_scale))
+    if background_image and appearance["background"]["type"] == "image" and is_animated_gif(background_image):
+        spec = AnimationSpec(
+            background_image,
+            appearance,
+            title,
+            image_scale,
+            layer="background",
+            overlay=image,
+            overlay_color=image_color,
+        )
+        return Composed(png, spec)
+    return Composed(png, None)
 
 
-def compose_key_frames(
+def _compose_background_frame(
+    background: Image.Image, frame: Image.Image, overlay: Image.Image | None, offset: int
+) -> Image.Image:
+    img = background.copy()
+    img.alpha_composite(cover_fit(frame, img.width))
+    if overlay is not None:
+        img.alpha_composite(overlay, dest=(offset, offset))
+    return img
+
+
+def _overlay_layer(overlay: bytes | None, inner: int, color: str | None) -> Image.Image | None:
+    if not overlay:
+        return None
+    try:
+        return _RENDERER.render_bytes(overlay, inner, inner, color)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logging.debug("skipping unreadable plugin image: %s", exc)
+        return None
+
+
+def compose_key_frames(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     appearance: Mapping[str, Any],
     frames: Sequence[Image.Image],
     plugin_title: str,
     size: int = 144,
     plugin_image_scale: float = 1.0,
+    *,
+    layer: str = "foreground",
+    overlay: bytes | None = None,
+    overlay_color: str | None = None,
 ) -> list[Image.Image]:
-    """Compose background, each animation frame and the title into size x size RGB images."""
+    """Compose background, each animation frame and the title into size x size RGB images.
+
+    With layer="background" the frames are the key's background and the static overlay is drawn over them.
+    """
     inner = _inner_size(size, plugin_image_scale)
     offset = (size - inner) // 2
-    background = _background_layer(appearance, size)
+    background = (
+        Image.new("RGBA", (size, size), (0, 0, 0, 255))
+        if layer == "background"
+        else _background_layer(appearance, size)
+    )
+    overlay_image = _overlay_layer(overlay, inner, overlay_color) if layer == "background" else None
     title = _title_layer(appearance, plugin_title, size)
     composed = []
     for frame in frames:
-        img = background.copy()
-        layer = frame.convert("RGBA").resize((inner, inner), Image.Resampling.LANCZOS)
-        img.alpha_composite(layer, dest=(offset, offset))
+        if layer == "background":
+            img = _compose_background_frame(background, frame, overlay_image, offset)
+        else:
+            img = background.copy()
+            scaled = frame.convert("RGBA").resize((inner, inner), Image.Resampling.LANCZOS)
+            img.alpha_composite(scaled, dest=(offset, offset))
         if title is not None:
             img.alpha_composite(title)
         composed.append(img.convert("RGB"))
