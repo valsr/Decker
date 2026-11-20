@@ -593,10 +593,10 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         device_id = str(data.get("device_id", ""))
         if event_type == "screensaver_changed":
             EventManager.get().push(ScreensaverStateEvent(device_id=device_id, active=bool(data.get("active"))))
-        else:
-            with self._screensaver_refresh_lock:
-                self._screensaver_refresh_devices.add(device_id)
-            self._wake_event.set()
+        # screensaver_changed carries no error text, so a state change also refetches last_error on the worker.
+        with self._screensaver_refresh_lock:
+            self._screensaver_refresh_devices.add(device_id)
+        self._wake_event.set()
 
     def _on_window_event(self, event_type: str, data: dict[str, Any]) -> None:
         if event_type == "app_rules_changed":

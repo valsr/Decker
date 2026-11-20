@@ -15,6 +15,7 @@ from decker.client.context import AppContext
 from decker.client.events import ScreensaverSettingsEvent, ScreensaverStateEvent
 from decker.client.events.event_manager import EventManager
 from decker.client.ui_state_store import UiStateStore
+from decker.client.widgets.screensaver_panel import ScreensaverPanel
 from decker.client.window import MainWindow
 from decker.common.model import DeviceHardwareInfo, ScreensaverSettings
 
@@ -121,6 +122,16 @@ class TestScreensaverPushEvents:
         assert_that(events[0].active).is_true()
         manager._conn.root.screensaver_get.assert_called_once_with("other")
 
+    def test_changed_event_also_refetches_last_error(self, manager):
+        manager._conn.root.screensaver_get.return_value = _get_payload(last_error="image not found: a.png")
+
+        manager._on_server_event("screensaver_changed", json.dumps({"device_id": "dev1", "active": True}))
+        assert_that(EventManager.get().drain()).is_equal_to([ScreensaverStateEvent("dev1", True)])
+        manager._refresh_requested_screensavers()
+
+        events = [e for e in EventManager.get().drain() if isinstance(e, ScreensaverSettingsEvent)]
+        assert_that([e.last_error for e in events]).is_equal_to(["image not found: a.png"])
+
     def test_active_device_refresh_pushes_settings(self, manager):
         manager._conn.root.screensaver_get.return_value = _get_payload()
         manager._conn.root.profiles_list.return_value = "null"
@@ -152,3 +163,24 @@ class TestScreensaverEventsReachTheSettingsDialog:
 
         assert_that(received).is_equal_to([settings_event, state_event])
         win.close()
+
+
+class TestScreensaverPanelOverTheConnection:
+    def test_activation_error_reaches_the_panel_after_screensaver_changed(self, qapp, manager):
+        root = manager._conn.root
+        root.screensaver_get.return_value = json.dumps({"active": False, "last_error": ""})
+        root.screensaver_activate.return_value = "true"
+        panel = ScreensaverPanel(device_id=lambda: "dev1", rpc=lambda: manager, host=lambda: "127.0.0.1")
+        panel.refresh_device()
+        panel._toggle_active()
+        root.screensaver_get.return_value = json.dumps({"active": True, "last_error": "image not found: a.png"})
+
+        manager._on_server_event("screensaver_changed", json.dumps({"device_id": "dev1", "active": True}))
+        manager._refresh_requested_screensavers()  # the connection thread's next pass
+        for event in EventManager.get().drain():
+            if isinstance(event, (ScreensaverSettingsEvent, ScreensaverStateEvent)):
+                panel.handle_event(event)
+
+        assert_that(panel._last_error_label.text()).is_equal_to("image not found: a.png")
+        assert_that(panel._activate_btn.text()).is_equal_to("Wake")
+        panel.deleteLater()
