@@ -451,3 +451,74 @@ def test_plugin_ids_lists_registered_plugins() -> None:
     assert_that(sorted(rig.sup.plugin_ids())).is_equal_to(["a.b", "c.d"])
     rig.sup.unregister("a.b")
     assert_that(rig.sup.plugin_ids()).is_equal_to(["c.d"])
+
+
+def _exit_recorder(rig: Rig) -> list[tuple[str, bool]]:
+    """Records each on_exit call with whether the process was gone; is_ready() proves the lock is free."""
+    calls: list[tuple[str, bool]] = []
+
+    def on_exit(plugin_id: str) -> None:
+        calls.append((plugin_id, not rig.sup.is_ready(plugin_id) and not any(p.running for p in rig.procs)))
+
+    rig.sup.on_exit = on_exit
+    return calls
+
+
+def test_on_exit_called_after_crash_and_after_stop() -> None:
+    rig = Rig(backoff_s=(1.0,), idle_grace_s=5.0)
+    calls = _exit_recorder(rig)
+    rig.sup.acquire("a.b")
+    rig.last.emit("ready")
+
+    rig.last.crash()
+    assert_that(calls).is_equal_to([("a.b", True)])
+
+    rig.advance(1.5)
+    rig.last.emit("ready")
+    rig.sup.release("a.b")
+    rig.advance(6.0)
+    assert_that(rig.procs).is_length(2)
+    assert_that(rig.last.running).is_false()
+    assert_that(calls).is_equal_to([("a.b", True), ("a.b", True)])
+
+    rig.sup.acquire("a.b")
+    rig.sup.unregister("a.b")
+    assert_that(calls).is_equal_to([("a.b", True)] * 3)
+
+
+def test_on_exit_called_for_stop_all_and_watchdog_kill() -> None:
+    rig = Rig(memory_limit=1000)
+    calls = _exit_recorder(rig)
+    rig.sup.acquire("a.b")
+    rig.last.rss = 2000
+    rig.advance(1.0)
+    assert_that(calls).is_equal_to([("a.b", True)])
+
+    rig.last.rss = 10
+    rig.advance(1.0)
+    rig.sup.register("c.d", ["cmd"], Path("."), {}, {})
+    rig.sup.acquire("c.d")
+    rig.sup.stop_all()
+    assert_that(sorted(calls)).is_equal_to([("a.b", True), ("a.b", True), ("c.d", True)])
+
+
+def test_on_exit_errors_do_not_reach_the_supervisor() -> None:
+    rig = Rig()
+
+    def broken(_plugin_id: str) -> None:
+        raise RuntimeError("boom")
+
+    rig.sup.on_exit = broken
+    rig.sup.acquire("a.b")
+    rig.last.crash()
+    rig.sup.unregister("a.b")
+
+    assert_that(rig.sup.plugin_ids()).is_empty()
+
+
+def test_no_on_exit_for_a_process_that_never_started() -> None:
+    rig = Rig()
+    calls = _exit_recorder(rig)
+    rig.sup.unregister("a.b")
+    rig.sup.stop_all()
+    assert_that(calls).is_empty()

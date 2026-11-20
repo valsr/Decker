@@ -18,7 +18,7 @@ from decker.common import config
 from decker.common.manager import Manager
 from decker.common.platforms import detect_platform, platform_supports
 from decker.common.slots import SLOT_NAMES, normalize_slots
-from decker.common.template import expand_template
+from decker.common.template import expand_template, template_names
 from decker.common.text_style import is_color
 from decker.common.version import decker_version
 from decker.plugin.environment import stage_sdk
@@ -50,6 +50,7 @@ from decker.server.contributions import ContributionRegistry
 from decker.server.hardware_sink import StreamDeckHardwareSink, write_face
 from decker.server.page_vars import (
     DeviceLayout,
+    VariableChain,
     deliver_settings,
     has_dynamic_fields,
     keep_raw_templates,
@@ -58,6 +59,7 @@ from decker.server.page_vars import (
     resolve_switch_target,
     stored_page_ids,
     stored_profile_ids,
+    templated_texts,
 )
 from decker.server.switch import SwitchController
 from decker.server.variable_runner import VariableRunner
@@ -198,6 +200,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             limit = int(config.get_or_default("plugin.memory_limit", _DEFAULT_MEMORY_LIMIT))
             policy = SupervisorPolicy(memory_limit=limit)
         self._supervisor = PluginSupervisor(policy, PluginProcess, self._on_plugin_message, self._on_plugin_failed)
+        self._supervisor.on_exit = self._on_plugin_exit
         self._action_runner = ActionRunner(self._supervisor, self._on_action_failed)
         self.icon_packs = IconPackRegistry(on_failure=self._record_failure)
         self.variables = VariableStore(on_change=self._on_variables_changed)
@@ -264,6 +267,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         except Exception as exc:  # pylint: disable=broad-except
             logging.exception("Registering plugin %s failed", manifest.id)
             self._record_failure(manifest.id, str(exc))
+        else:
+            if manifest.variables:  # always on: a permanent reference, dropped when unregister forgets the plugin
+                self._supervisor.acquire(manifest.id)
         self._recompose_icon_users()
         self._reshow_switches()
 
@@ -293,17 +299,31 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             with self._lock:
                 self._hellos.pop(plugin.manifest.id, None)
             raise
+        self.refresh_variable_users(self._names_owned_by(plugin.manifest.id))  # "{name}" now expands to ""
 
     def unregister_variables(self, plugin_id: str) -> None:
         """Forget a plugin's variables and stop its process (the "variables" handler)."""
+        owned = self._names_owned_by(plugin_id)
         self.variables.undeclare(plugin_id)
         self._supervisor.unregister(plugin_id)
         self._variable_runner.plugin_stopped(plugin_id)
         with self._lock:
             self._hellos.pop(plugin_id, None)
+        self.refresh_variable_users(owned)  # "{name}" now stays as typed
 
     def _on_variables_changed(self, names: frozenset[str]) -> None:
         self._variable_runner.changed(names)
+        self.refresh_variable_users(names)
+
+    def _on_plugin_exit(self, plugin_id: str) -> None:
+        self._variable_runner.plugin_stopped(plugin_id)
+        self.variables.drop_values(plugin_id)
+
+    def _names_owned_by(self, plugin_id: str) -> frozenset[str]:
+        with self._lock:
+            lives = list(self._live.values())
+        used = frozenset().union(*(title | texts for title, texts in map(self._template_uses, lives)))
+        return frozenset(name for name in used if self.variables.owner_of(name) == plugin_id)
 
     def list_actions(self) -> list[dict[str, Any]]:
         """Every action declared across all loaded plugin manifests, with its settings schema."""
@@ -857,9 +877,15 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Template variables for what the device shows (empty when pages are unavailable)."""
         return page_variables(self._device_layout(device_id))
 
+    def template_variables(self, device_id: str) -> Mapping[str, str]:
+        """Everything key text may use: page and profile variables first, then the plugins' global variables."""
+        return VariableChain(self.page_variables(device_id), self.variables.view())
+
     def delivered_settings(self, live: _Live) -> dict[str, Any]:
         """The settings a plugin receives: opted-in text expanded and page ids resolved; stored values stay raw."""
-        return deliver_settings(live.card.settings, live.settings, self._device_layout(live.target.device_id))
+        layout = self._device_layout(live.target.device_id)
+        variables = VariableChain(page_variables(layout), self.variables.view())
+        return deliver_settings(live.card.settings, live.settings, layout, variables)
 
     def _delivery(self, live: _Live) -> dict[str, Any]:
         delivered = self.delivered_settings(live)
@@ -867,7 +893,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         return delivered
 
     def _expanded_appearance(self, device_id: str, appearance: dict[str, Any]) -> dict[str, Any]:
-        variables = self.page_variables(device_id)
+        variables = self.template_variables(device_id)
         title = appearance.get("title")
         if variables and isinstance(title, dict) and isinstance(title.get("text"), str):
             return {**appearance, "title": {**title, "text": expand_template(title["text"], variables)}}
@@ -888,8 +914,38 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             title = resolve_appearance(live.card.appearance, live.appearance).get("title", {})
         if "{" in str(title.get("text", "")):
             self._recompose(live)
-        plugin_id = live.target.plugin_uuid
-        if live.card.headless or not has_dynamic_fields(live.card.settings) or not self._supervisor.is_ready(plugin_id):
+        if has_dynamic_fields(live.card.settings):
+            self._redeliver(live)
+
+    def refresh_variable_users(self, names: frozenset[str]) -> None:
+        """Redraw and re-notify every live key whose title or template settings use one of the names."""
+        if not names:
+            return
+        with self._lock:
+            lives = list(self._live.values())
+        for live in lives:
+            try:
+                title, texts = self._template_uses(live)
+                if title & names:
+                    self._recompose(live)
+                if texts & names:
+                    self._redeliver(live)
+            except Exception:  # pylint: disable=broad-except
+                logging.warning(
+                    "Refreshing key %s after a variable change failed", live.target.context_id, exc_info=True
+                )
+
+    def _template_uses(self, live: _Live) -> tuple[frozenset[str], frozenset[str]]:
+        with self._lock:
+            title = resolve_appearance(live.card.appearance, live.appearance).get("title", {})
+            settings = dict(live.settings)
+        text = title.get("text") if isinstance(title, dict) else None
+        title_names = template_names(text) if isinstance(text, str) else frozenset()
+        setting_names = frozenset().union(*map(template_names, templated_texts(live.card.settings, settings)))
+        return title_names, setting_names
+
+    def _redeliver(self, live: _Live) -> None:
+        if live.card.headless or not self._supervisor.is_ready(live.target.plugin_uuid):
             return
         delivered = self.delivered_settings(live)
         if delivered != live.delivered:
