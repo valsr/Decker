@@ -422,3 +422,90 @@ class TestProfileFields:  # pylint: disable=protected-access
 
         assert_that(reported).is_not_empty()
         assert_that(all(values["where"] == "" for values in reported)).is_true()
+
+
+class TestActionFields:  # pylint: disable=protected-access
+    _ACTIONS = [
+        {
+            "plugin_uuid": "com.t",
+            "plugin_name": "Tools",
+            "action_uuid": "com.t.http",
+            "action_name": "HTTP",
+            "settings_schema": [{"key": "url", "type": "text", "label": "URL", "default": ""}],
+        },
+        {
+            "plugin_uuid": "com.t",
+            "plugin_name": "Tools",
+            "action_uuid": "com.t.mute",
+            "action_name": "Mute",
+            "settings_schema": [],
+        },
+    ]
+    _SCHEMA = [
+        {"key": "action", "type": "action", "label": "Action"},
+        {"key": "parameters", "type": "action_params", "label": "Parameters", "action_field": "action"},
+    ]
+
+    def setup_method(self):
+        import json
+
+        from decker.client.context import AppContext
+
+        AppContext._instance = None
+        actions = self._ACTIONS
+
+        class _Rpc:
+            def call(self, method, *_args):
+                return json.dumps(actions) if method == "plugins_actions_list" else None
+
+        AppContext.get().connection_manager = _Rpc()  # type: ignore[assignment]
+
+    def test_the_action_dropdown_lists_actions_and_round_trips(self, qapp):  # pylint: disable=unused-argument
+        form = _form(self._SCHEMA, {"action": "com.t.mute", "parameters": {}})
+        combo = form._fields["action"].widget
+
+        assert_that([combo.itemText(i) for i in range(combo.count())]).is_equal_to(
+            ["(choose an action)", "Tools: HTTP", "Tools: Mute"]
+        )
+        assert_that(form.values()["action"]).is_equal_to("com.t.mute")
+
+    def test_the_parameters_form_follows_the_chosen_action(self, qapp):  # pylint: disable=unused-argument
+        form = _form(self._SCHEMA, {"action": "com.t.http", "parameters": {"url": "http://x"}})
+        params = form._fields["parameters"].widget
+        assert_that(form.values()["parameters"]).is_equal_to({"url": "http://x"})
+
+        combo = form._fields["action"].widget
+        combo.setCurrentIndex(combo.findData("com.t.mute"))
+        combo.activated.emit(combo.currentIndex())
+
+        assert_that(params._form.isHidden()).is_true()
+        assert_that(form.values()["parameters"]).is_equal_to({})
+
+    def test_choosing_an_action_emits_changed_once_and_showing_one_does_not(
+        self, qapp
+    ):  # pylint: disable=unused-argument
+        form = _form(self._SCHEMA, {"action": "", "parameters": {}})
+        seen: list[int] = []
+        form.changed.connect(lambda: seen.append(1))
+        combo = form._fields["action"].widget
+
+        combo.setCurrentIndex(combo.findData("com.t.http"))
+        combo.activated.emit(combo.currentIndex())
+
+        assert_that(seen).is_length(1)
+
+    def test_settings_of_an_unavailable_action_are_kept(self, qapp):  # pylint: disable=unused-argument
+        form = _form(self._SCHEMA, {"action": "com.gone.thing", "parameters": {"k": "v"}})
+
+        assert_that(form.values()).is_equal_to({"action": "com.gone.thing", "parameters": {"k": "v"}})
+        assert_that(form._fields["action"].widget.currentText()).is_equal_to("(missing action)")
+
+    def test_a_schema_with_action_fields_validates_server_side(self):
+        from decker.plugin.settings_schema import apply_schema, parse_settings_schema
+
+        schema = parse_settings_schema(self._SCHEMA, "t")
+
+        assert_that(apply_schema(schema, {"action": "a.b", "parameters": {"x": 1}})).is_equal_to(
+            {"action": "a.b", "parameters": {"x": 1}}
+        )
+        assert_that(apply_schema(schema, {"parameters": "junk"})).is_equal_to({"action": "", "parameters": {}})

@@ -54,6 +54,14 @@ class PluginLoadFailedEvent:
 
 
 @dataclass(frozen=True)
+class ActionFailedEvent:
+    """An action started by a key press did not succeed on the server."""
+
+    action_id: str
+    error: str
+
+
+@dataclass(frozen=True)
 class OpenUrlRequestedEvent:
     """A plugin asked the client to open a URL in the user's browser."""
 
@@ -200,6 +208,7 @@ AppEvent = (
     | DeviceListUpdatedEvent
     | KeyEvent
     | PluginLoadFailedEvent
+    | ActionFailedEvent
     | OpenUrlRequestedEvent
     | CardListUpdatedEvent
     | KeyDisplayStatesUpdatedEvent

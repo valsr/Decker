@@ -16,6 +16,7 @@ from decker.client.connection_manager import (
 )
 from decker.client.context import AppContext
 from decker.client.events import (
+    ActionFailedEvent,
     AppRulesUpdatedEvent,
     CardListUpdatedEvent,
     DetectionStatusEvent,
@@ -478,6 +479,13 @@ class TestOnServerEvent:
         assert_that(events).is_length(1)
         assert_that(events[0].plugin_uuid).is_equal_to("com.decker.x")
         assert_that(events[0].error).is_equal_to("crashed")
+
+    def test_action_failed_is_forwarded(self):
+        payload = json.dumps({"action_id": "com.t.http", "error": "HTTP 500"})
+        self.manager._on_server_event("action_failed", payload)  # pylint: disable=protected-access
+        events = [e for e in EventManager.get().drain() if isinstance(e, ActionFailedEvent)]
+
+        assert_that([(e.action_id, e.error) for e in events]).is_equal_to([("com.t.http", "HTTP 500")])
 
     def test_open_url_event_parsed(self):
         payload = json.dumps({"plugin_id": "com.decker.x", "url": "https://example.com"})
