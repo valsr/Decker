@@ -38,6 +38,9 @@ _SVG_SNIFF_BYTES = 64 * 1024
 _REPORTED_BAD_BACKGROUNDS: OrderedDict[str, None] = OrderedDict()
 _REPORTED_LOCK = threading.Lock()
 _MAX_REPORTED = 256
+_LAYER_CACHE: OrderedDict[tuple[str, int], bytes] = OrderedDict()
+_LAYER_LOCK = threading.Lock()
+_MAX_CACHED_LAYERS = 64
 
 
 def _font(
@@ -202,6 +205,26 @@ def _background_image(data: bytes, size: int) -> Image.Image | None:
         return None
 
 
+def _cached_background_layer(data: bytes, size: int) -> Image.Image | None:
+    """The cover-fitted layer from a bounded LRU keyed by the image content hash (never stale on change)."""
+    key = (hashlib.sha256(data).hexdigest(), size)
+    with _LAYER_LOCK:
+        raw = _LAYER_CACHE.get(key)
+        if raw is not None:
+            _LAYER_CACHE.move_to_end(key)
+    if raw is not None:
+        return Image.frombytes("RGBA", (size, size), raw)
+    layer = _background_image(data, size)
+    if layer is None:
+        return None
+    layer = layer.convert("RGBA")
+    with _LAYER_LOCK:
+        _LAYER_CACHE[key] = layer.tobytes()
+        while len(_LAYER_CACHE) > _MAX_CACHED_LAYERS:
+            _LAYER_CACHE.popitem(last=False)
+    return layer
+
+
 def _background_layer(appearance: Mapping[str, Any], size: int, background_image: bytes | None = None) -> Image.Image:
     """Opaque black with the appearance background composited on top (the hardware has no transparency)."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 255))
@@ -209,7 +232,7 @@ def _background_layer(appearance: Mapping[str, Any], size: int, background_image
     if background["type"] == "color" and ImageColor.getcolor(background["color"], "RGBA")[3]:  # type: ignore[index]
         img.alpha_composite(Image.new("RGBA", (size, size), background["color"]))
     elif background["type"] == "image" and background_image:
-        layer = _background_image(background_image, size)
+        layer = _cached_background_layer(background_image, size)
         if layer is not None:
             img.alpha_composite(layer)
     return img

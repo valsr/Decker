@@ -112,7 +112,7 @@ def test_ref_to_uninstalled_pack_falls_back_to_black(env):
     assert_that(env.image()).is_not_none()
 
 
-def test_empty_or_bad_ref_falls_back_to_black_and_other_modes_skip_the_read(env):
+def test_empty_or_bad_ref_falls_back_to_black(env):
     target = _target(key=0)
     env.manager.activate_action(target, {"background": {"type": "image", "image": {"ref": ""}}})
     assert_that(_pixel(env.image(), 5, 5)).is_equal_to((0, 0, 0))
@@ -120,8 +120,29 @@ def test_empty_or_bad_ref_falls_back_to_black_and_other_modes_skip_the_read(env)
     env.manager.set_appearance(target, {"background": {"type": "image", "image": {"ref": _ref("missing.png")}}})
     assert_that(_pixel(env.image(), 5, 5)).is_equal_to((0, 0, 0))
 
-    env.manager.set_appearance(target, {"background": {"type": "color", "color": "#ff0000", **_bg("blue.png")}})
+
+def test_background_image_is_read_only_in_image_mode(env, monkeypatch):
+    target = _target(key=0)
+    env.manager.activate_action(target, {})
+    reads: list[Any] = []
+    real = env.manager.icon_packs.read_ref
+
+    def spy(ref: Any) -> bytes | None:
+        reads.append(ref)
+        return real(ref)
+
+    monkeypatch.setattr(env.manager.icon_packs, "read_ref", spy)
+    image_look = _bg("blue.png")["background"]
+
+    env.manager.set_appearance(target, {"background": {"type": "none", **{"image": image_look["image"]}}})
+    env.manager.set_appearance(
+        target, {"background": {"type": "color", "color": "#ff0000", "image": image_look["image"]}}
+    )
+    assert_that(reads).does_not_contain(_ref("blue.png"))
     assert_that(_pixel(env.image(), 5, 5)).is_equal_to((255, 0, 0))
+
+    env.manager.set_appearance(target, _bg("blue.png"))
+    assert_that(reads).contains(_ref("blue.png"))
 
 
 def test_preview_image_with_draft_background_matches_the_applied_result(env):
