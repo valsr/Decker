@@ -5,7 +5,7 @@ import os
 import sys
 from typing import BinaryIO, cast
 
-from ._runtime import registered_cards, run
+from ._runtime import registered_actions, registered_cards, run
 
 
 def main(argv: list[str]) -> int:
@@ -26,7 +26,7 @@ def main(argv: list[str]) -> int:
         return 2
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    code = run(registered_cards(), cast(BinaryIO, sys.stdin.buffer), stdout)
+    code = run(registered_cards(), cast(BinaryIO, sys.stdin.buffer), stdout, registered_actions())
     stdout.flush()
     sys.stderr.flush()
     os._exit(code)  # pylint: disable=protected-access  # do not wait for blocked handler threads

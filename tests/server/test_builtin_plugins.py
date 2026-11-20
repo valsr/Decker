@@ -57,7 +57,7 @@ def test_blank_icon_resolves():
 def test_scan_builtin_finds_blank(tmp_path):
     result = PluginLoader(tmp_path / "empty").scan_builtin()
 
-    assert_that([p.manifest.id for p in result.plugins]).is_equal_to([BLANK])
+    assert_that([p.manifest.id for p in result.plugins]).is_equal_to(sorted([BLANK, "com.decker.core"]))
     assert_that(result.failures).is_empty()
 
 

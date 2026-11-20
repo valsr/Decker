@@ -12,7 +12,22 @@ from decker.common.icon_ref import normalize_icon_value
 from decker.common.text_style import TEXT_STYLE_DEFAULTS, normalize_text_style
 
 FIELD_TYPES = frozenset(
-    {"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style", "background", "page", "profile"}
+    {
+        "int",
+        "float",
+        "text",
+        "bool",
+        "choice",
+        "color",
+        "font",
+        "icon",
+        "text_style",
+        "background",
+        "page",
+        "profile",
+        "action",
+        "action_params",
+    }
 )
 
 _PROFILE_ID_PATTERN = re.compile(r"[0-9]*\Z")
@@ -25,6 +40,7 @@ _EXTRA_KEYS: dict[str, tuple[str, ...]] = {
     "text_style": ("template",),
     "color": ("alpha",),
     "page": ("profile_field",),
+    "action_params": ("action_field",),
     "choice": ("options",),
 }
 _ZERO_VALUES: dict[str, Any] = {
@@ -36,6 +52,8 @@ _ZERO_VALUES: dict[str, Any] = {
     "font": "",
     "page": "",
     "profile": "",
+    "action": "",
+    "action_params": {},
     "icon": {"ref": "", "color": "#ffffff"},
     "text_style": dict(TEXT_STYLE_DEFAULTS),
     "background": {**BACKGROUND_DEFAULT, "image": dict(BACKGROUND_DEFAULT["image"])},
@@ -107,6 +125,10 @@ def _parse_extra(type_: str, data: dict[str, Any], where: str) -> dict[str, Any]
     if "special_value" in extra and not isinstance(extra["special_value"], str):
         raise ValueError(f"{where}: 'special_value' must be a string")
     _check_profile_field(type_, data, extra, where)
+    if "action_field" in data and type_ != "action_params":
+        raise ValueError(f"{where}: 'action_field' is only valid on action_params fields")
+    if "action_field" in extra and not isinstance(extra["action_field"], str):
+        raise ValueError(f"{where}: 'action_field' must be a string")
     for name in ("multiline", "alpha", "template"):
         if name in extra and not isinstance(extra[name], bool):
             raise ValueError(f"{where}: '{name}' must be a boolean")
@@ -143,6 +165,8 @@ def _coerce(type_: str, value: Any, extra: Mapping[str, Any]) -> Any:
         result = _OBJECT_NORMALIZERS[type_](value)
     elif type_ == "profile":
         result = value if isinstance(value, str) and _PROFILE_ID_PATTERN.match(value) else _MISSING
+    elif type_ == "action_params":
+        result = dict(value) if isinstance(value, dict) else _MISSING
     elif isinstance(value, str):
         result = value
     if type_ in ("int", "float") and result is not _MISSING and not _in_range(result, extra):

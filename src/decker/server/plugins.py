@@ -37,6 +37,7 @@ from decker.plugin.runtime.supervisor import PluginSupervisor, SupervisorPolicy
 from decker.plugin.settings_schema import apply_schema, schema_to_json
 from decker.plugin.settings_store import PluginSettingsStore
 from decker.plugin.target import CardTarget
+from decker.server.actions import ActionRunner, bound_action
 from decker.server.appearance import (
     PACK_ICON_SCALE,
     Composed,
@@ -83,6 +84,21 @@ class _CardsHandler:
 
     def unregister(self, plugin_id: str) -> None:
         self._manager.unregister_cards(plugin_id)
+
+
+class _ActionsHandler:
+    """The "actions" contribution handler: hands a plugin's actions to the ActionRunner."""
+
+    kind = "actions"
+
+    def __init__(self, manager: "PluginManager") -> None:
+        self._manager = manager
+
+    def register(self, plugin: InstalledPlugin) -> None:
+        self._manager.register_actions(plugin)
+
+    def unregister(self, plugin_id: str) -> None:
+        self._manager.unregister_actions(plugin_id)
 
 
 @dataclass
@@ -149,8 +165,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             limit = int(config.get_or_default("plugin.memory_limit", _DEFAULT_MEMORY_LIMIT))
             policy = SupervisorPolicy(memory_limit=limit)
         self._supervisor = PluginSupervisor(policy, PluginProcess, self._on_plugin_message, self._on_plugin_failed)
+        self._action_runner = ActionRunner(self._supervisor, self._on_action_failed)
         self.icon_packs = IconPackRegistry(on_failure=self._record_failure)
-        self._contributions = ContributionRegistry([_CardsHandler(self), self.icon_packs])
+        self._contributions = ContributionRegistry([_CardsHandler(self), _ActionsHandler(self), self.icon_packs])
 
     def create(self, context: "ServerContext") -> None:
         """Wire up the device manager, then scan plugins and start the supervisor."""
@@ -213,8 +230,40 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def register_cards(self, plugin: InstalledPlugin) -> None:
         """Register a plugin's cards with the supervisor (the "cards" contribution handler)."""
+        self._register_runtime(plugin)
+
+    def register_actions(self, plugin: InstalledPlugin) -> None:
+        """Make a plugin's actions runnable (the "actions" contribution handler)."""
+        self._register_runtime(plugin)
+        self._action_runner.register(plugin)
+
+    def unregister_actions(self, plugin_id: str) -> None:
+        """Forget a plugin's actions and stop its process (the "actions" contribution handler)."""
+        self._action_runner.unregister(plugin_id)
+        self._supervisor.unregister(plugin_id)
+        with self._lock:
+            self._hellos.pop(plugin_id, None)
+
+    def list_actions(self) -> list[dict[str, Any]]:
+        """Every action declared across all loaded plugin manifests, with its settings schema."""
+        return self._action_runner.listing(
+            lambda plugin, spec: self._icon_b64(plugin.plugin_dir, spec.icon or plugin.manifest.icon)
+        )
+
+    def run_action(self, action_id: str, settings: dict[str, Any]) -> None:
+        """Run an action in the background; a failure is announced as an ``action_failed`` event."""
+        self._action_runner.run(action_id, settings)
+
+    def _on_action_failed(self, action_id: str, error: str) -> None:
+        bus = self._event_bus
+        if bus is not None:
+            bus.push("action_failed", json.dumps({"action_id": action_id, "error": error}))
+
+    def _register_runtime(self, plugin: InstalledPlugin) -> None:
         manifest = plugin.manifest
-        if manifest.runtime is None:
+        with self._lock:
+            known = manifest.id in self._hellos
+        if manifest.runtime is None or known:
             return
         try:
             command = launch_command(plugin.plugin_dir, manifest.runtime)
@@ -397,7 +446,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if plugin is None:
             self._mark_missing(target)
             return
-        if spec is None or (plugin.manifest.runtime is None and not spec.static):
+        if spec is None or (plugin.manifest.runtime is None and not spec.headless):
             logging.warning("Cannot activate unknown card %s/%s", target.plugin_uuid, target.card_uuid)
             return
         with self._lock:
@@ -417,7 +466,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         with self._lock:
             self._live[target.context_id] = live
         self._recompose(live, poster=draw)
-        if spec.static:
+        if spec.headless:
             return
         self._supervisor.acquire(target.plugin_uuid)
         if self._supervisor.is_failed(target.plugin_uuid):
@@ -432,7 +481,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if live is None:
             return
         live.recognizer.cancel()
-        if live.card.static:
+        if live.card.headless:
             return
         plugin_id = target.plugin_uuid
         if self._supervisor.is_ready(plugin_id):
@@ -459,7 +508,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Send the instance its new settings; re-saving settings retries a failed plugin."""
         plugin_id = target.plugin_uuid
         existing = self._live.get(target.context_id)
-        if existing is not None and existing.card.static:
+        if existing is not None and existing.card.headless:
             return
         if self._supervisor.is_failed(plugin_id):
             with self._lock:
@@ -595,7 +644,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if "{" in str(title.get("text", "")):
             self._recompose(live)
         plugin_id = live.target.plugin_uuid
-        if live.card.static or not has_dynamic_fields(live.card.settings) or not self._supervisor.is_ready(plugin_id):
+        if live.card.headless or not has_dynamic_fields(live.card.settings) or not self._supervisor.is_ready(plugin_id):
             return
         delivered = self.delivered_settings(live)
         if delivered != live.delivered:
@@ -612,6 +661,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             logging.warning("Key state notification failed", exc_info=True)
 
     def _send_context(self, live: _Live, event: str, payload: dict[str, Any] | None = None) -> None:
+        if live.card.headless:  # no process knows this instance
+            return
         self._supervisor.send(live.target.plugin_uuid, Message(event, live.target.context_id, payload or {}))
 
     def _send_will_appear(self, live: _Live) -> None:
@@ -639,10 +690,22 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def _gesture_emitter(self, context_id: str) -> Callable[[Gesture], None]:
         def _emit(gesture: Gesture) -> None:
             live = self._live.get(context_id)
-            if live is not None:
-                self._send_context(live, gesture.value)
+            if live is None:
+                return
+            if live.card.bound:  # a press runs the card's action; the card has no process to tell
+                if gesture == Gesture.PRESS:
+                    self._run_bound(live)
+                return
+            self._send_context(live, gesture.value)
 
         return _emit
+
+    def _run_bound(self, live: _Live) -> None:
+        binding = bound_action(live.card, live.settings)
+        if binding is None:
+            self._on_action_failed("", "no action is chosen on this key")
+            return
+        self.run_action(*binding)
 
     def _device_ids(self) -> list[str]:
         if self._device_manager is None:
@@ -673,6 +736,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._on_open_url(plugin_id, message.payload)
         elif event == "set_global_settings":
             self._on_set_global_settings(plugin_id, message.payload)
+        elif event == "action_result":
+            self._action_runner.on_result(plugin_id, message.payload)
         else:
             self._route_context_message(plugin_id, message)
 
@@ -720,7 +785,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def _on_ready(self, plugin_id: str) -> None:
         with self._lock:
-            lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.card.static]
+            lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.card.headless]
         for live in lives:
             self._clear_placeholder(live.target.device_id, live.target.key_index)
             self._send_will_appear(live)
@@ -833,7 +898,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         with self._lock:
             self._drop_failure(plugin_id)
             self._failures.append(event)
-            lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.card.static]
+            lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.card.headless]
         for live in lives:
             self._mark_failed(live)
         self._push("plugin_failed", {"plugin_id": plugin_id, "error": reason})

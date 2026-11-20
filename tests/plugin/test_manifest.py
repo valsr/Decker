@@ -367,6 +367,10 @@ def test_format_2_has_cards_and_they_are_not_aliased_from_actions() -> None:
     assert_that(manifest.format).is_equal_to(2)
 
 
-def test_format_2_rejects_the_old_actions_entries_as_cards() -> None:
-    with pytest.raises(ManifestValidationError):
-        PluginManifest.from_dict(_minimal(2, {"actions": [{"id": "com.acme.demo.one", "name": "One", "static": True}]}))
+def test_format_2_actions_are_not_cards() -> None:
+    manifest = PluginManifest.from_dict(
+        _minimal(2, {"actions": [{"id": "com.acme.demo.one", "name": "One"}], "icon_packs": []})
+    )
+
+    assert_that(manifest.cards).is_empty()
+    assert_that([a.id for a in manifest.actions]).is_equal_to(["com.acme.demo.one"])

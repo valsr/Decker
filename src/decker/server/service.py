@@ -288,6 +288,14 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
 
     @exposed
     @api_response
+    def plugins_actions_list(self) -> list:
+        """List every action declared across all loaded plugin manifests, with its settings schema."""
+        if self._context is None:
+            return []
+        return self._context.plugin_manager.list_actions()
+
+    @exposed
+    @api_response
     def plugins_list(self) -> list:
         """List installed plugins with their metadata, card and icon pack counts, and global settings."""
         if self._context is None:
