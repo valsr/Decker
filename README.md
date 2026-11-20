@@ -54,6 +54,7 @@ Early alpha: the table shows what exists, not that it is stable. Plugins are lis
 | CLI | ✅ | ✅ [13] | ⚠️ | ✅ [11] | ✅ [11] |
 | Server settings from the client | ✅ [14] | ✅ [14] | ⚠️ | ✅ [14] | ✅ [14] |
 | Switch profile by focused app | ✅ [15] | ⚠️ [15] | ⚠️ [15] | ⚠️ [15] | ❌ [15] |
+| Screensaver and brightness | ✅ [16] | ✅ [13] [16] | ⚠️ | ✅ [16] | ✅ [16] |
 | Daemon mode | ❌ [12] | ❌ [12] | ❌ [12] | ❌ [12] | ❌ [12] |
 
 The Linux (Arch/Plasma/Wayland) column is ✅ where the maintainer uses the feature or CI passes, and CI also runs the suite on
@@ -141,6 +142,11 @@ Footnotes:
     against fakes only, no X server was available); GNOME Wayland is not supported yet. Linux (other) is the same as
     that column. The Windows backend ran against fakes only (no Windows runner or desktop), so it is unverified on a
     real desktop; it has no window type or desktop file. macOS is not supported yet.
+16. Idle or RPC-triggered screensaver and per-device brightness; see [docs/screensaver.md](docs/screensaver.md). It is
+    Pillow plus the same HID writes as key faces, with no OS-specific code, so it is marked like the other
+    hardware-only features. The tests use a fake device manager and fake decks: nothing was run against a real Stream
+    Deck or on a Windows or macOS desktop. Image and folder paths are server-side and settable only from the server's
+    machine.
 
 ## System Requirements
 
