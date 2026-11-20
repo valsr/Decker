@@ -6,6 +6,7 @@ from pathlib import Path
 
 from assertpy import assert_that
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import QApplication
 
 from decker.client.action_icons import decode_icon
@@ -15,6 +16,7 @@ from decker.client.icon_picker import (
     NO_TINT,
     IconBrowserDialog,
     IconPickerWidget,
+    _kind_badge,
 )
 
 
@@ -824,3 +826,23 @@ class TestSystemIconsInTheLibrary:
         _select(dialog, 3, 1)
 
         assert_that(_names(dialog)[0]).is_equal_to("org.gnome.Foo")
+
+
+class TestKindBadge:
+    @staticmethod
+    def _base() -> QPixmap:
+        pixmap = QPixmap(60, 60)
+        pixmap.fill(QColor(255, 255, 255))
+        return pixmap
+
+    def test_plain_images_get_no_badge(self, qapp):  # pylint: disable=unused-argument
+        base = self._base()
+        for name in ("a.png", "a.JPG", "noext"):
+            assert_that(_kind_badge(base, name).toImage() == base.toImage()).is_true()
+
+    def test_gif_and_svg_badges_fill_the_bottom_right_third_only(self, qapp):  # pylint: disable=unused-argument
+        for name in ("a.gif", "B.SVG"):
+            image = _kind_badge(self._base(), name).toImage()
+            assert_that(image.pixelColor(2, 2)).is_equal_to(QColor(255, 255, 255))
+            assert_that(image.pixelColor(30, 30)).is_equal_to(QColor(255, 255, 255))
+            assert_that(image.pixelColor(43, 50)).is_not_equal_to(QColor(255, 255, 255))

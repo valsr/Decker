@@ -11,12 +11,22 @@ from PyQt6.QtCore import (
     QAbstractListModel,
     QModelIndex,
     QObject,
+    QPointF,
+    QRectF,
     QSize,
     Qt,
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QConicalGradient,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -107,6 +117,36 @@ def _blank_pixmap() -> QPixmap:
     pixmap = QPixmap(_THUMB_SIZE, _THUMB_SIZE)
     pixmap.fill(Qt.GlobalColor.transparent)
     return pixmap
+
+
+def _kind_badge(pixmap: QPixmap, name: str) -> QPixmap:
+    """A copy of ``pixmap`` with a third-size corner badge: a play button for GIFs, a colour wheel for SVGs."""
+    suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if suffix not in ("gif", "svg") or pixmap.isNull():
+        return pixmap
+    result = QPixmap(pixmap)
+    side = max(1, min(result.width(), result.height()) // 3)
+    box = QRectF(result.width() - side, result.height() - side, side, side)
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor(255, 255, 255), max(1.0, side / 14)))
+    if suffix == "gif":
+        painter.setBrush(QBrush(QColor(0, 0, 0, 200)))
+        painter.drawEllipse(box)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        cx, cy, r = box.center().x(), box.center().y(), side * 0.25
+        painter.drawPolygon(
+            QPolygonF([QPointF(cx - r * 0.7, cy - r), QPointF(cx - r * 0.7, cy + r), QPointF(cx + r, cy)])
+        )
+    else:
+        wheel = QConicalGradient(box.center(), 90)
+        for stop in range(7):
+            wheel.setColorAt(stop / 6, QColor.fromHsvF((1 - stop / 6) % 1.0 if stop < 6 else 0.0, 0.9, 1.0))
+        painter.setBrush(QBrush(wheel))
+        painter.drawEllipse(box)
+    painter.end()
+    return result
 
 
 NO_TINT = ""  # pass as IconBrowserDialog's tint to show images as they are (e.g. backgrounds, which are never tinted)
@@ -263,6 +303,7 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
             return cached
         stored = self._cache_get(pack_id, name)
         if stored is not None:
+            stored = _kind_badge(stored, name)
             self._pixmaps[key] = stored
             return stored
         if key not in self._queued:
@@ -311,8 +352,8 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            self._pixmaps[key] = thumb
             self._cache_put(key[0], key[1], thumb)
+            self._pixmaps[key] = _kind_badge(thumb, key[1])
         self._model.refresh(key)
         self._schedule_next_load()
 
