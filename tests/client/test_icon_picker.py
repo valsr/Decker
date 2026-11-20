@@ -8,9 +8,11 @@ from assertpy import assert_that
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
+from decker.client.action_icons import decode_icon
 from decker.client.icon_cache import IconThumbnailCache
 from decker.client.icon_picker import (
     MAX_IMPORT_BYTES,
+    NO_TINT,
     IconBrowserDialog,
     IconPickerWidget,
 )
@@ -508,6 +510,24 @@ class TestIconBrowserLoading:
         image = _request(dialog, 0).toImage()
         pixel = image.pixelColor(image.width() // 2, image.height() // 2)
         assert_that((pixel.red(), pixel.green(), pixel.blue())).is_equal_to((255, 0, 0))
+
+    def test_no_tint_shows_svg_thumbnails_as_drawn(self, qapp):
+        cm = _manager(svg=_CURRENT)
+        dialog = IconBrowserDialog(None, cm, tint=NO_TINT)
+        tinted = IconBrowserDialog(None, _manager(svg=_CURRENT))
+
+        _request(dialog, 0)
+        _request(tinted, 0)
+        _drain(qapp)
+
+        assert_that(dialog._tint).is_none()  # pylint: disable=protected-access
+        assert_that(tinted._tint).is_not_none()  # pylint: disable=protected-access
+        expected = decode_icon(base64.b64encode(_CURRENT).decode())
+        assert expected is not None
+        want = expected.toImage().pixelColor(expected.width() // 2, expected.height() // 2)
+        image = _request(dialog, 0).toImage()
+        pixel = image.pixelColor(image.width() // 2, image.height() // 2)
+        assert_that((pixel.red(), pixel.green(), pixel.blue())).is_equal_to((want.red(), want.green(), want.blue()))
 
     def test_large_pack_does_not_load_every_icon_up_front(self, qapp):
         names = [f"icon-{i:04d}.svg" for i in range(2001)]

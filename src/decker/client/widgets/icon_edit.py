@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 from decker.client.action_icons import decode_icon, placeholder_pixmap
 from decker.client.context import AppContext
 from decker.client.icon_cache import IconThumbnailCache, icon_cache
-from decker.client.icon_picker import IconBrowserDialog, RpcCaller
+from decker.client.icon_picker import NO_TINT, IconBrowserDialog, RpcCaller
 from decker.client.widgets.color_button import ColorButton
 from decker.common.icon_ref import (
     icon_display_name,
@@ -58,6 +58,7 @@ class IconEdit(QWidget):
         self._name = QLabel()
         self._compact = False
         self._show_colour = True
+        self._tint_thumbnail = True
         self._placeholder = "No icon"
         self._browse_btn = QPushButton("Browse…")
         self._browse_btn.clicked.connect(self.browse)
@@ -100,6 +101,11 @@ class IconEdit(QWidget):
         self._show_colour = show
         self._refresh()
 
+    def set_tint_thumbnail(self, tint: bool) -> None:
+        """Tint SVG thumbnails with the fill colour (default), or show them as they are (backgrounds are untinted)."""
+        self._tint_thumbnail = tint
+        self._refresh()
+
     def thumbnail(self) -> QPixmap:
         """The 24 px preview of the current icon (blank when there is none)."""
         pixmap = self._preview.pixmap()
@@ -125,7 +131,7 @@ class IconEdit(QWidget):
 
     def browse(self) -> None:
         """Open the icon browser; a chosen icon becomes the value."""
-        dialog = IconBrowserDialog(self, self._rpc())
+        dialog = IconBrowserDialog(self, self._rpc(), None if self._tint_thumbnail else NO_TINT)
         dialog.icon_chosen.connect(self._on_icon_chosen)
         dialog.exec()
 
@@ -163,7 +169,7 @@ class IconEdit(QWidget):
         if cached is not None:
             return cached
         raw = self._raw_icon(parsed)
-        pixmap = decode_icon(raw, self._color) if raw else None
+        pixmap = decode_icon(raw, self._thumb_tint()) if raw else None
         if pixmap is None:
             return placeholder_pixmap(path, _PREVIEW_SIZE)  # a letter tile, never cached
         thumb = pixmap.scaled(
@@ -174,6 +180,9 @@ class IconEdit(QWidget):
         )
         self._cache_put(pack_id, path, thumb)
         return thumb
+
+    def _thumb_tint(self) -> str | None:
+        return self._color if self._tint_thumbnail else None
 
     def _ensure_versions(self, pack_id: str) -> None:
         """Learn the packs' plugin versions (one RPC per control) so thumbnails can be cached by version."""
@@ -198,14 +207,14 @@ class IconEdit(QWidget):
 
     def _cache_get(self, pack_id: str, path: str) -> QPixmap | None:
         try:
-            return self._cache.get(pack_id, path, _PREVIEW_SIZE, self._color)
+            return self._cache.get(pack_id, path, _PREVIEW_SIZE, self._thumb_tint())
         except Exception:  # pylint: disable=broad-exception-caught
             logging.warning("Icon thumbnail cache lookup failed", exc_info=True)
             return None
 
     def _cache_put(self, pack_id: str, path: str, pixmap: QPixmap) -> None:
         try:
-            self._cache.put(pack_id, path, _PREVIEW_SIZE, self._color, pixmap)
+            self._cache.put(pack_id, path, _PREVIEW_SIZE, self._thumb_tint(), pixmap)
         except Exception:  # pylint: disable=broad-exception-caught
             logging.warning("Icon thumbnail cache store failed", exc_info=True)
 

@@ -9,6 +9,7 @@ from assertpy import assert_that
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from decker.client.icon_cache import IconThumbnailCache
+from decker.client.icon_picker import NO_TINT
 from decker.client.widgets.icon_edit import IconEdit
 
 _CURRENT = (
@@ -403,3 +404,52 @@ def test_thumbnail_is_the_preview_pixmap(qapp):
     edit = IconEdit(rpc=lambda: None)
 
     assert_that(edit.thumbnail().isNull()).is_false()
+
+
+class TestUntintedThumbnail:
+    def test_untinted_thumbnail_ignores_the_fill_colour(self, qapp, tmp_path):
+        tinted = _edit(None, IconThumbnailCache(tmp_path / "a"))
+        untinted = _edit(None, IconThumbnailCache(tmp_path / "b"))
+        untinted.set_tint_thumbnail(False)
+
+        tinted.set_value({"ref": _REF, "color": "#ff0000"})
+        untinted.set_value({"ref": _REF, "color": "#ff0000"})
+
+        assert_that(_centre(tinted)).is_equal_to((255, 0, 0, 255))
+        assert_that(_centre(untinted)[:3]).is_not_equal_to((255, 0, 0))
+        assert_that(_centre(untinted)[3]).is_equal_to(255)
+
+    def test_untinted_cache_entry_does_not_depend_on_the_colour(self, qapp, tmp_path):
+        cache = IconThumbnailCache(tmp_path)
+        edit = _edit(FakeRpc(packs=_PACKS), cache)
+        edit.set_tint_thumbnail(False)
+        edit.set_value({"ref": _REF, "color": "#ff0000"})
+
+        assert_that(cache.get("com.x.p", "house.svg", 24, None)).is_not_none()
+        assert_that(cache.get("com.x.p", "house.svg", 24, "#ff0000")).is_none()
+
+
+def _browse_tint(edit: IconEdit, monkeypatch) -> list[Any]:
+    seen: list[Any] = []
+
+    class FakeDialog:
+        icon_chosen = type("S", (), {"connect": lambda *_a: None})()
+
+        def __init__(self, *args: Any) -> None:
+            seen.append(args[2] if len(args) > 2 else None)
+
+        def exec(self) -> None:
+            pass
+
+    monkeypatch.setattr("decker.client.widgets.icon_edit.IconBrowserDialog", FakeDialog)
+    edit.browse()
+    return seen
+
+
+def test_browser_tint_follows_the_thumbnail_option(qapp, monkeypatch, tmp_path) -> None:
+    edit = _edit(None, IconThumbnailCache(tmp_path))
+    assert_that(_browse_tint(edit, monkeypatch)).is_equal_to([None])
+
+    edit.set_tint_thumbnail(False)
+
+    assert_that(_browse_tint(edit, monkeypatch)).is_equal_to([NO_TINT])
