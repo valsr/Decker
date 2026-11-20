@@ -75,7 +75,16 @@ def _save_gif(frames: list[Image.Image], delays: list[int]) -> bytes:
 
 
 def _compose(spec: AnimationSpec, frames: Sequence[GifFrame], size: int) -> list[Image.Image]:
-    return compose_key_frames(spec.appearance, [frame.image for frame in frames], spec.title, size, spec.scale)
+    return compose_key_frames(
+        spec.appearance,
+        [frame.image for frame in frames],
+        spec.title,
+        size,
+        spec.scale,
+        layer=spec.layer,
+        overlay=spec.overlay,
+        overlay_color=spec.overlay_color,
+    )
 
 
 def _reports_by_quality(
