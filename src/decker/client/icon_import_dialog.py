@@ -50,7 +50,8 @@ class IconImportDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._interpolation.addItems(list(_INTERPOLATIONS))
         self._preview = QLabel()
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview.setFixedSize(_PREVIEW_SIZE, _PREVIEW_SIZE)
+        self._preview.setProperty("role", "dock")  # the border is the key's edge: what falls outside is cut off
+        self._preview.setFixedSize(_PREVIEW_SIZE + 2, _PREVIEW_SIZE + 2)
         self._error = QLabel()
         self._error.setWordWrap(True)
         self._use_suggestion = QPushButton()

@@ -163,12 +163,15 @@ class _DeleteBadgeDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self._is_user_entry = is_user_entry
 
-    def _badge_rect(self, option: QStyleOptionViewItem) -> QRectF:
-        style = option.widget.style() if option.widget is not None else None
+    def _badge_rect(self, option: QStyleOptionViewItem, index: QModelIndex) -> QRectF:
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)  # the decoration rect is only known once the option carries the item's data
+        widget = opt.widget
+        style = widget.style() if widget is not None else None
         icon = (
-            style.subElementRect(QStyle.SubElement.SE_ItemViewItemDecoration, option, option.widget)
+            style.subElementRect(QStyle.SubElement.SE_ItemViewItemDecoration, opt, widget)
             if style is not None
-            else option.rect
+            else opt.rect
         )
         side = icon.width() / 3
         return QRectF(icon.right() - side, icon.top(), side, side)
@@ -177,7 +180,7 @@ class _DeleteBadgeDelegate(QStyledItemDelegate):
         super().paint(painter, option, index)
         if not self._is_user_entry(index):
             return
-        box = self._badge_rect(option)
+        box = self._badge_rect(option, index)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(QPen(QColor(255, 255, 255), max(1.0, box.width() / 14)))
@@ -197,7 +200,7 @@ class _DeleteBadgeDelegate(QStyledItemDelegate):
             event is not None
             and event.type() == QEvent.Type.MouseButtonRelease
             and self._is_user_entry(index)
-            and self._badge_rect(option).contains(event.position())
+            and self._badge_rect(option, index).contains(event.position())
         ):
             self.delete_clicked.emit(index)
             return True

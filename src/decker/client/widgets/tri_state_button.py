@@ -83,6 +83,8 @@ class TriStateButton(QWidget):
             button.setToolTip(tooltip)
             button.setCheckable(True)
             button.setAutoRaise(False)
+            button.setProperty("role", "segment")
+            button.setProperty("pos", "first" if index == 0 else "last" if index == len(entries) - 1 else "mid")
             self._group.addButton(button, index)
             row.addWidget(button)
             self._data.append(data)

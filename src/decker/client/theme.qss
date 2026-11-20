@@ -476,3 +476,37 @@ QLabel#keyPreview {
     border: 1px solid $border;
     border-radius: 4px;
 }
+
+QFrame[role="dock"] {
+    border: 1px solid $border;
+    border-radius: 4px;
+    background: $base;
+}
+
+QToolButton[role="segment"] {
+    border: 1px solid $border;
+    border-radius: 0;
+    background: $base;
+    padding: 3px 6px;
+    margin-left: -1px;
+}
+
+QToolButton[role="segment"]:hover {
+    background: $hover;
+}
+
+QToolButton[role="segment"]:checked {
+    background: $hover;
+    border-color: $accent_line;
+}
+
+QToolButton[role="segment"][pos="first"] {
+    margin-left: 0;
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+}
+
+QToolButton[role="segment"][pos="last"] {
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+}
