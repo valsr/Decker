@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from decker.client.events import DetectionStatusEvent
 from decker.client.widgets import profiles_dialog
 from decker.client.widgets.profiles_dialog import ProfilesDialog
+from decker.client.widgets.toggle_switch import ToggleSwitch
 from decker.common.model import (
     AppRule,
     DefaultRule,
@@ -324,9 +325,19 @@ class TestStatus:
         assert_that(dialog._editor._error.isHidden()).is_true()
         assert_that(dialog._editor._name.text()).is_equal_to("")
 
-    def test_default_row_is_a_toggle_labelled_default_to(self, dialog):
-        assert_that(dialog._default_enable.text()).is_equal_to("Default to")
+    def test_default_row_is_a_toggle_switch(self, dialog):
+        assert_that(isinstance(dialog._default_enable, ToggleSwitch)).is_true()
         assert_that(dialog._default_enable.isCheckable()).is_true()
+
+    def test_bottom_rows_line_up_icon_with_switch_to_and_buttons_with_spy_and_close(self, dialog):
+        grid = dialog.layout()
+
+        assert_that(grid.itemAtPosition(3, 0).layout().indexOf(dialog._icon)).is_greater_than_or_equal_to(0)
+        assert_that(grid.getItemPosition(grid.indexOf(dialog._editor.switch_row))[:2]).is_equal_to((3, 1))
+        assert_that(grid.itemAtPosition(4, 0).layout().indexOf(dialog._clone_button)).is_greater_than_or_equal_to(0)
+        right = grid.itemAtPosition(4, 1).layout()
+        assert_that(right.indexOf(dialog._spy_button)).is_greater_than_or_equal_to(0)
+        assert_that(right.indexOf(dialog._close_button)).is_greater_than_or_equal_to(0)
 
     def test_there_is_no_window_detection_line(self, dialog):
         assert_that(hasattr(dialog, "_status_label")).is_false()

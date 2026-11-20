@@ -179,16 +179,22 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
         form.addRow("Name", self._name)
         for field, row in self._rows.items():
             form.addRow(FIELD_NAMES[field], row)
-        switch = QHBoxLayout()
+        self.switch_row = QWidget()  # placed by the owner (the dialog lines it up with the profile's own controls)
+        switch = QHBoxLayout(self.switch_row)
+        switch.setContentsMargins(0, 0, 0, 0)
         switch.addWidget(QLabel("Switch to"))
         switch.addWidget(self._profile, 1)
         switch.addWidget(self._page, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(form)
-        layout.addLayout(switch)
         layout.addWidget(self._warning)
         layout.addWidget(self._error)
+
+    def setEnabled(self, a0: bool) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Enable or disable the editor together with its Switch to row."""
+        super().setEnabled(a0)
+        self.switch_row.setEnabled(a0)
 
     def set_profiles(self, profiles: list[ProfileInfo]) -> None:
         """Offer these profiles as targets, keeping the chosen target when it still exists."""
@@ -262,7 +268,7 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
         return self._inside(QApplication.focusWidget())
 
     def _inside(self, widget: QWidget | None) -> bool:
-        return widget is not None and self.isAncestorOf(widget)
+        return widget is not None and (self.isAncestorOf(widget) or self.switch_row.isAncestorOf(widget))
 
     def _on_focus_changed(self, old: QWidget | None, new: QWidget | None) -> None:
         if self._inside(old) and not self._inside(new):
