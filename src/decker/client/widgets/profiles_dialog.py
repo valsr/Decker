@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -35,6 +36,7 @@ from decker.client.widgets.rule_editor import (
     fill_profile_combo,
     unsupported_fields,
 )
+from decker.client.widgets.toggle_switch import ToggleSwitch
 from decker.client.widgets.window_spy import WindowSpyDialog, rule_from_window
 from decker.common.model import (
     AppRule,
@@ -110,12 +112,19 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._select_rule_id = ""
         self._spy: WindowSpyDialog | None = None
         self._build_widgets()
-        outer = QVBoxLayout(self)
-        panes = QHBoxLayout()
-        panes.addLayout(self._build_profile_pane(), 1)
-        panes.addLayout(self._build_rules_pane(), 2)
-        outer.addLayout(panes, 1)
-        outer.addLayout(self._build_status_strip())
+        grid = QGridLayout(self)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 2)
+        grid.setRowStretch(1, 1)
+        grid.addWidget(QLabel("Profiles"), 0, 0)
+        grid.addWidget(QLabel("Rules (first match wins)"), 0, 1)
+        grid.addWidget(self._profile_list, 1, 0)
+        grid.addLayout(self._build_rules_pane(), 1, 1)
+        grid.addLayout(_labelled("Name", self._name_edit), 2, 0)
+        grid.addLayout(_labelled("Icon", self._icon), 3, 0)  # Icon and Switch to share a row, as do the two button rows
+        grid.addWidget(self._editor.switch_row, 3, 1)
+        grid.addLayout(self._build_profile_buttons(), 4, 0)
+        grid.addLayout(self._build_status_strip(), 4, 1)
         self._connect_signals()
         self.resize(900, 560)
 
@@ -138,28 +147,19 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._down_button = QPushButton("Move down")
         self._editor = RuleEditor(self._pages, icon_for=self._icon_for)
         self._editor.setEnabled(False)
-        self._default_enable = QPushButton("Default to")
-        self._default_enable.setCheckable(True)
+        self._default_enable = ToggleSwitch()
         self._default_enable.setToolTip("Switch to this profile when no rule matches")
         self._default_profile = QComboBox()
         self._default_page = QComboBox()
         self._spy_button = QPushButton("Window Spy")
         self._close_button = QPushButton("Close")
 
-    def _build_profile_pane(self) -> QVBoxLayout:
-        form = QFormLayout()
-        form.addRow("Name", self._name_edit)
-        form.addRow("Icon", self._icon)
+    def _build_profile_buttons(self) -> QHBoxLayout:
         actions = QHBoxLayout()
         actions.addWidget(self._add_profile_button)
         actions.addWidget(self._clone_button)
         actions.addWidget(self._delete_profile_button)
-        pane = QVBoxLayout()
-        pane.addWidget(QLabel("Profiles"))
-        pane.addWidget(self._profile_list, 1)
-        pane.addLayout(form)
-        pane.addLayout(actions)
-        return pane
+        return actions
 
     def _build_rules_pane(self) -> QVBoxLayout:
         buttons = QHBoxLayout()
@@ -168,10 +168,10 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         buttons.addStretch()
         default_row = QHBoxLayout()
         default_row.addWidget(self._default_enable)
+        default_row.addWidget(QLabel("Default to"))
         default_row.addWidget(self._default_profile, 1)
         default_row.addWidget(self._default_page, 1)
         pane = QVBoxLayout()
-        pane.addWidget(QLabel("Rules (first match wins)"))
         pane.addWidget(self._rule_list, 1)
         pane.addLayout(buttons)
         pane.addLayout(default_row)
@@ -532,6 +532,15 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
             page_id if isinstance(page_id, str) else "",
         )
         self._api.app_default_rule_set(self._device_id, default)
+
+
+def _labelled(text: str, widget: QWidget) -> QHBoxLayout:
+    row = QHBoxLayout()
+    label = QLabel(f"{text}:")
+    label.setMinimumWidth(40)
+    row.addWidget(label)
+    row.addWidget(widget, 1)
+    return row
 
 
 def _separator() -> QFrame:

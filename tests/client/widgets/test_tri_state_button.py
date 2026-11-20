@@ -50,3 +50,17 @@ class TestTriStateButton:
         assert_that(checked).is_equal_to([False, True, False])
         button.setCurrentIndex(7)
         assert_that(button.currentData()).is_equal_to("b")
+
+
+def test_toggle_switch_toggles_and_emits(qapp):  # pylint: disable=unused-argument
+    from decker.client.widgets.toggle_switch import ToggleSwitch
+
+    switch = ToggleSwitch()
+    seen: list[bool] = []
+    switch.toggled.connect(seen.append)
+
+    switch.click()
+    switch.click()
+
+    assert_that(seen).is_equal_to([True, False])
+    assert_that(switch.sizeHint().width()).is_greater_than(switch.sizeHint().height())
