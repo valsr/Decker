@@ -339,6 +339,15 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         return library.import_icon(label, bytes(data), parsed).to_json()
 
     @exposed
+    def icon_delete(self, name: str) -> bool:
+        """Delete an image from the User icon pack (loopback only); False when it does not exist."""
+        if not self._install_allowed():
+            raise PermissionError(_REMOTE_INSTALL_DENIED)
+        if self._context is None:
+            return False
+        return self._context.plugin_manager.icon_packs.user_icons.delete_icon(name)
+
+    @exposed
     def icon_import_suggest(self, name: str) -> str:
         """Return the first free User icon id for a name."""
         if self._context is None:

@@ -7,7 +7,9 @@ from pathlib import Path
 from assertpy import assert_that
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPixmap
-from PyQt6.QtWidgets import QApplication
+from unittest.mock import patch
+
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from decker.client.action_icons import decode_icon
 from decker.client.icon_cache import IconThumbnailCache
@@ -846,3 +848,75 @@ class TestKindBadge:
             assert_that(image.pixelColor(2, 2)).is_equal_to(QColor(255, 255, 255))
             assert_that(image.pixelColor(30, 30)).is_equal_to(QColor(255, 255, 255))
             assert_that(image.pixelColor(43, 50)).is_not_equal_to(QColor(255, 255, 255))
+
+
+_USER_PACK = {
+    "id": "decker.user",
+    "plugin_version": "1",
+    "name": "User",
+    "description": "",
+    "plugin_id": "decker.user",
+    "plugin_name": "User",
+}
+
+
+class _UserManager(FakeConnectionManager):
+    def __init__(self):
+        super().__init__([*_PACKS, _USER_PACK], {**_ICONS, "decker.user": ["mine.png"]})
+        self.deleted = False
+
+    def call(self, method, *args):
+        if method == "icon_delete":
+            self.calls.append((method, *args))
+            self.icons["decker.user"] = []
+            return True
+        return super().call(method, *args)
+
+
+class TestUserImages:
+    def test_user_pack_is_flat_right_after_all_images(self, qapp):  # pylint: disable=unused-argument
+        dialog = IconBrowserDialog(None, _UserManager())
+
+        top = _top(dialog)
+
+        assert_that([i.text(0) for i in top]).is_equal_to(["All images", "User", "X Plugin", "Y Plugin"])
+        assert_that(top[1].childCount()).is_zero()
+
+    def test_import_button_shows_only_for_the_user_pack(self, qapp):  # pylint: disable=unused-argument
+        dialog = IconBrowserDialog(None, _UserManager())
+
+        _select(dialog, 1)
+        assert_that(dialog._import_btn.isHidden()).is_false()
+        _select(dialog, 2, 0)
+        assert_that(dialog._import_btn.isHidden()).is_true()
+
+    def test_delete_confirms_calls_the_server_and_refreshes(self, qapp):  # pylint: disable=unused-argument
+        manager = _UserManager()
+        dialog = IconBrowserDialog(None, manager)
+        _select(dialog, 1)
+        assert_that(_names(dialog)).is_equal_to(["mine"])
+
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            dialog._on_delete_clicked(dialog._model.index(0, 0))
+
+        assert_that(manager.calls).contains(("icon_delete", "mine.png"))
+        assert_that(_names(dialog)).is_empty()
+
+    def test_delete_declined_keeps_the_image(self, qapp):  # pylint: disable=unused-argument
+        manager = _UserManager()
+        dialog = IconBrowserDialog(None, manager)
+        _select(dialog, 1)
+
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
+            dialog._on_delete_clicked(dialog._model.index(0, 0))
+
+        assert_that([c for c in manager.calls if c[0] == "icon_delete"]).is_empty()
+        assert_that(_names(dialog)).is_equal_to(["mine"])
+
+    def test_only_user_images_get_a_delete_badge(self, qapp):  # pylint: disable=unused-argument
+        dialog = IconBrowserDialog(None, _UserManager())
+
+        _select(dialog, 1)
+        assert_that(dialog._is_user_entry(dialog._model.index(0, 0))).is_true()
+        _select(dialog, 2, 0)
+        assert_that(dialog._is_user_entry(dialog._model.index(0, 0))).is_false()

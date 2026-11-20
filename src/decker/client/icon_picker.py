@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from PyQt6.QtCore import (
     QAbstractListModel,
+    QEvent,
     QModelIndex,
     QObject,
     QPointF,
@@ -36,6 +37,9 @@ from PyQt6.QtWidgets import (
     QListView,
     QMessageBox,
     QPushButton,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -52,6 +56,7 @@ _THUMB_SIZE = 64
 MAX_IMPORT_BYTES = 4 * 1024 * 1024  # the server's per-icon limit
 _FILTER_DELAY_MS = 150
 _DATA_ROLE = Qt.ItemDataRole.UserRole
+USER_PACK_ID = "decker.user"
 
 
 class RpcCaller(Protocol):  # pylint: disable=too-few-public-methods
@@ -149,6 +154,56 @@ def _kind_badge(pixmap: QPixmap, name: str) -> QPixmap:
     return result
 
 
+class _DeleteBadgeDelegate(QStyledItemDelegate):
+    """Draws a one-third-size delete badge at the top right of User images and reports clicks on it."""
+
+    delete_clicked = pyqtSignal(QModelIndex)
+
+    def __init__(self, is_user_entry: Callable[[QModelIndex], bool], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._is_user_entry = is_user_entry
+
+    def _badge_rect(self, option: QStyleOptionViewItem) -> QRectF:
+        style = option.widget.style() if option.widget is not None else None
+        icon = (
+            style.subElementRect(QStyle.SubElement.SE_ItemViewItemDecoration, option, option.widget)
+            if style is not None
+            else option.rect
+        )
+        side = icon.width() / 3
+        return QRectF(icon.right() - side, icon.top(), side, side)
+
+    def paint(self, painter: Any, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        super().paint(painter, option, index)
+        if not self._is_user_entry(index):
+            return
+        box = self._badge_rect(option)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(255, 255, 255), max(1.0, box.width() / 14)))
+        painter.setBrush(QBrush(QColor(190, 40, 40, 230)))
+        painter.drawEllipse(box)
+        inset = box.width() * 0.3
+        inner = box.adjusted(inset, inset, -inset, -inset)
+        painter.drawLine(inner.topLeft(), inner.bottomRight())
+        painter.drawLine(inner.topRight(), inner.bottomLeft())
+        painter.restore()
+
+    def editorEvent(  # noqa: N802  # pylint: disable=invalid-name,too-many-arguments,too-many-positional-arguments
+        self, event: Any, model: Any, option: QStyleOptionViewItem, index: QModelIndex
+    ) -> bool:
+        """Turn a left click on the badge into delete_clicked (and swallow it so the image is not chosen)."""
+        if (
+            event is not None
+            and event.type() == QEvent.Type.MouseButtonRelease
+            and self._is_user_entry(index)
+            and self._badge_rect(option).contains(event.position())
+        ):
+            self.delete_clicked.emit(index)
+            return True
+        return super().editorEvent(event, model, option, index)
+
+
 NO_TINT = ""  # pass as IconBrowserDialog's tint to show images as they are (e.g. backgrounds, which are never tinted)
 
 
@@ -194,6 +249,12 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
         self._icon_list.setEditTriggers(QListView.EditTrigger.NoEditTriggers)
         self._status = QLabel()
         self._status.setProperty("role", "muted")
+        self._import_btn = QPushButton("Import…")
+        self._import_btn.hide()
+        self._import_btn.clicked.connect(self._on_import)
+        self._delegate = _DeleteBadgeDelegate(self._is_user_entry, self._icon_list)
+        self._delegate.delete_clicked.connect(self._on_delete_clicked)
+        self._icon_list.setItemDelegate(self._delegate)
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
         self._filter_timer.setInterval(_FILTER_DELAY_MS)
@@ -203,8 +264,11 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
         self._icon_list.doubleClicked.connect(self._on_activated)
         self._icon_list.activated.connect(self._on_activated)
 
+        search_row = QHBoxLayout()
+        search_row.addWidget(self._import_btn)
+        search_row.addWidget(self._search, 1)
         right = QVBoxLayout()
-        right.addWidget(self._search)
+        right.addLayout(search_row)
         right.addWidget(self._icon_list)
         panes = QHBoxLayout()
         panes.addWidget(self._tree, 1)
@@ -247,7 +311,14 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
         everything.setData(0, _DATA_ROLE, ("all", ""))
         self._tree.addTopLevelItem(everything)
         plugins: dict[str, QTreeWidgetItem] = {}
+        user_pack = next((p for p in self._packs if str(p["id"]) == USER_PACK_ID), None)
+        if user_pack is not None:  # the user's own images sit right under "All images", not under a plugin node
+            user = QTreeWidgetItem([str(user_pack.get("name", "User"))])
+            user.setData(0, _DATA_ROLE, ("pack", USER_PACK_ID))
+            self._tree.addTopLevelItem(user)
         for pack in self._packs:
+            if str(pack["id"]) == USER_PACK_ID:
+                continue
             plugin_id = str(pack.get("plugin_id", ""))
             node = plugins.get(plugin_id)
             if node is None:
@@ -294,7 +365,38 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
                 continue
             entries += [(pack_id, n) for n in names if not needle or needle in icon_display_name(n).lower()]
         self._model.set_entries(entries)
+        self._import_btn.setVisible(self._selected_pack_ids() == [USER_PACK_ID])
         self._status.setText(_status_text(bool(entries), failed, bool(needle)))
+
+    def _is_user_entry(self, index: QModelIndex) -> bool:
+        entry = self._model.entry(index.row())
+        return entry is not None and entry[0] == USER_PACK_ID
+
+    def _on_import(self) -> None:
+        import_image_file(self, self._cm, lambda _file: self._reload_user_pack())
+
+    def _on_delete_clicked(self, index: QModelIndex) -> None:
+        entry = self._model.entry(index.row())
+        if entry is None or self._cm is None:
+            return
+        answer = QMessageBox.question(
+            self, "Delete image", f"Delete {icon_display_name(entry[1])}? Keys using it will lose the image."
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            deleted = bool(self._cm.call("icon_delete", entry[1]))
+        except Exception:  # pylint: disable=broad-exception-caught
+            deleted = False
+        if not deleted:
+            QMessageBox.warning(self, "Delete image", "Could not delete the image (deleting needs a local connection).")
+            return
+        self._reload_user_pack()
+
+    def _reload_user_pack(self) -> None:
+        self._names.pop(USER_PACK_ID, None)
+        self._pixmaps = {k: v for k, v in self._pixmaps.items() if k[0] != USER_PACK_ID}
+        self._refresh()
 
     def _pixmap_for(self, pack_id: str, name: str) -> QPixmap:
         key = (pack_id, name)
@@ -377,6 +479,52 @@ def _status_text(has_entries: bool, failed: bool, searching: bool) -> str:
     return "No images match." if searching else "This pack has no images."
 
 
+def _import_allowed(connection_manager: "RpcCaller | None") -> bool:
+    if connection_manager is None:
+        return False
+    try:
+        return bool(connection_manager.call("plugin_install_allowed"))
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+
+
+def _read_icon_file(parent: QWidget | None, path: Path) -> bytes | None:
+    try:
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            QMessageBox.warning(parent, "Import image", f"{path.name} is not a regular file.")
+            return None
+        if info.st_size <= MAX_IMPORT_BYTES:
+            with path.open("rb") as handle:
+                data = handle.read(MAX_IMPORT_BYTES + 1)
+            if len(data) <= MAX_IMPORT_BYTES:
+                return data
+    except OSError as exc:
+        QMessageBox.warning(parent, "Import image", f"Cannot read {path.name}: {exc}")
+        return None
+    QMessageBox.warning(parent, "Import image", f"{path.name} is larger than 4 MiB and cannot be imported.")
+    return None
+
+
+def import_image_file(
+    parent: QWidget | None, connection_manager: "RpcCaller | None", on_imported: Callable[[str], None]
+) -> None:
+    """Pick an image file, preview and import it into the User pack; ``on_imported`` gets the new file name."""
+    if connection_manager is None or not _import_allowed(connection_manager):
+        QMessageBox.information(parent, "Import image", "Importing images needs a local connection to the server.")
+        return
+    path_str, _filter = QFileDialog.getOpenFileName(parent, "Choose image", "", _IMAGE_FILE_FILTER)
+    if not path_str:
+        return
+    path = Path(path_str)
+    data = _read_icon_file(parent, path)
+    if data is None:
+        return
+    dialog = IconImportDialog(parent, connection_manager, path.name, data)
+    dialog.imported.connect(on_imported)
+    dialog.exec()
+
+
 class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
     """Two-button icon picker: a local file, or an icon from an installed pack."""
 
@@ -396,45 +544,8 @@ class IconPickerWidget(QWidget):  # pylint: disable=too-few-public-methods
         layout.addWidget(choose_file_btn)
         layout.addWidget(from_pack_btn)
 
-    def _import_allowed(self) -> bool:
-        if self.connection_manager is None:
-            return False
-        try:
-            return bool(self.connection_manager.call("plugin_install_allowed"))
-        except Exception:  # pylint: disable=broad-exception-caught
-            return False
-
     def _choose_file(self) -> None:
-        if self.connection_manager is None or not self._import_allowed():
-            QMessageBox.information(self, "Import image", "Importing images needs a local connection to the server.")
-            return
-        path_str, _filter = QFileDialog.getOpenFileName(self, "Choose image", "", _IMAGE_FILE_FILTER)
-        if not path_str:
-            return
-        path = Path(path_str)
-        data = self._read_icon_file(path)
-        if data is None:
-            return
-        dialog = IconImportDialog(self, self.connection_manager, path.name, data)
-        dialog.imported.connect(lambda file: self.pack_icon_selected.emit("decker.user", file))
-        dialog.exec()
-
-    def _read_icon_file(self, path: Path) -> bytes | None:
-        try:
-            info = path.stat()
-            if not stat.S_ISREG(info.st_mode):
-                QMessageBox.warning(self, "Import image", f"{path.name} is not a regular file.")
-                return None
-            if info.st_size <= MAX_IMPORT_BYTES:
-                with path.open("rb") as handle:
-                    data = handle.read(MAX_IMPORT_BYTES + 1)
-                if len(data) <= MAX_IMPORT_BYTES:
-                    return data
-        except OSError as exc:
-            QMessageBox.warning(self, "Import image", f"Cannot read {path.name}: {exc}")
-            return None
-        QMessageBox.warning(self, "Import image", f"{path.name} is larger than 4 MiB and cannot be imported.")
-        return None
+        import_image_file(self, self.connection_manager, lambda file: self.pack_icon_selected.emit(USER_PACK_ID, file))
 
     def _browse_icon_packs(self) -> None:
         dialog = IconBrowserDialog(self, self.connection_manager)
