@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -60,7 +60,7 @@ class _Entry:  # pylint: disable=too-many-instance-attributes
     queue: deque[Message] = field(default_factory=lambda: deque(maxlen=_MAX_QUEUED))
 
 
-class PluginSupervisor:
+class PluginSupervisor:  # pylint: disable=too-many-instance-attributes
     """Ref-counted lifecycle, readiness queueing, crash restarts and a ping/memory watchdog."""
 
     def __init__(
@@ -81,6 +81,7 @@ class PluginSupervisor:
         self._closed = False
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self.on_exit: Callable[[str], None] | None = None  # called with the plugin id once its process has ended
 
     def register(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self, plugin_id: str, command: list[str], cwd: Path, env: dict[str, str], hello: dict[str, Any]
@@ -96,6 +97,7 @@ class PluginSupervisor:
             process = self._detach(entry) if entry else None
         if process is not None:
             process.stop()
+            self._notify_exit([plugin_id])
 
     def acquire(self, plugin_id: str) -> None:
         """Count one more live context; starts the process on first use."""
@@ -190,12 +192,14 @@ class PluginSupervisor:
         self._thread = None
         with self._lock:
             self._closed = True
-            processes = [p for p in (self._detach(e) for e in self._entries.values()) if p is not None]
-        self._stop_processes(processes)
+            detached = [(i, self._detach(e)) for i, e in self._entries.items()]
+        stopped = [(plugin_id, p) for plugin_id, p in detached if p is not None]
+        self._stop_processes([p for _, p in stopped])
+        self._notify_exit(plugin_id for plugin_id, _ in stopped)
 
     def tick(self, now: float) -> None:
         """Run idle, restart, memory and ping checks as of `now`."""
-        to_stop: list[PluginProcess] = []
+        to_stop: list[tuple[str, PluginProcess]] = []
         to_kill: list[PluginProcess] = []
         failures: list[tuple[str, str]] = []
         with self._lock:
@@ -207,7 +211,8 @@ class PluginSupervisor:
                     failures.append((plugin_id, failure))
         for plugin_id, failure in failures:
             self._notify_failed(plugin_id, failure)
-        self._stop_processes(to_stop)
+        self._stop_processes([p for _, p in to_stop])
+        self._notify_exit(plugin_id for plugin_id, _ in to_stop)
         for process in to_kill:
             process.stop(timeout=_KILL_TIMEOUT_S)
 
@@ -219,7 +224,12 @@ class PluginSupervisor:
                 logger.exception("supervisor tick failed")
 
     def _tick_entry(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        self, plugin_id: str, entry: _Entry, now: float, to_stop: list[PluginProcess], to_kill: list[PluginProcess]
+        self,
+        plugin_id: str,
+        entry: _Entry,
+        now: float,
+        to_stop: list[tuple[str, PluginProcess]],
+        to_kill: list[PluginProcess],
     ) -> str | None:
         if entry.process is None:
             if entry.restart_at is not None and now >= entry.restart_at and entry.refs > 0 and not entry.failed:
@@ -229,7 +239,7 @@ class PluginSupervisor:
             if entry.idle_deadline is not None and now >= entry.idle_deadline:
                 process = self._detach(entry)
                 if process is not None:
-                    to_stop.append(process)
+                    to_stop.append((plugin_id, process))
             return None
         if entry.killing:
             return None
@@ -290,6 +300,16 @@ class PluginSupervisor:
     def _notify_failed(self, plugin_id: str, reason: str | None) -> None:
         if reason is not None:
             self._on_failed(plugin_id, reason)
+
+    def _notify_exit(self, plugin_ids: Iterable[str]) -> None:
+        hook = self.on_exit
+        if hook is None:
+            return
+        for plugin_id in plugin_ids:
+            try:
+                hook(plugin_id)  # pylint: disable=not-callable  # narrowed above; pylint misses it
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception("[%s] exit hook failed", plugin_id)
 
     @staticmethod
     def _detach(entry: _Entry) -> PluginProcess | None:
@@ -373,9 +393,9 @@ class PluginSupervisor:
                 return
             entry.process = None
             entry.ready = False
-            if entry.refs == 0:
-                return
-            failure = self._record_crash(entry, f"exit code {returncode}")
+            if entry.refs > 0:
+                failure = self._record_crash(entry, f"exit code {returncode}")
+        self._notify_exit([plugin_id])
         self._notify_failed(plugin_id, failure)
 
     def _record_crash(self, entry: _Entry, detail: str) -> str | None:

@@ -8,6 +8,7 @@ from decker.common.model import PageInfo, ProfileInfo
 from decker.plugin.settings_schema import parse_settings_schema
 from decker.server.page_vars import (
     DeviceLayout,
+    VariableChain,
     deliver_settings,
     has_dynamic_fields,
     page_variables,
@@ -16,6 +17,7 @@ from decker.server.page_vars import (
     resolve_profile_switch_target,
     resolve_switch_target,
     stored_profile_ids,
+    templated_texts,
 )
 
 P1, P2, Q1 = PageInfo("p1", "One"), PageInfo("p2", "Two"), PageInfo("q1", "Other")
@@ -174,3 +176,45 @@ class TestSwitchTargets:
         layout = DeviceLayout(profiles=(ProfileInfo(0, "Default", ""),), active_profile_id=0)
 
         assert_that(resolve_profile_switch_target(layout, {"to": "next", "wrap": True})).is_none()
+
+
+class _AnswersUnlisted(dict):
+    def get(self, key, default=None):  # like VariableStore.view(): declared names answer "" without being listed
+        return super().get(key, "" if key == "declared" else default)
+
+
+class TestVariableChain:
+    def test_first_layer_wins_and_get_falls_through(self) -> None:
+        chain = VariableChain({"a": "page"}, _AnswersUnlisted({"a": "global", "b": "two"}))
+
+        assert_that(chain.get("a")).is_equal_to("page")
+        assert_that(chain["b"]).is_equal_to("two")
+        assert_that(chain.get("declared", "?")).is_equal_to("")
+        assert_that(chain.get("nobody", "?")).is_equal_to("?")
+        assert_that(list(chain)).is_equal_to(["a", "b"])
+        assert_that(len(chain)).is_equal_to(2)
+        with pytest.raises(KeyError):
+            _ = chain["nobody"]
+
+    def test_deliver_settings_uses_given_variables(self) -> None:
+        schema = parse_settings_schema([{"key": "t", "type": "text", "template": True}], "here")
+
+        delivered = deliver_settings(schema, {"t": "{a} {page_name}"}, DeviceLayout(), {"a": "{page_name}"})
+
+        assert_that(delivered["t"]).is_equal_to("{page_name} {page_name}")
+
+
+def test_templated_texts_lists_opted_in_text_only() -> None:
+    schema = parse_settings_schema(
+        [
+            {"key": "t", "type": "text", "template": True},
+            {"key": "s", "type": "text_style", "template": True},
+            {"key": "plain", "type": "text"},
+            {"key": "gone", "type": "text", "template": True},
+        ],
+        "here",
+    )
+
+    texts = templated_texts(schema, {"t": "{a}", "s": {"text": "{b}", "size": 3}, "plain": "{c}"})
+
+    assert_that(texts).is_equal_to(["{a}", "{b}"])

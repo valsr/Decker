@@ -1,7 +1,7 @@
 """Page variables for key templates and the delivery form of settings (expanded text, resolved pages)."""
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
@@ -11,6 +11,7 @@ from decker.common.model import PageInfo, ProfileInfo
 from decker.common.template import expand_template
 from decker.plugin.settings_schema import SettingEntry, SettingField
 
+_MISSING = object()
 EMPTY_PAGE: dict[str, Any] = {"page_id": "", "name": "", "index": 0, "profile_id": -1}
 EMPTY_PROFILE: dict[str, Any] = {"profile_id": -1, "name": "", "index": 0, "icon": ""}
 _PROFILE_ID = re.compile(r"[0-9]+\Z")
@@ -38,6 +39,33 @@ def page_variables(layout: DeviceLayout) -> dict[str, str]:
             variables["current_profile"] = profile.name
             variables["profile_id"] = str(profile.profile_id)
     return variables
+
+
+class VariableChain(Mapping[str, str]):
+    """Read-only variables looked up layer by layer, the first layer answering ``get`` winning."""
+
+    def __init__(self, *layers: Mapping[str, str]) -> None:
+        self._layers: tuple[Mapping[str, str], ...] = layers
+
+    def __getitem__(self, key: str) -> str:
+        value = self.get(key, _MISSING)
+        if value is _MISSING:
+            raise KeyError(key)
+        return str(value)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(dict.fromkeys(key for layer in self._layers for key in layer))
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """The first layer's answer for key (a layer's ``get`` may answer names it does not list), else default."""
+        for layer in self._layers:
+            value = layer.get(key, _MISSING)
+            if value is not _MISSING:
+                return value
+        return default
 
 
 def resolve_page(layout: DeviceLayout, page_id: Any) -> dict[str, Any]:
@@ -74,11 +102,29 @@ def has_dynamic_fields(schema: Sequence[SettingEntry]) -> bool:
     )
 
 
+def templated_texts(schema: Sequence[SettingEntry], settings: Mapping[str, Any]) -> list[str]:
+    """The raw texts of the opted-in template fields (`text` and the text of `text_style`)."""
+    texts: list[str] = []
+    for entry in schema:
+        if not isinstance(entry, SettingField) or not entry.extra.get("template"):
+            continue
+        value = settings.get(entry.key)
+        if isinstance(value, dict):  # text_style
+            value = value.get("text")
+        if isinstance(value, str):
+            texts.append(value)
+    return texts
+
+
 def deliver_settings(
-    schema: Sequence[SettingEntry], settings: Mapping[str, Any], layout: DeviceLayout
+    schema: Sequence[SettingEntry],
+    settings: Mapping[str, Any],
+    layout: DeviceLayout,
+    variables: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """A copy of `settings` with opted-in text expanded and page/profile ids resolved; the input is left raw."""
-    variables = page_variables(layout)
+    if variables is None:
+        variables = page_variables(layout)
     result = {key: dict(value) if isinstance(value, dict) else value for key, value in settings.items()}
     for entry in schema:
         if not isinstance(entry, SettingField) or entry.key not in result:
