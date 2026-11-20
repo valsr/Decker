@@ -112,7 +112,7 @@ client.
 | `size` | Required positive integer, bytes |
 | `sha256` | Required, 64 hex characters |
 | `released` | Optional, free text timestamp |
-| `contributes` | Optional map of kind (`cards`, `actions`, `icon_packs`) to a list of names, shown in the details pane |
+| `contributes` | Optional map of kind (`cards`, `actions`, `icon_packs`, `variables`) to a list of names, shown in the details pane |
 | `platforms`, `linux` | Optional; same fields and validation as the [manifest](package-and-manifest.md#platforms). Absent means all platforms. An invalid value skips that version entry with a warning |
 
 ### Platform filter

@@ -20,8 +20,9 @@ discarded.
 1. The server starts your process and sends `hello`.
 2. Send `ready` when you are set up. Until then the server queues events for you; if `ready` does not arrive
    within the ping timeout (10 s) the process is killed.
-3. The server sends `will_appear` for every key showing one of your cards, then any events queued meanwhile.
-4. After `ready` the server also sends the full snapshot of the [variables](#variables) that have a value (`variables_changed`) and asks a plugin that declares variables for each of them.
+3. The server sends the full snapshot of the [variables](#variables) that have a value (`variables_changed`) and asks a
+   plugin that declares variables for each of them (`get_variable`).
+4. The server sends `will_appear` for every key showing one of your cards, then any events queued meanwhile.
 
 ## Server to plugin
 

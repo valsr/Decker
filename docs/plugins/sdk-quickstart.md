@@ -58,19 +58,19 @@ the user as the action's error.
 A plugin that declares [`contributes.variables`](package-and-manifest.md#variables) exports global text values for
 templated text, and keeps running with no card on screen. Three decorators (sync or `async def`) shape the plugin:
 
-- `@init` runs once per process start with a `PluginContext`, in its own thread **after** `ready` has been sent, so a
+- `@init` runs once per process start with a `PluginContext`, in the lifecycle thread **after** `ready` has been sent, so a
   slow `init` cannot trip the 10 s ready timeout or delay `will_appear`. Register variables and read initial state
   there. If it raises, the error is logged and `main` does not start; cards and actions keep working.
-- `@main(interval=2.0)` runs repeatedly in its own thread, pausing `interval` seconds between calls (bare `@main` means
+- `@main(interval=2.0)` runs repeatedly in the same lifecycle thread, after `init` has returned, pausing `interval` seconds between calls (bare `@main` means
   2.0), until the plugin shuts down. An exception is logged and the loop continues. `shutdown` stops it. An
   `async def` main with `@main(interval=None)` is called once and runs for the life of the plugin (an event-driven
-  watcher); it is cancelled at shutdown. Without `main` the thread simply ends and the process stays up.
+  watcher); it is cancelled at shutdown. Several `@main` hooks run one after another, so a second one never runs while the first loops. Without `main` the thread simply ends and the process stays up.
 - `@variable("name")` or `@variable("pattern_{x}")` marks the getter of a manifest variable. A pattern getter receives
   the placeholder values as keyword arguments. A getter returns `str`, `int`, `float`, `bool` (as `"true"`/`"false"`) or
   `None` (unset); a longer value than 1024 characters or another type fails the getter and the old value stays.
 
 ```python
-from decker_plugin_sdk import PluginContext, init, main, signal_variable_updated, variable
+from decker_plugin_sdk import PluginContext, init, main, variable
 
 _count = 0
 _items = {"red": 3, "blue": 5}   # pattern: item_{color}_stock
