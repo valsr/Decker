@@ -424,6 +424,14 @@ class TestProfileFields:  # pylint: disable=protected-access
         assert_that(all(values["where"] == "" for values in reported)).is_true()
 
 
+def _action_edit(form: Any) -> Any:
+    return form._fields["action"].widget
+
+
+def _params_edit(form: Any) -> Any:
+    return form._fields["parameters"].widget
+
+
 class TestActionFields:  # pylint: disable=protected-access
     _ACTIONS = [
         {
@@ -462,7 +470,7 @@ class TestActionFields:  # pylint: disable=protected-access
 
     def test_the_action_dropdown_lists_actions_and_round_trips(self, qapp):  # pylint: disable=unused-argument
         form = _form(self._SCHEMA, {"action": "com.t.mute", "parameters": {}})
-        combo = form._fields["action"].widget
+        combo = _action_edit(form)
 
         assert_that([combo.itemText(i) for i in range(combo.count())]).is_equal_to(
             ["(choose an action)", "Tools: HTTP", "Tools: Mute"]
@@ -471,10 +479,10 @@ class TestActionFields:  # pylint: disable=protected-access
 
     def test_the_parameters_form_follows_the_chosen_action(self, qapp):  # pylint: disable=unused-argument
         form = _form(self._SCHEMA, {"action": "com.t.http", "parameters": {"url": "http://x"}})
-        params = form._fields["parameters"].widget
+        params = _params_edit(form)
         assert_that(form.values()["parameters"]).is_equal_to({"url": "http://x"})
 
-        combo = form._fields["action"].widget
+        combo = _action_edit(form)
         combo.setCurrentIndex(combo.findData("com.t.mute"))
         combo.activated.emit(combo.currentIndex())
 
@@ -487,7 +495,7 @@ class TestActionFields:  # pylint: disable=protected-access
         form = _form(self._SCHEMA, {"action": "", "parameters": {}})
         seen: list[int] = []
         form.changed.connect(lambda: seen.append(1))
-        combo = form._fields["action"].widget
+        combo = _action_edit(form)
 
         combo.setCurrentIndex(combo.findData("com.t.http"))
         combo.activated.emit(combo.currentIndex())
@@ -498,7 +506,7 @@ class TestActionFields:  # pylint: disable=protected-access
         form = _form(self._SCHEMA, {"action": "com.gone.thing", "parameters": {"k": "v"}})
 
         assert_that(form.values()).is_equal_to({"action": "com.gone.thing", "parameters": {"k": "v"}})
-        assert_that(form._fields["action"].widget.currentText()).is_equal_to("(missing action)")
+        assert_that(_action_edit(form).currentText()).is_equal_to("(missing action)")
 
     def test_a_schema_with_action_fields_validates_server_side(self):
         from decker.plugin.settings_schema import apply_schema, parse_settings_schema
