@@ -110,7 +110,7 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         layout = QVBoxLayout(self)
         layout.addWidget(self._tabs, 1)
         layout.addLayout(bottom_row)
-        self.resize(520, 520)
+        self.resize(760, 640)
 
         self._status_timer: QTimer = QTimer(self)
         self._status_timer.timeout.connect(self._refresh_status)

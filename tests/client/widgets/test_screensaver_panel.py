@@ -9,7 +9,7 @@ from PyQt6.QtGui import QColor, QImage
 
 from decker.client.events import ScreensaverSettingsEvent, ScreensaverStateEvent
 from decker.client.widgets.screensaver_panel import ScreensaverPanel, is_loopback_host
-from decker.common.model import ScreensaverSettings
+from decker.common.model import DeviceHardwareInfo, ScreensaverSettings
 
 # pylint: disable=protected-access,redefined-outer-name
 
@@ -128,20 +128,6 @@ def test_pickers_disabled_for_remote(qapp, rpc):
     assert_that(local._hint_label.text()).is_empty()
 
 
-def test_activate_button_calls_rpc_and_toggles_label(qapp, rpc):
-    panel = _make(qapp, rpc)
-    assert_that(panel._activate_btn.text()).is_equal_to("Activate now")
-
-    panel._activate_btn.click()
-    assert_that(panel._activate_btn.text()).is_equal_to("Wake")
-    panel._activate_btn.click()
-
-    assert_that(rpc.calls).is_equal_to(["activate", "deactivate"])
-    assert_that(panel._activate_btn.text()).is_equal_to("Activate now")
-    panel.handle_event(ScreensaverStateEvent(DEVICE, True))
-    assert_that(panel._activate_btn.text()).is_equal_to("Wake")
-
-
 def test_last_error_shown(qapp, rpc):
     panel = _make(qapp, rpc)
 
@@ -208,7 +194,6 @@ def test_disabled_without_device(qapp, rpc):
     panel = _make(qapp, rpc, device=None)
 
     assert_that(panel._form_host.isEnabled()).is_false()
-    assert_that(panel._activate_btn.isEnabled()).is_false()
     assert_that(panel._hint_label.text()).contains("Connect a device")
     panel.handle_event(_event(ScreensaverSettings()))
     panel.flush()
@@ -320,29 +305,47 @@ def test_preview_only_when_visible_and_not_on_own_echo(qapp, rpc):
     panel.hide()
 
 
-def test_activate_flushes_pending_edit_first(qapp, rpc):
+
+
+def _device(device_id, serial="SER1"):
+    return DeviceHardwareInfo(
+        id=device_id, type="Stream Deck XL", vendor_id=0x0FD9, product_id=0x006C, num_keys=32, serial=serial, firmware="1.2.3"
+    )
+
+
+def test_device_picker_lists_devices_and_edits_the_picked_one(qapp, rpc):
+    devices = [_device(DEVICE), _device("other", "SER2")]
+    panel = ScreensaverPanel(device_id=lambda: DEVICE, rpc=lambda: rpc, host=lambda: "127.0.0.1", devices=lambda: devices)
+    panel.refresh_device()
+
+    assert_that([panel._device_combo.itemData(i) for i in range(panel._device_combo.count())]).is_equal_to(
+        [DEVICE, "other"]
+    )
+    assert_that(panel._device).is_equal_to(DEVICE)
+    panel._device_combo.setCurrentIndex(1)
+
+    assert_that(panel._device).is_equal_to("other")
+    assert_that(panel._info_label.text()).contains("SER2")
+
+
+def test_device_info_shows_type_ids_and_firmware(qapp, rpc):
+    panel = ScreensaverPanel(
+        device_id=lambda: DEVICE, rpc=lambda: rpc, host=lambda: "127.0.0.1", devices=lambda: [_device(DEVICE)]
+    )
+    panel.refresh_device()
+
+    text = panel._info_label.text()
+    assert_that(text).contains("Stream Deck XL", "SER1", "0fd9:006c", "1.2.3", "32")
+
+
+def test_content_selector_shows_only_the_rows_it_needs(qapp, rpc):
     panel = _make(qapp, rpc)
-    panel._fields["brightness"].setValue(33)
+    visible = lambda name: not panel._row_widget(name).isHidden()  # noqa: E731
 
-    panel._activate_btn.click()
-
-    assert_that(rpc.calls).is_equal_to(["set", "activate"])
-    assert_that(rpc.set_calls[0].brightness).is_equal_to(33)
-
-    other = _make(qapp, rpc)
-    rpc.calls.clear()
-    rpc.set_result = (False, "bad value")
-    other._fields["brightness"].setValue(34)
-    other._activate_btn.click()
-    assert_that(rpc.calls).is_equal_to(["set"])
-    assert_that(other._set_error_label.text()).is_equal_to("bad value")
-
-
-def test_refused_activate_shows_message(qapp, rpc):
-    panel = _make(qapp, rpc)
-    rpc.activate_result = False
-
-    panel._activate_btn.click()
-
-    assert_that(panel._set_error_label.text()).contains("could not activate")
-    assert_that(panel._activate_btn.text()).is_equal_to("Activate now")
+    panel._content_buttons.button(0).click()
+    assert_that([visible(n) for n in ("image_path", "folder_path", "scaling")]).is_equal_to([False, False, False])
+    panel._content_buttons.button(1).click()
+    assert_that([visible(n) for n in ("image_path", "folder_path", "scaling")]).is_equal_to([True, False, True])
+    panel._content_buttons.button(2).click()
+    assert_that([visible(n) for n in ("image_path", "folder_path", "gallery_mode")]).is_equal_to([False, True, True])
+    assert_that(panel._fields["content"].currentData()).is_equal_to("gallery")
