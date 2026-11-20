@@ -21,6 +21,7 @@ Plugins run with your user's permissions and are not sandboxed. Only install plu
 | `cards` | What a key shows: they appear in the card list (the key picker) and run as a separate process, unless they are static presets or presets of Run Action | for code-backed cards |
 | `actions` | Headless things to do (a function with settings, e.g. an HTTP request), run from the Run Action card or a preset card | yes |
 | `icon_packs` | A folder of images browsable from the image library | no |
+| `variables` | Global text values other text can use as `{name}`; the plugin starts with the server and keeps running | yes (and a `decker` constraint) |
 
 Decker draws the key background and title (the user's appearance settings). Your plugin supplies the key image with
 `set_image` and may supply a fallback title with `set_title`.
