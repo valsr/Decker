@@ -41,7 +41,11 @@ def _appearance(**overrides: Any) -> dict[str, Any]:
 def test_defaults_from_schema() -> None:
     result = resolve_appearance({}, {})
     assert_that(result).is_equal_to(
-        {"background": "#000000", "title": dict(TEXT_STYLE_DEFAULTS), "icon": {"ref": "", "color": "#ffffff"}}
+        {
+            "background": {"type": "color", "color": "#000000", "image": {"ref": ""}},
+            "title": dict(TEXT_STYLE_DEFAULTS),
+            "icon": {"ref": "", "color": "#ffffff"},
+        }
     )
 
 
@@ -56,12 +60,12 @@ def test_icon_is_an_appearance_key_and_survives_resolution() -> None:
 
 
 def test_action_defaults_override_schema_defaults() -> None:
-    assert_that(resolve_appearance({"background": "#112233"}, {})["background"]).is_equal_to("#112233")
+    assert_that(resolve_appearance({"background": "#112233"}, {})["background"]["color"]).is_equal_to("#112233")
 
 
 def test_stored_overrides_action_defaults() -> None:
     result = resolve_appearance({"background": "#112233"}, {"background": "#445566"})
-    assert_that(result["background"]).is_equal_to("#445566")
+    assert_that(result["background"]["color"]).is_equal_to("#445566")
 
 
 def test_background_fills_key() -> None:
@@ -365,11 +369,11 @@ def test_translucent_background_sits_under_plugin_image() -> None:
 
 
 def test_background_keeps_alpha_when_resolved() -> None:
-    assert_that(resolve_appearance({}, {"background": "#11223380"})["background"]).is_equal_to("#11223380")
+    assert_that(resolve_appearance({}, {"background": "#11223380"})["background"]["color"]).is_equal_to("#11223380")
 
 
 def test_invalid_background_falls_back_to_default() -> None:
-    assert_that(resolve_appearance({}, {"background": "#1122"})["background"]).is_equal_to("#000000")
+    assert_that(resolve_appearance({}, {"background": "#1122"})["background"]["color"]).is_equal_to("#000000")
 
 
 @pytest.mark.parametrize("position", ["top", "middle", "bottom"])

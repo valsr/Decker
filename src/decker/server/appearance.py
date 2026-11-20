@@ -13,6 +13,7 @@ from decker.animation.gif import is_animated_gif
 from decker.animation.model import AnimationSpec
 from decker.asset.renderer import AssetRenderer
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
+from decker.common.background import normalize_background
 from decker.common.text_style import fold_legacy_title
 from decker.plugin.settings_schema import apply_schema, parse_settings_schema
 from decker.server.fonts import BUNDLED_BOLD, font_face, font_file
@@ -47,7 +48,17 @@ def resolve_appearance(action_defaults: Mapping[str, Any], stored: Mapping[str, 
     merged = {**defaults, **values}
     if "title" in merged:
         merged["title"] = {**defaults.get("title", {}), **values.get("title", {})}
+    if "background" in merged:
+        merged["background"] = _merge_background(defaults.get("background"), values.get("background"))
     return apply_schema(_PARSED_SCHEMA, merged)
+
+
+def _merge_background(default: Any, stored: Any) -> dict[str, Any]:
+    """Per-field merge of two background values (either may be a legacy colour string or absent)."""
+    base = normalize_background(default) if default is not None else {}
+    if stored is None:
+        return base
+    return normalize_background(stored, base or None)
 
 
 @dataclass(frozen=True)
@@ -135,8 +146,9 @@ def _single_line(text: str) -> str:
 def _background_layer(appearance: Mapping[str, Any], size: int) -> Image.Image:
     """Opaque black with the appearance background composited on top (the hardware has no transparency)."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 255))
-    if ImageColor.getcolor(appearance["background"], "RGBA")[3]:  # type: ignore[index]
-        img.alpha_composite(Image.new("RGBA", (size, size), appearance["background"]))
+    background = appearance["background"]
+    if background["type"] == "color" and ImageColor.getcolor(background["color"], "RGBA")[3]:  # type: ignore[index]
+        img.alpha_composite(Image.new("RGBA", (size, size), background["color"]))
     return img
 
 
