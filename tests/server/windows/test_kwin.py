@@ -22,8 +22,8 @@ from decker.server.windows.kwin import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
-FOCUS = json.loads((FIXTURES / "kwin_focus.json").read_text())["samples"]
-PICK = json.loads((FIXTURES / "kwin_pick.json").read_text())
+FOCUS = json.loads((FIXTURES / "kwin_focus.json").read_text(encoding="utf-8"))["samples"]
+PICK = json.loads((FIXTURES / "kwin_pick.json").read_text(encoding="utf-8"))
 
 
 class FakeTransport:
