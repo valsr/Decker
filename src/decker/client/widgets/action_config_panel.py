@@ -158,16 +158,15 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         layout.setContentsMargins(12, 12, 12, 12)
         layout.addWidget(self._header)
 
-        rows = QVBoxLayout()
-        rows.addWidget(self._appearance_form)
-        save_row = QHBoxLayout()
         self._save_btn.clicked.connect(self._on_save)
-        save_row.addWidget(self._save_btn)
-        save_row.addStretch()
-        rows.addLayout(save_row)
+        left = QVBoxLayout()  # the preview and Save form one column
+        left.addWidget(self._preview, 0, _TOP)
+        self._save_btn.setFixedWidth(self._preview.width())
+        left.addWidget(self._save_btn)
+        left.addStretch(1)
         top = QHBoxLayout()
-        top.addWidget(self._preview, 0, _TOP)
-        top.addLayout(rows, 1)
+        top.addLayout(left)
+        top.addWidget(self._appearance_form, 1, _TOP)
         layout.addLayout(top)  # everything above the separator stays put while the plugin's settings scroll
 
         separator = QFrame()

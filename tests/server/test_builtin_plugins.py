@@ -30,7 +30,13 @@ def test_blank_manifest_ships_in_the_package():
 
     assert_that(manifest.id).is_equal_to(BLANK)
     assert_that(manifest.runtime).is_none()
-    assert_that([(a.id, a.static, a.name) for a in manifest.actions]).is_equal_to([(BLANK_ACTION, True, "Blank")])
+    assert_that([(a.id, a.static, a.name) for a in manifest.actions]).is_equal_to(
+        [
+            (BLANK_ACTION, True, "Blank"),
+            ("com.decker.blank.pagename", True, "Page Name"),
+            ("com.decker.blank.pagecount", True, "Page Count"),
+        ]
+    )
     assert_that(manifest.actions[0].tooltip).is_equal_to("Draws only the background and title")
 
 
@@ -113,3 +119,16 @@ def test_plugins_list_marks_builtin(env):
     listed = {p["id"]: p for p in json.loads(DeckerService().plugins_list())}
 
     assert_that(listed[BLANK]["builtin"]).is_true()
+
+
+def test_blank_ships_page_name_and_page_count_presets() -> None:
+    manifest = PluginManifest.from_dict(
+        json.loads((BUILTIN_PLUGINS_DIR / "com.decker.blank" / "manifest.json").read_text())
+    )
+    specs = {a.id: a for a in manifest.actions}
+
+    assert_that(specs["com.decker.blank.pagename"].static).is_true()
+    assert_that(specs["com.decker.blank.pagename"].appearance["title"]["text"]).is_equal_to("{page_name}")
+    assert_that(specs["com.decker.blank.pagecount"].appearance["title"]["text"]).is_equal_to(
+        "{page_index} / {page_count}"
+    )

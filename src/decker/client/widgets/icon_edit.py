@@ -112,7 +112,7 @@ class IconEdit(QWidget):
         self._preview.setToolTip("Click to choose an image")
         self._preview.setCursor(Qt.CursorShape.PointingHandCursor)
         frame = QFrame()
-        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        frame.setProperty("role", "dock")
         dock = QHBoxLayout(frame)
         dock.setContentsMargins(4, 2, 4, 2)
         separator = QFrame()
