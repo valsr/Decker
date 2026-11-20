@@ -835,8 +835,11 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         """A device's screensaver settings plus `active` and `last_error`, or None for an unknown device."""
         try:
             return self._saver().get(device_id)
-        except Exception:  # pylint: disable=broad-except
+        except ValueError:  # an unknown device
             logging.debug("screensaver_get failed", exc_info=True)
+            return None
+        except Exception:  # pylint: disable=broad-except
+            logging.exception("screensaver_get failed")
             return None
 
     @exposed
@@ -858,8 +861,11 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         """Show the screensaver now. Returns False for an unknown device or one that is not open."""
         try:
             return bool(self._saver().activate(device_id))
-        except Exception:  # pylint: disable=broad-except
+        except ValueError:  # an unknown device
             logging.debug("screensaver_activate failed", exc_info=True)
+            return False
+        except Exception:  # pylint: disable=broad-except
+            logging.exception("screensaver_activate failed")
             return False
 
     @exposed
@@ -868,8 +874,11 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         """Wake the device. Returns False for an unknown device or one that was not showing the screensaver."""
         try:
             return bool(self._saver().deactivate(device_id))
-        except Exception:  # pylint: disable=broad-except
+        except ValueError:  # an unknown device
             logging.debug("screensaver_deactivate failed", exc_info=True)
+            return False
+        except Exception:  # pylint: disable=broad-except
+            logging.exception("screensaver_deactivate failed")
             return False
 
     @exposed

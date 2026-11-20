@@ -5,7 +5,7 @@ from assertpy import assert_that
 
 from decker.animation.factory import AnimationFactory
 from decker.server.device_state_store import DeviceStateStore
-from decker.server.devices import _KeyTracker
+from decker.server.devices import _UNKNOWN, _KeyTracker
 from decker.server.devices.manager import DeviceManager
 from tests.server.animation_fixture import make_spec
 from tests.server.devices.overlay_fixture import (
@@ -299,4 +299,59 @@ def test_set_write_gate_survives_concurrent_tracker_creation():
     finally:
         stop.set()
         thread.join(5)
+    assert_that(device._gated).is_false()
+    for tracker in device._key_trackers.values():
+        tracker.shown = b"drawn"
+    device.set_write_gate(True)
+    assert_that(device._gated).is_true()
+    assert_that(len(device._key_trackers)).is_greater_than(3)
+    assert_that({id(t.shown) for t in device._key_trackers.values()}).is_equal_to({id(_UNKNOWN)})
+    manager.destroy()
+
+
+def test_release_of_a_key_held_when_the_overlay_starts_is_delivered():
+    deck = make_deck()
+    manager, device, delivered, woke, _ = _wired(deck)
+    press(deck, 0, True)
+    manager.set_overlay(DEVICE_ID, True)
+
+    press(deck, 0, False)
+
+    assert_that(delivered).is_equal_to([(DEVICE_ID, 0, True), (DEVICE_ID, 0, False)])
+    assert_that(woke).is_empty()  # a release never wakes
+    assert_that(device.get_key_state(0).name).is_equal_to("UP")
+    press(deck, 0, True)  # the next press wakes and is swallowed with its release
+    press(deck, 0, False)
+    assert_that(delivered).is_length(2)
+    assert_that(woke).is_equal_to([DEVICE_ID])
+    manager.destroy()
+
+
+def test_a_swallowed_press_while_held_drops_the_held_record():
+    deck = make_deck()
+    manager, _, delivered, woke, _ = _wired(deck)
+    press(deck, 1, True)
+    manager.set_overlay(DEVICE_ID, True)
+    press(deck, 1, True)  # a repeated press report while the overlay shows
+
+    press(deck, 1, False)
+
+    assert_that(delivered).is_equal_to([(DEVICE_ID, 1, True)])
+    assert_that(woke).is_equal_to([DEVICE_ID])
+    manager.destroy()
+
+
+def test_reopening_a_device_forgets_held_keys():
+    deck = make_deck()
+    manager, device, delivered, _, _ = _wired(deck)
+    press(deck, 2, True)
+    manager.close_device(device)
+    with patch("decker.server.devices.manager._HardwareDeviceManager") as hw:
+        hw.return_value.enumerate.return_value = [deck]
+        assert_that(manager.open_device(DEVICE_ID)).is_not_none()
+    manager.set_overlay(DEVICE_ID, True)
+
+    press(deck, 2, False)
+
+    assert_that(delivered).is_equal_to([(DEVICE_ID, 2, True)])
     manager.destroy()

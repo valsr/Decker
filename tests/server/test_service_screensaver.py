@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import logging
 import threading
 import time
 
@@ -164,3 +165,41 @@ def test_rpcs_without_a_context_return_failure_results():
     assert_that(json.loads(service.screensaver_get(DEV))).is_none()
     assert_that(json.loads(service.screensaver_set(DEV, _json()))["ok"]).is_false()
     assert_that(json.loads(service.screensaver_activate(DEV))).is_false()
+
+
+def test_unexpected_errors_in_get_and_toggles_are_logged_with_a_traceback(stack, monkeypatch, caplog):
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    for name in ("get", "activate", "deactivate"):
+        monkeypatch.setattr(stack[0].screensaver_controller, name, boom)
+    caplog.set_level(logging.DEBUG)
+
+    assert_that(json.loads(_service().screensaver_get(DEV))).is_none()
+    assert_that(json.loads(_service().screensaver_activate(DEV))).is_false()
+    assert_that(json.loads(_service().screensaver_deactivate(DEV))).is_false()
+
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR and r.exc_info]
+    assert_that([r.getMessage() for r in errors]).is_equal_to(
+        ["screensaver_get failed", "screensaver_activate failed", "screensaver_deactivate failed"]
+    )
+
+
+def test_unknown_device_in_get_and_toggles_stays_quiet(stack, caplog):
+    caplog.set_level(logging.DEBUG)
+
+    _service().screensaver_get("nope")
+    _service().screensaver_activate("nope")
+    _service().screensaver_deactivate("nope")
+
+    assert_that([r for r in caplog.records if r.levelno >= logging.WARNING]).is_empty()
+
+
+def test_remote_preview_with_the_stored_path_is_rendered(stack, tmp_path):
+    image = tmp_path / "a.png"
+    Image.new("RGB", (8, 8), "red").save(image)
+    _service().screensaver_set(DEV, _json(content="image", image_path=str(image)))
+
+    result = json.loads(_service(remote=True).screensaver_preview(DEV, _json(content="image", image_path=str(image))))
+
+    assert_that(result).contains_key("png")

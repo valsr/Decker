@@ -78,9 +78,7 @@ class ScreensaverController(Manager):
         """Validate and store settings and apply them; never activates the screensaver."""
         self._require_known(device_id)
         settings = _parse(settings_json)
-        current = self._stored(device_id)
-        if not loopback and (settings.image_path != current.image_path or settings.folder_path != current.folder_path):
-            raise PermissionError(_REMOTE_PATHS_DENIED)
+        self._check_paths(device_id, settings, loopback)
         self._store.set(device_id, settings)
         self._engine.apply_settings(device_id)
         self._ctx.event_bus.push(SCREENSAVER_SETTINGS_CHANGED_EVENT, json.dumps({"device_id": device_id}))
@@ -99,8 +97,7 @@ class ScreensaverController(Manager):
         """A PNG of the draft settings composed at the device's canvas layout; a dark canvas without an image."""
         self._require_known(device_id)
         settings = _parse(settings_json)
-        if not loopback and (settings.image_path or settings.folder_path):
-            raise PermissionError(_REMOTE_PATHS_DENIED)
+        self._check_paths(device_id, settings, loopback)
         layout = self._layout(device_id, settings)
         image = self._source_image(settings, layout)
         if image is None:
@@ -114,6 +111,11 @@ class ScreensaverController(Manager):
     def notify_changed(self, device_id: str, active: bool) -> None:
         """Announce that a device's screensaver started or stopped; carries no error text."""
         self._ctx.event_bus.push(SCREENSAVER_CHANGED_EVENT, json.dumps({"device_id": device_id, "active": active}))
+
+    def _check_paths(self, device_id: str, settings: ScreensaverSettings, loopback: bool) -> None:
+        current = self._stored(device_id)
+        if not loopback and (settings.image_path != current.image_path or settings.folder_path != current.folder_path):
+            raise PermissionError(_REMOTE_PATHS_DENIED)
 
     def _stored(self, device_id: str) -> ScreensaverSettings:
         try:
@@ -134,7 +136,7 @@ class ScreensaverController(Manager):
 
     def _layout(self, device_id: str, settings: ScreensaverSettings) -> CanvasLayout:
         info = self._hw_info(device_id)
-        keys = [key for key in info.keys if key.type == "key"] if info is not None else []
+        keys = [key for key in info.keys if key.type == "key" and key.pixel_width > 0] if info is not None else []
         rows, cols, key_px = _FALLBACK_LAYOUT
         if keys:
             rows, cols, key_px = max(k.row for k in keys) + 1, max(k.col for k in keys) + 1, keys[0].pixel_width

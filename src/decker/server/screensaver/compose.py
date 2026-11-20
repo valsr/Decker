@@ -28,7 +28,7 @@ def canvas_layout(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
 
 def _fit(image: Image.Image, layout: CanvasLayout, scaling: str) -> Image.Image:
-    rgba = image.convert("RGBA")
+    rgba = image if image.mode == "RGBA" else image.convert("RGBA")
     size = (layout.width, layout.height)
     if scaling == "stretch":
         return rgba.resize(size, Image.Resampling.LANCZOS)
