@@ -29,6 +29,7 @@ from decker.client.widgets.color_button import ColorButton
 from decker.client.widgets.icon_edit import IconEdit
 from decker.client.widgets.page_edit import PageEdit
 from decker.client.widgets.profile_edit import ProfileEdit
+from decker.client.widgets.slots_edit import SlotsEdit
 from decker.client.widgets.text_style_edit import TextStyleEdit
 
 _INT_LIMIT = 999_999_999
@@ -172,6 +173,11 @@ def _action_params_field(_entry: dict[str, Any]) -> _Field:
     return _Field(edit, edit.value, edit.set_value)
 
 
+def _slots_field(_entry: dict[str, Any]) -> _Field:
+    edit = SlotsEdit()
+    return _Field(edit, edit.value, edit.set_value)
+
+
 def _text_style_field(_entry: dict[str, Any]) -> _Field:
     edit = TextStyleEdit()
     return _Field(edit, edit.value, edit.set_value)
@@ -191,6 +197,7 @@ _BUILDERS: dict[str, Callable[[dict[str, Any]], _Field]] = {
     "profile": _profile_field,
     "action": _action_field,
     "action_params": _action_params_field,
+    "slots": _slots_field,
     "text_style": _text_style_field,
 }
 
@@ -213,6 +220,8 @@ def _watch(widget: QWidget, slot: Callable[[], None]) -> None:
         widget, (ActionEdit, ActionParamsEdit, BackgroundEdit, IconEdit, PageEdit, ProfileEdit, TextStyleEdit)
     ):
         widget.value_changed.connect(slot)
+    elif isinstance(widget, SlotsEdit):
+        widget.changed.connect(slot)
     elif isinstance(widget, ColorButton):
         widget.color_changed.connect(lambda _color: slot())
     elif isinstance(widget, QCheckBox):
