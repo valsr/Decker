@@ -146,7 +146,7 @@ Footnotes:
     Pillow plus the same HID writes as key faces, with no OS-specific code, so it is marked like the other
     hardware-only features. The tests use a fake device manager and fake decks: nothing was run against a real Stream
     Deck or on a Windows or macOS desktop. Image and folder paths are server-side and settable only from the server's
-    machine.
+    machine. SVG screensaver images are rasterised through Cairo, so they need the Cairo library as in footnote 10.
 
 ## System Requirements
 

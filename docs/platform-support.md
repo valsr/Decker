@@ -30,4 +30,5 @@ only tested against fakes so far.
 
 The screensaver (see [screensaver](screensaver.md)) is drawn by the server with Pillow and written over the same HID path
 as key faces, so it has no OS-specific code and targets all five tiers alike. It is only tested against fakes so far, not
-on real hardware, and image and folder paths are set only from the server's machine.
+on real hardware, and image and folder paths are set only from the server's machine. SVG images are rasterised through
+Cairo, like icons, so they need the Cairo library on every OS (see the README's install sections).

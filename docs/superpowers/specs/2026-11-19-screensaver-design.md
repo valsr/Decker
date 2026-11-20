@@ -128,7 +128,7 @@ Server-side validation clamps nothing silently: out-of-range or unknown values a
 - `SettingsDialog` gets a per-device "Device" section (device chosen from the existing device selector): brightness,
   timeout, content type, file/folder pickers (loopback-connected only; disabled with a hint for remote), scaling,
   bezel with key and gap in mm, gallery mode and minutes, a live preview, and "Activate now".
-- Server-side errors (missing file, unreadable folder) show next to the picker from `last_error`.
+- Server-side errors (missing file, unreadable folder) show under the Activate button from `last_error`.
 
 ### Errors and limits
 
@@ -136,7 +136,7 @@ Server-side validation clamps nothing silently: out-of-range or unknown values a
   logged once per activation.
 - Gallery with no readable image behaves the same.
 - Rendering runs outside any hardware lock; a wake during rendering cancels the activation before it writes.
-- Caps: path length 1024 chars; image file 20 MiB; decoded pixels capped at 64 MP.
+- Caps: path length 1024 chars; image file 20 MiB; decoded pixels capped at 24 MP.
 
 ### Docs and tests
 
