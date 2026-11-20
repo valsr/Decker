@@ -469,7 +469,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if profiles is None or cm is None:
             return
         if self._profiles_dialog is None:
-            dialog = ProfilesDialog(self._page_call, cm, self._pages_for_profile, parent=self)
+            dialog = ProfilesDialog(self._page_call, cm, self._pages_for_profile, parent=self, icon_for=_profile_icon)
             dialog.set_profiles(profiles)
             if self._rules is not None:
                 dialog.set_rules(self._rules)

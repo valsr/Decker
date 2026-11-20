@@ -7,11 +7,12 @@ from dataclasses import replace
 from typing import Any, Protocol
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -25,11 +26,13 @@ from PyQt6.QtWidgets import (
 
 from decker.client.events import DetectionStatusEvent
 from decker.client.widgets.icon_edit import IconEdit
+from decker.client.widgets.profile_selector import IconProvider, profile_qicon
 from decker.client.widgets.rule_editor import (
     FIELD_NAMES,
     MISSING_PAGE,
     RuleEditor,
     fill_page_combo,
+    fill_profile_combo,
     unsupported_fields,
 )
 from decker.client.widgets.window_spy import WindowSpyDialog, rule_from_window
@@ -87,6 +90,7 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         rules_api: RulesApi,
         pages_for_profile: Callable[[int], list[PageInfo] | None],
         parent: QWidget | None = None,
+        icon_for: IconProvider | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Profiles and rules")
@@ -94,6 +98,7 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._call = call
         self._api = rules_api
         self._pages_for_profile = pages_for_profile  # None means the lookup failed
+        self._icon_for = icon_for
         self._known_pages: dict[int, list[PageInfo]] = {}  # last successful lookup per profile
         self._editor_base: AppRule | None = None  # the server rule the editor last synced to
         self._summaries: dict[str, str] = {}  # rule id -> "-> Profile / Page"
@@ -120,22 +125,24 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._profile_list = QListWidget()
         self._name_edit = QLineEdit()
         self._icon = IconEdit()
+        self._icon.set_toolbar(True)
         self._icon.set_show_colour(False)
         self._icon.setToolTip("Leave empty to use the Decker icon")
-        self._add_profile_button = QPushButton("+ Add profile")
-        self._delete_profile_button = QPushButton("Delete…")
+        self._add_profile_button = QPushButton("+ New")
+        self._delete_profile_button = QPushButton("Delete")
         self._clone_button = QPushButton("Clone")
         self._rule_list = QListWidget()
         self._add_rule_button = QPushButton("+ Add rule")
         self._delete_rule_button = QPushButton("Delete rule")
         self._up_button = QPushButton("Move up")
         self._down_button = QPushButton("Move down")
-        self._editor = RuleEditor(self._pages)
+        self._editor = RuleEditor(self._pages, icon_for=self._icon_for)
         self._editor.setEnabled(False)
-        self._default_enable = QCheckBox("When no rule matches")
+        self._default_enable = QPushButton("Default to")
+        self._default_enable.setCheckable(True)
+        self._default_enable.setToolTip("Switch to this profile when no rule matches")
         self._default_profile = QComboBox()
         self._default_page = QComboBox()
-        self._status_label = QLabel()
         self._spy_button = QPushButton("Window Spy")
         self._close_button = QPushButton("Close")
 
@@ -144,13 +151,12 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         form.addRow("Name", self._name_edit)
         form.addRow("Icon", self._icon)
         actions = QHBoxLayout()
-        actions.addWidget(self._delete_profile_button)
+        actions.addWidget(self._add_profile_button)
         actions.addWidget(self._clone_button)
-        actions.addStretch()
+        actions.addWidget(self._delete_profile_button)
         pane = QVBoxLayout()
         pane.addWidget(QLabel("Profiles"))
         pane.addWidget(self._profile_list, 1)
-        pane.addWidget(self._add_profile_button)
         pane.addLayout(form)
         pane.addLayout(actions)
         return pane
@@ -162,7 +168,6 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         buttons.addStretch()
         default_row = QHBoxLayout()
         default_row.addWidget(self._default_enable)
-        default_row.addWidget(QLabel("->"))
         default_row.addWidget(self._default_profile, 1)
         default_row.addWidget(self._default_page, 1)
         pane = QVBoxLayout()
@@ -170,13 +175,14 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         pane.addWidget(self._rule_list, 1)
         pane.addLayout(buttons)
         pane.addLayout(default_row)
+        pane.addWidget(_separator())
         pane.addWidget(self._editor)
         return pane
 
     def _build_status_strip(self) -> QHBoxLayout:
         strip = QHBoxLayout()
-        strip.addWidget(self._status_label, 1)
         strip.addWidget(self._spy_button)
+        strip.addStretch(1)
         strip.addWidget(self._close_button)
         return strip
 
@@ -212,7 +218,7 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._profile_list.blockSignals(True)
         self._profile_list.clear()
         for profile in self._profiles:
-            item = QListWidgetItem(profile.name)
+            item = QListWidgetItem(profile_qicon(profile.icon, self._icon_for), profile.name)
             item.setData(_ID_ROLE, profile.profile_id)
             self._profile_list.addItem(item)
         self._profile_list.blockSignals(False)
@@ -229,10 +235,8 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         self._render_rules()
 
     def set_status(self, status: DetectionStatusEvent) -> None:
-        """Show the detection state and flag rules that use fields the backend does not supply."""
+        """Flag rules that use fields the detection backend does not supply, and tell the Window Spy."""
         self._status = status
-        reason = f": {status.reason}" if status.reason else ""
-        self._status_label.setText(f"Window detection: {status.state} ({status.backend}){reason}")
         self._editor.set_unsupported_fields(self._unsupported())
         self._refresh_warnings()
         if self._spy is not None:
@@ -412,7 +416,10 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
 
     def _sync_editor(self, rule: AppRule | None, same_selection: bool) -> None:
         self._editor.setEnabled(rule is not None)
+        if self._spy is not None:
+            self._spy.set_rule_selected(rule is not None)
         if rule is None:
+            self._editor.clear()
             return
         # The user's own edit comes back as an update: do not rebuild the editor under their typing.
         echo = self._same_content(rule)
@@ -452,6 +459,8 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
         if self._spy is None:
             self._spy = WindowSpyDialog(self._api.window_pick, os.getpid(), self)
             self._spy.create_rule.connect(self._on_spy_create_rule)
+            self._spy.set_condition.connect(self._editor.set_condition)
+            self._spy.set_rule_selected(self._selected_rule() is not None)
             if self._status is not None:
                 self._spy.set_status(self._status)
         self._spy.show()
@@ -492,9 +501,7 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
     def _refill_default_profiles(self) -> None:
         current = self._default_profile.currentData()
         self._default_profile.blockSignals(True)
-        self._default_profile.clear()
-        for profile in self._profiles:
-            self._default_profile.addItem(profile.name, profile.profile_id)
+        fill_profile_combo(self._default_profile, self._profiles, self._icon_for)
         self._default_profile.setCurrentIndex(max(self._default_profile.findData(current), 0))
         self._default_profile.blockSignals(False)
 
@@ -525,6 +532,13 @@ class ProfilesDialog(QDialog):  # pylint: disable=too-many-instance-attributes,t
             page_id if isinstance(page_id, str) else "",
         )
         self._api.app_default_rule_set(self._device_id, default)
+
+
+def _separator() -> QFrame:
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setFrameShadow(QFrame.Shadow.Sunken)
+    return line
 
 
 def _confirm_delete_profile(parent: QWidget | None, name: str) -> bool:

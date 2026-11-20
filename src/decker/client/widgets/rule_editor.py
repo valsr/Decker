@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -15,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from decker.client.widgets.profile_selector import IconProvider, profile_qicon
 from decker.common.model import AppRule, MatchCondition, PageInfo, ProfileInfo
 from decker.common.window_match import validate_condition
 
@@ -35,7 +37,6 @@ OP_NAMES: dict[str, str] = {
 _UNSUPPORTED_FIELDS: dict[str, set[str]] = {"x11": {"desktop_file"}, "windows": {"window_type", "desktop_file"}}
 PROFILE_DEFAULT = "Profile default"
 MISSING_PAGE = "(missing page)"
-_NEW_CONDITION = MatchCondition("window_class", "equals", "")
 
 
 def unsupported_fields(backend: str) -> set[str]:
@@ -69,36 +70,65 @@ def _repolish(widget: QWidget) -> None:
 
 
 class ConditionRow(QWidget):
-    """One field / operator / value row with a remove button."""
+    """One condition category: operator and value, with an on/off toggle at the end of the row."""
 
     changed = pyqtSignal()
 
-    def __init__(self, condition: MatchCondition, parent: QWidget | None = None) -> None:
+    def __init__(self, field: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.field = _combo(FIELD_NAMES)
+        self.field_name = field
         self.op = _combo(OP_NAMES)
-        self.value = QLineEdit(condition.value)
-        self.remove = QPushButton("Remove")
-        self.field.setCurrentIndex(max(self.field.findData(condition.field), 0))
-        self.op.setCurrentIndex(max(self.op.findData(condition.op), 0))
+        self.value = QLineEdit()
+        self.toggle = QPushButton("Off")
+        self.toggle.setCheckable(True)
+        self.toggle.setToolTip(f"Match on the {FIELD_NAMES[field].lower()}")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.field)
         layout.addWidget(self.op)
         layout.addWidget(self.value, 1)
-        layout.addWidget(self.remove)
-        self.field.activated.connect(lambda _i: self.changed.emit())
+        layout.addWidget(self.toggle)
         self.op.activated.connect(lambda _i: self.changed.emit())
-        self.value.editingFinished.connect(self.changed.emit)
+        self.value.editingFinished.connect(self._on_value_edited)
+        self.toggle.toggled.connect(self._on_toggled)
+        self._sync_toggle()
+
+    @property
+    def enabled(self) -> bool:
+        """Whether the rule uses this condition."""
+        return self.toggle.isChecked()
+
+    def set_condition(self, condition: MatchCondition | None) -> None:
+        """Show a condition (on) or an unused row (off, ``is``, empty) without emitting ``changed``."""
+        self.blockSignals(True)
+        self.toggle.blockSignals(True)
+        self.op.setCurrentIndex(max(self.op.findData(condition.op if condition else "equals"), 0))
+        self.value.setText(condition.value if condition else "")
+        self.toggle.setChecked(condition is not None)
+        self.toggle.blockSignals(False)
+        self.blockSignals(False)
+        self._sync_toggle()
 
     def condition(self) -> MatchCondition:
-        """The condition as currently entered."""
-        return MatchCondition(str(self.field.currentData()), str(self.op.currentData()), self.value.text())
+        """The condition as currently entered (whether or not it is switched on)."""
+        return MatchCondition(self.field_name, str(self.op.currentData()), self.value.text())
 
     def mark_invalid(self, invalid: bool) -> None:
         """Flag the value box as holding an invalid condition."""
         self.value.setProperty("invalid", invalid)
         _repolish(self.value)
+
+    def _on_toggled(self, _checked: bool) -> None:
+        self._sync_toggle()
+        self.changed.emit()
+
+    def _on_value_edited(self) -> None:
+        if self.enabled:
+            self.changed.emit()
+
+    def _sync_toggle(self) -> None:
+        self.toggle.setText("On" if self.enabled else "Off")
+        self.op.setEnabled(self.enabled)
+        self.value.setEnabled(self.enabled)
 
 
 class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
@@ -107,19 +137,23 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
     changed = pyqtSignal()
     focus_left = pyqtSignal()  # keyboard focus moved from a field of the editor to something outside it
 
-    def __init__(self, pages_for_profile: Callable[[int], list[PageInfo]], parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        pages_for_profile: Callable[[int], list[PageInfo]],
+        parent: QWidget | None = None,
+        icon_for: IconProvider | None = None,
+    ) -> None:
         super().__init__(parent)
         self._pages_for_profile = pages_for_profile
+        self._icon_for = icon_for
         self._rule_id = ""
         self._enabled = True
         self._unsupported: set[str] = set()
         self._loading = False
-        self._rows: list[ConditionRow] = []
+        self._rows: dict[str, ConditionRow] = {field: ConditionRow(field) for field in FIELD_NAMES}
+        self._extra: list[MatchCondition] = []  # further conditions on a category that has a row; kept as they are
         self._profile_infos: list[ProfileInfo] = []
         self._name = QLineEdit()
-        self._rows_layout = QVBoxLayout()
-        self._rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._add_condition_button = QPushButton("Add condition")
         self._profile = QComboBox()
         self._page = QComboBox()
         self._warning = QLabel()
@@ -132,7 +166,8 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
         self._error.hide()
         self._build_layout()
         self._name.editingFinished.connect(self._on_edited)
-        self._add_condition_button.clicked.connect(self._on_add_condition)
+        for row in self._rows.values():
+            row.changed.connect(self._on_edited)
         self._profile.activated.connect(self._on_profile_chosen)
         self._page.activated.connect(lambda _i: self._on_edited())
         app = QApplication.instance()
@@ -142,15 +177,16 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
     def _build_layout(self) -> None:
         form = QFormLayout()
         form.addRow("Name", self._name)
-        conditions = QVBoxLayout()
-        conditions.addLayout(self._rows_layout)
-        conditions.addWidget(self._add_condition_button)
-        form.addRow("When", conditions)
-        form.addRow("Profile", self._profile)
-        form.addRow("Page", self._page)
+        for field, row in self._rows.items():
+            form.addRow(FIELD_NAMES[field], row)
+        switch = QHBoxLayout()
+        switch.addWidget(QLabel("Switch to"))
+        switch.addWidget(self._profile, 1)
+        switch.addWidget(self._page, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(form)
+        layout.addLayout(switch)
         layout.addWidget(self._warning)
         layout.addWidget(self._error)
 
@@ -161,9 +197,7 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
         self._profile_infos = list(profiles)
         profile_id, page_id = self._target()
         self._loading = True
-        self._profile.clear()
-        for profile in profiles:
-            self._profile.addItem(profile.name, profile.profile_id)
+        fill_profile_combo(self._profile, profiles, self._icon_for)
         self._set_target(profile_id, page_id)
         self._loading = False
 
@@ -172,24 +206,51 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
         self._loading = True
         self._rule_id, self._enabled = rule.rule_id, rule.enabled
         self._name.setText(rule.name)
-        self._clear_rows()
+        self._extra = []
+        taken: set[str] = set()
+        for field, row in self._rows.items():
+            first = next((c for c in rule.conditions if c.field == field), None)
+            row.set_condition(first)
+            if first is not None:
+                taken.add(field)
+        seen: set[str] = set()
         for condition in rule.conditions:
-            self._append_row(condition)
+            if condition.field in seen and condition.field in taken:
+                self._extra.append(condition)
+            seen.add(condition.field)
         self._set_target(rule.profile_id, rule.page_id)
         self._loading = False
         self._refresh_flags()
 
+    def clear(self) -> None:
+        """Show no rule: empty fields, every condition off and no complaints (the dialog disables the editor)."""
+        self._loading = True
+        self._rule_id, self._enabled = "", True
+        self._name.setText("")
+        self._extra = []
+        for row in self._rows.values():
+            row.set_condition(None)
+        self._loading = False
+        self._refresh_flags()
+
+    def set_condition(self, field: str, value: str) -> None:
+        """Switch a category on with ``is value`` (the Window Spy's Set) and save the rule."""
+        row = self._rows.get(field)
+        if row is None:
+            return
+        row.toggle.blockSignals(True)
+        row.toggle.setChecked(True)
+        row.toggle.blockSignals(False)
+        row.op.setCurrentIndex(max(row.op.findData("equals"), 0))
+        row.value.setText(value)
+        row._sync_toggle()  # pylint: disable=protected-access
+        self._on_edited()
+
     def rule(self) -> AppRule:
         """The rule as currently entered."""
         profile_id, page_id = self._target()
-        return AppRule(
-            self._rule_id,
-            self._name.text().strip(),
-            self._enabled,
-            [r.condition() for r in self._rows],
-            profile_id,
-            page_id,
-        )
+        conditions = [row.condition() for row in self._rows.values() if row.enabled] + self._extra
+        return AppRule(self._rule_id, self._name.text().strip(), self._enabled, conditions, profile_id, page_id)
 
     def reload_pages(self) -> None:
         """Re-read the page list of the chosen profile, keeping the chosen page."""
@@ -208,11 +269,11 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
             self.focus_left.emit()
 
     def error(self) -> str:
-        """The first validation problem (blank name, then conditions), or an empty string."""
+        """The first validation problem (blank name, then switched-on conditions), or an empty string."""
         if not self._name.text().strip():
             return "A name is required"
-        for row in self._rows:
-            problem = validate_condition(row.condition())
+        for row in self._rows.values():
+            problem = validate_condition(row.condition()) if row.enabled else ""
             if problem:
                 return problem
         return ""
@@ -236,29 +297,6 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
         pages = self._pages_for_profile(profile_id) if isinstance(profile_id, int) else []
         fill_page_combo(self._page, pages, page_id)
 
-    def _clear_rows(self) -> None:
-        for row in self._rows:
-            self._rows_layout.removeWidget(row)
-            row.deleteLater()
-        self._rows = []
-
-    def _append_row(self, condition: MatchCondition) -> None:
-        row = ConditionRow(condition)
-        row.changed.connect(self._on_edited)
-        row.remove.clicked.connect(lambda: self._remove_row(row))
-        self._rows.append(row)
-        self._rows_layout.addWidget(row)
-
-    def _remove_row(self, row: ConditionRow) -> None:
-        self._rows.remove(row)
-        self._rows_layout.removeWidget(row)
-        row.deleteLater()
-        self._on_edited()
-
-    def _on_add_condition(self) -> None:
-        self._append_row(_NEW_CONDITION)
-        self._on_edited()
-
     def _on_profile_chosen(self, _index: int) -> None:
         self._fill_pages("")
         self._on_edited()
@@ -271,21 +309,28 @@ class RuleEditor(QWidget):  # pylint: disable=too-many-instance-attributes
             self.changed.emit()
 
     def _refresh_flags(self) -> None:
-        problem = self.error()
-        self._name.setProperty("invalid", not self._name.text().strip())
+        idle = not self._rule_id and not self._name.text() and not any(r.enabled for r in self._rows.values())
+        problem = "" if idle else self.error()  # an editor showing no rule has nothing to complain about
+        self._name.setProperty("invalid", bool(problem) and not self._name.text().strip())
         _repolish(self._name)
         self._error.setText(problem)
         self._error.setVisible(bool(problem))
         used: list[str] = []
-        for row in self._rows:
-            field = str(row.field.currentData())
-            missing = field in self._unsupported
-            row.mark_invalid(bool(validate_condition(row.condition())))
-            row.field.setToolTip(
-                "This field is not supplied by the detection backend on this system" if missing else ""
-            )
-            if missing and field not in used:
+        for field, row in self._rows.items():
+            missing = row.enabled and field in self._unsupported
+            row.mark_invalid(row.enabled and bool(validate_condition(row.condition())))
+            row.setToolTip("This field is not supplied by the detection backend on this system" if missing else "")
+            if missing:
                 used.append(field)
         names = ", ".join(FIELD_NAMES[f] for f in used)
         self._warning.setText(f"Not supplied by the detection backend on this system: {names}. This rule cannot match.")
         self._warning.setVisible(bool(used))
+
+
+def fill_profile_combo(combo: QComboBox, profiles: list[ProfileInfo], icon_for: IconProvider | None) -> None:
+    """List profiles with their icons (the Decker icon when a profile has none)."""
+    combo.clear()
+    fallback = QIcon()
+    for profile in profiles:
+        icon = profile_qicon(profile.icon, icon_for, fallback if icon_for is None else None)
+        combo.addItem(icon, profile.name, profile.profile_id)
