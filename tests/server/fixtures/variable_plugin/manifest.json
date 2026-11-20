@@ -1,0 +1,20 @@
+{
+  "format": 2,
+  "id": "com.decker.vartest",
+  "name": "Variable Test",
+  "version": "1.0.0",
+  "author": "Decker",
+  "description": "Test-only plugin that publishes global variables.",
+  "decker": ">=0.6",
+  "runtime": { "type": "python", "entry": "plugin.py" },
+  "contributes": {
+    "variables": [
+      { "name": "test_counter", "description": "A counter that grows by itself" },
+      { "name": "test_slow", "description": "A getter that can be made slow" },
+      { "pattern": "test_{item}_value", "description": "A value per item" }
+    ],
+    "actions": [
+      { "id": "com.decker.vartest.bump", "name": "Bump", "tooltip": "Adds 1000 to the counter" }
+    ]
+  }
+}
