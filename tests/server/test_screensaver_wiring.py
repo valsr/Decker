@@ -1,3 +1,5 @@
+import json
+import logging
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -91,7 +93,9 @@ def test_a_cleared_open_hook_is_not_called(manager):
     hook.assert_not_called()
 
 
-def test_server_shutdown_wakes_an_active_device_before_the_device_manager_closes(tmp_path: Path) -> None:
+def test_server_shutdown_wakes_an_active_device_before_the_device_manager_closes(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     previous = decker_paths.home().parent
     decker_paths.configure(tmp_path)
     try:
@@ -108,8 +112,11 @@ def test_server_shutdown_wakes_an_active_device_before_the_device_manager_closes
         assert ctx.screensaver_engine is not None
         assert_that(ctx.screensaver_engine.activate(device_id)).is_true()
         assert_that(ctx.device_manager.overlay_active(device_id)).is_true()
+        pushed: list[tuple[str, str]] = []
+        ctx.event_bus.push = lambda event, payload: pushed.append((event, payload))  # type: ignore[method-assign,assignment]
 
-        server._cleanup(ctx, managers)  # pylint: disable=protected-access
+        with caplog.at_level(logging.WARNING):
+            server._cleanup(ctx, managers)  # pylint: disable=protected-access
         patcher.stop()
     finally:
         decker_paths.configure(previous)
@@ -117,3 +124,8 @@ def test_server_shutdown_wakes_an_active_device_before_the_device_manager_closes
     assert_that(order.index("ScreensaverEngine")).is_less_than(order.index("DeviceManager"))
     assert_that(ctx.device_manager.overlay_active(device_id)).is_false()
     assert_that(ctx.screensaver_engine.is_active(device_id)).is_false()
+    assert_that(pushed).contains(("screensaver_changed", json.dumps({"device_id": device_id, "active": False})))
+    assert_that(
+        [r for r in caplog.records if r.levelno >= logging.WARNING and "screensaver" in r.getMessage()]
+    ).is_empty()
+    assert_that([r for r in caplog.records if r.exc_info]).is_empty()

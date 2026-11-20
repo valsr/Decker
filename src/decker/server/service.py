@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
 
 _LONG_PRESS_HOLD_S = 0.6
+_INTERNAL_ERROR = "internal error"
 _REMOTE_INSTALL_DENIED = "Installing plugins is only allowed from the server's own machine"
 
 
@@ -830,35 +831,59 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
 
     @exposed
     @api_response
-    def screensaver_get(self, device_id: str) -> dict[str, Any]:
-        """A device's screensaver settings plus `active` and `last_error`; unknown devices raise."""
-        return self._saver().get(device_id)
+    def screensaver_get(self, device_id: str) -> dict[str, Any] | None:
+        """A device's screensaver settings plus `active` and `last_error`, or None for an unknown device."""
+        try:
+            return self._saver().get(device_id)
+        except Exception:  # pylint: disable=broad-except
+            logging.debug("screensaver_get failed", exc_info=True)
+            return None
 
     @exposed
     @api_response
-    def screensaver_set(self, device_id: str, settings_json: str) -> bool:
-        """Validate and store screensaver settings (JSON); never activates. Image paths need a local caller."""
-        self._saver().set(device_id, settings_json, loopback=_is_loopback(self._peer_host))
-        return True
+    def screensaver_set(self, device_id: str, settings_json: str) -> dict[str, Any]:
+        """Validate and store settings (JSON); never activates. Returns {"ok", "error"}; paths need a local caller."""
+        try:
+            self._saver().set(device_id, settings_json, loopback=_is_loopback(self._peer_host))
+        except (ValueError, PermissionError) as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception:  # pylint: disable=broad-except
+            logging.exception("screensaver_set failed")
+            return {"ok": False, "error": _INTERNAL_ERROR}
+        return {"ok": True, "error": ""}
 
     @exposed
     @api_response
     def screensaver_activate(self, device_id: str) -> bool:
-        """Show the screensaver now. Returns False when the device is not open."""
-        return self._saver().activate(device_id)
+        """Show the screensaver now. Returns False for an unknown device or one that is not open."""
+        try:
+            return bool(self._saver().activate(device_id))
+        except Exception:  # pylint: disable=broad-except
+            logging.debug("screensaver_activate failed", exc_info=True)
+            return False
 
     @exposed
     @api_response
     def screensaver_deactivate(self, device_id: str) -> bool:
-        """Wake the device. Returns False when it was not showing the screensaver."""
-        return self._saver().deactivate(device_id)
+        """Wake the device. Returns False for an unknown device or one that was not showing the screensaver."""
+        try:
+            return bool(self._saver().deactivate(device_id))
+        except Exception:  # pylint: disable=broad-except
+            logging.debug("screensaver_deactivate failed", exc_info=True)
+            return False
 
     @exposed
     @api_response
-    def screensaver_preview(self, device_id: str, settings_json: str) -> str:
-        """Compose draft settings at the device's layout; returns a base64 PNG. Paths need a local caller."""
-        png = self._saver().preview(device_id, settings_json, loopback=_is_loopback(self._peer_host))
-        return base64.b64encode(png).decode("ascii")
+    def screensaver_preview(self, device_id: str, settings_json: str) -> dict[str, str]:
+        """Compose draft settings at the device's layout: {"png": base64} or {"error": message}."""
+        try:
+            png = self._saver().preview(device_id, settings_json, loopback=_is_loopback(self._peer_host))
+        except (ValueError, PermissionError) as exc:
+            return {"error": str(exc)}
+        except Exception:  # pylint: disable=broad-except
+            logging.exception("screensaver_preview failed")
+            return {"error": _INTERNAL_ERROR}
+        return {"png": base64.b64encode(png).decode("ascii")}
 
     def _saver(self) -> Any:
         controller = self._context.screensaver_controller if self._context is not None else None
