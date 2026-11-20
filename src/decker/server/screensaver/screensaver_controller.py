@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 SCREENSAVER_CHANGED_EVENT = "screensaver_changed"
 SCREENSAVER_SETTINGS_CHANGED_EVENT = "screensaver_settings_changed"
-_REMOTE_PATHS_DENIED = "Changing screensaver image or folder paths is only allowed from the server's own machine"
+_REMOTE_PATHS_DENIED = "image and folder paths can only be changed from the server's machine"
 _FALLBACK_LAYOUT = (1, 1, 72)  # rows, cols, key pixels for a device whose layout is unknown
 _PREVIEW_BACKGROUND = (16, 16, 16, 255)
 _LOGGER = logging.getLogger(__name__)
@@ -130,7 +130,7 @@ class ScreensaverController(Manager):
             or any(info.id == device_id for info in manager.list_devices())
         )
         if not known:
-            raise ValueError(f"unknown device: {device_id}")
+            raise ValueError("unknown device")
 
     def _layout(self, device_id: str, settings: ScreensaverSettings) -> CanvasLayout:
         info = self._hw_info(device_id)

@@ -328,7 +328,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if not current:
             return  # a stale handle of a dropped Device must not deliver presses for its reopened successor
         device_id = device.device_id
-        self._call_hook(self._activity_hook, device_id)
+        self._call_hook(self._activity_hook, device_id, "activity")
         if self._gate_key_event(device_id, key_index, pressed):
             return
         device.on_key_event(key_index, pressed)
@@ -346,17 +346,17 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             else:  # a normal press or any release ends the swallow, so a stale entry can never eat a later release
                 self._swallow_release.discard(key)
         if wake:
-            self._call_hook(self._wake_hook, device_id)
+            self._call_hook(self._wake_hook, device_id, "wake")
         return swallowed
 
     @staticmethod
-    def _call_hook(hook: _DeviceHook | None, device_id: str) -> None:
+    def _call_hook(hook: _DeviceHook | None, device_id: str, name: str) -> None:
         if hook is None:
             return
         try:
             hook(device_id)
         except Exception:  # pylint: disable=broad-except
-            logging.exception("DeviceManager: key event hook failed for %s", device_id)
+            logging.exception("DeviceManager: %s hook failed for %s", name, device_id)
 
     def set_activity_hook(self, hook: _DeviceHook | None) -> None:
         """Call hook(device_id) for every key event of a current device, swallowed or not."""
@@ -501,7 +501,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if self._state_store is not None:
             self._state_store.save_device(device.get_hw_info())
 
-        self._call_hook(self._open_hook, device.device_id)  # outside _lock, on the opener's thread
+        self._call_hook(self._open_hook, device.device_id, "open")  # outside _lock, on the opener's thread
         return device
 
     def open_device(self, device_id: str) -> Device | None:

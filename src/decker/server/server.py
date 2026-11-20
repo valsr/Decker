@@ -356,8 +356,8 @@ class ServerProcess:
             plugin_manager,
             rule_controller,
             rule_engine,
+            saver_controller,  # before the engine: the engine's shutdown wake still announces through it
             saver_engine,  # destroyed before the device manager, so it can wake active devices
-            saver_controller,
         ]
         self._context = context
         for manager in managers:
