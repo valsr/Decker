@@ -7,7 +7,7 @@ from decker.asset.iconpack import IconPackRegistry
 from decker.plugin.loader import InstalledPlugin, PluginLoader
 from decker.plugin.manifest import PluginManifest
 from decker.plugin.settings_store import PluginSettingsStore
-from decker.server.contributions import ContributionRegistry
+from decker.server.contributions import ContributionRegistry, contributed_kinds
 from decker.server.plugins import PluginManager
 
 
@@ -30,7 +30,7 @@ def _plugin_packs(registry):
     return [pack for pack in registry.list_packs() if pack["id"] != "decker.user"]
 
 
-def _plugin(tmp_path: Path, contributes: dict, runtime: bool = False) -> InstalledPlugin:
+def _plugin(tmp_path: Path, contributes: dict, runtime: bool = False, decker: bool = False) -> InstalledPlugin:
     data: dict = {
         "format": 1,
         "id": "com.t.p",
@@ -42,6 +42,8 @@ def _plugin(tmp_path: Path, contributes: dict, runtime: bool = False) -> Install
     }
     if runtime:
         data["runtime"] = {"type": "python", "entry": "plugin.py"}
+    if decker:
+        data["decker"] = ">=0.6"
     return InstalledPlugin(PluginManifest.from_dict(data), tmp_path)
 
 
@@ -56,7 +58,7 @@ def _pack_dir(tmp_path: Path) -> None:
 
 def test_registry_dispatches_by_kind(tmp_path):
     cards, actions, packs = _Recorder("cards"), _Recorder("actions"), _Recorder("icon_packs")
-    registry = ContributionRegistry([cards, actions, packs])
+    registry = ContributionRegistry([cards, actions, packs, _Recorder("variables")])
 
     registry.add(_plugin(tmp_path, _PACK))
     registry.remove("com.t.p")
@@ -68,18 +70,34 @@ def test_registry_dispatches_by_kind(tmp_path):
 
 def test_registry_requires_every_known_kind():
     with pytest.raises(AssertionError):
-        ContributionRegistry([_Recorder("cards"), _Recorder("actions")])
+        ContributionRegistry([_Recorder("cards"), _Recorder("actions"), _Recorder("icon_packs")])
 
 
 def test_handler_failure_rolls_back(tmp_path):
     actions, packs = _Recorder("cards"), _Recorder("icon_packs", fail=True)
-    registry = ContributionRegistry([actions, _Recorder("actions"), packs])
+    registry = ContributionRegistry([actions, _Recorder("actions"), packs, _Recorder("variables")])
     plugin = _plugin(tmp_path, {"cards": [_ACTION], **_PACK}, runtime=True)
 
     with pytest.raises(RuntimeError):
         registry.add(plugin)
 
     assert_that(actions.calls).is_equal_to([("register", "com.t.p"), ("unregister", "com.t.p")])
+
+
+def test_contributed_kinds_includes_variables(tmp_path):
+    plugin = _plugin(tmp_path, {"variables": [{"name": "media_volume"}]}, runtime=True, decker=True)
+
+    assert_that(contributed_kinds(plugin)).is_equal_to(frozenset({"variables"}))
+
+
+def test_registry_dispatches_variables_only_to_the_variables_handler(tmp_path):
+    cards, variables = _Recorder("cards"), _Recorder("variables")
+    registry = ContributionRegistry([cards, _Recorder("actions"), _Recorder("icon_packs"), variables])
+
+    registry.add(_plugin(tmp_path, {"variables": [{"name": "media_volume"}]}, runtime=True, decker=True))
+
+    assert_that(cards.calls).is_empty()
+    assert_that(variables.calls).is_equal_to([("register", "com.t.p")])
 
 
 def _manager(tmp_path: Path) -> PluginManager:

@@ -406,3 +406,77 @@ def test_switch_cannot_be_static() -> None:
     card = {"id": "com.decker.core.switch", "name": "Switch", "behavior": "switch", "static": True}
     with pytest.raises(ManifestValidationError, match="static or a preset"):
         PluginManifest.from_dict(_core_without_runtime([card]))
+
+
+def _variables(entries: list[Any], **extra: Any) -> dict[str, Any]:
+    data = _minimal(2, {"variables": entries})
+    data.update({"runtime": {"type": "python", "entry": "plugin.py"}, "decker": ">=0.6", **extra})
+    return data
+
+
+def test_variables_parse() -> None:
+    data = _variables([{"name": "media_volume", "description": "x"}, {"pattern": "media_{device}_volume"}])
+
+    manifest = PluginManifest.from_dict(data)
+
+    assert_that([(v.name, v.pattern, v.description) for v in manifest.variables]).is_equal_to(
+        [("media_volume", None, "x"), (None, "media_{device}_volume", "")]
+    )
+
+
+def test_variables_need_runtime() -> None:
+    data = _variables([{"name": "media_volume"}])
+    del data["runtime"]
+
+    with pytest.raises(ManifestValidationError, match="runtime"):
+        PluginManifest.from_dict(data)
+
+
+def test_variables_need_decker_constraint() -> None:
+    data = _variables([{"name": "media_volume"}])
+    del data["decker"]
+
+    with pytest.raises(ManifestValidationError, match="decker"):
+        PluginManifest.from_dict(data)
+
+
+def test_variable_core_name_rejected() -> None:
+    with pytest.raises(ManifestValidationError, match="page_name"):
+        PluginManifest.from_dict(_variables([{"name": "page_name"}]))
+
+
+def test_variable_pattern_matching_core_name_rejected() -> None:
+    with pytest.raises(ManifestValidationError, match="page_"):
+        PluginManifest.from_dict(_variables([{"pattern": "page_{x}"}]))
+
+
+def test_duplicate_variable_in_plugin_rejected() -> None:
+    with pytest.raises(ManifestValidationError, match="duplicate"):
+        PluginManifest.from_dict(_variables([{"name": "a_b"}, {"name": "a_b"}]))
+
+
+@pytest.mark.parametrize(
+    "entry", [{"name": "A!"}, {"pattern": "no_placeholder"}, {"name": "a", "pattern": "a_{b}"}, {}, "text"]
+)
+def test_invalid_variable_entry_rejected(entry: Any) -> None:
+    with pytest.raises(ManifestValidationError):
+        PluginManifest.from_dict(_variables([entry]))
+
+
+def test_too_many_variables_rejected() -> None:
+    with pytest.raises(ManifestValidationError, match="at most 256"):
+        PluginManifest.from_dict(_variables([{"name": f"v{i}"} for i in range(257)]))
+
+
+def test_variables_only_plugin_is_valid() -> None:
+    manifest = PluginManifest.from_dict(_variables([{"name": "media_volume"}]))
+
+    assert_that(manifest.cards).is_empty()
+    assert_that(manifest.actions).is_empty()
+    assert_that(manifest.icon_packs).is_empty()
+    assert_that(manifest.variables).is_length(1)
+
+
+def test_plugin_contributing_nothing_is_rejected() -> None:
+    with pytest.raises(ManifestValidationError, match="cards, actions, icon packs or variables"):
+        PluginManifest.from_dict(_minimal(2, {"cards": []}))
