@@ -40,6 +40,7 @@ from decker.server.appearance import (
     PACK_ICON_SCALE,
     Composed,
     compose_key_face,
+    intern_background,
     resolve_appearance,
 )
 from decker.server.contributions import ContributionRegistry
@@ -102,14 +103,12 @@ class _Live:  # pylint: disable=too-many-instance-attributes
 
 
 def _uses_pack_icon(live: _Live) -> bool:
-    icon = live.appearance.get("icon")
-    background = live.appearance.get("background")
-    image = background.get("image") if isinstance(background, dict) else None
-    return (
-        live.plugin_icon_ref is not None
-        or (isinstance(icon, dict) and bool(icon.get("ref")))
-        or (isinstance(image, dict) and bool(image.get("ref")))
-    )
+    if live.plugin_icon_ref is not None:
+        return True
+    # The resolved look, like _compose: a manifest-default icon or background ref counts too.
+    appearance = resolve_appearance(live.action.appearance, live.appearance)
+    background = appearance["background"]
+    return bool(appearance["icon"]["ref"]) or (background["type"] == "image" and bool(background["image"]["ref"]))
 
 
 def _gestures_from(names: Any) -> frozenset[Gesture]:
@@ -528,7 +527,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if background["type"] != "image":
             return None
         try:
-            return self.icon_packs.read_ref(background["image"]["ref"])
+            return intern_background(self.icon_packs.read_ref(background["image"]["ref"]))
         except Exception:  # pylint: disable=broad-except
             logging.debug("Could not read background image %r", background["image"]["ref"], exc_info=True)
             return None

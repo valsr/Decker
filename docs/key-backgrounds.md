@@ -35,11 +35,13 @@ The image fills the key by cover-and-crop: it is scaled until it covers the whol
 centred. SVG backgrounds render at the key's square size, so author them square. Transparent areas show black. There
 is no tint.
 
-Supported formats: PNG, JPEG, SVG and GIF (first frame for a still, all frames when animated).
+Supported formats: PNG, JPEG, SVG and GIF (first frame for a still, all frames when animated). A JPEG or PNG with an
+EXIF orientation tag (phone photos) is turned upright before it is cropped.
 
 ## GIF backgrounds
 
-- An animated GIF used as the foreground icon wins: the background then shows its first frame only.
+- An animated GIF used as the foreground icon wins: the background then shows its first frame only, under every frame
+  of the icon (the hardware, the preview and the poster all match).
 - Otherwise an animated background plays behind the static icon and title.
 - A key has one animated source at most.
 
@@ -50,6 +52,11 @@ A missing, uninstalled or unreadable image gives a black background; the icon an
 ## Performance
 
 Decoded background layers are cached by content (64 entries), so redrawing a key does not decode its image again.
+Identical background files share one copy in memory (up to 32 files or 64 MiB), however many keys or redraws use them.
+
+A plugin that calls `set_image` often (a clock, a meter) on a key with an **animated** background rebuilds the whole
+animation on every new image: each one is decoded, composed and encoded again. Give such keys a static image or a
+colour background.
 
 ## Limitations
 

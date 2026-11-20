@@ -1,3 +1,4 @@
+import base64
 import io
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from PIL import Image
 
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import PluginManifest
+from decker.plugin.protocol import Message
 from decker.plugin.target import ActionTarget
 from tests.server.animation_fixture import (
     WriteLog,
@@ -212,3 +214,48 @@ def test_animated_background_resumes_when_the_device_reopens(deck_env):
     assert_that(env.dm.playing_animation_id(device_id, 2)).is_not_none()
     assert_that(_animation(env, device_id, 2).layer).is_equal_to("background")
     assert_that(wait_until(lambda: len({w[1] for w in log.for_key(2)}) >= 2)).is_true()
+
+
+def test_repeated_set_image_over_an_animated_background_shares_one_gif_copy(deck_env):
+    env, device_id, _plugin = deck_env
+    target = _target(device_id)
+    env.manager.activate_action(target, _bg("bg.gif"))
+
+    for index in range(50):
+        image = base64.b64encode(_png(f"#{index:02x}ff00", 8)).decode()
+        env.manager._on_plugin_message(  # pylint: disable=protected-access
+            target.plugin_uuid, Message("set_image", target.context_id, {"image": image, "format": "png"})
+        )
+
+    factory = env.dm.animation_factory
+    assert factory is not None
+    specs = [spec for spec in factory._specs.values() if spec.layer == "background"]  # pylint: disable=protected-access
+    assert_that(len({spec.overlay for spec in specs})).is_greater_than_or_equal_to(50)
+    assert_that({id(spec.gif) for spec in specs}).is_length(1)
+    assert_that(specs[0].gif).is_equal_to(_FILES["bg.gif"])
+
+
+def test_pack_removal_redraws_a_manifest_default_background(env, tmp_path):
+    root = tmp_path / "preset"
+    root.mkdir()
+    manifest = PluginManifest.from_dict(
+        {
+            "format": 1,
+            "id": "com.t.bgpreset",
+            "name": "BG preset",
+            "version": "1.0.0",
+            "author": "a",
+            "contributes": {
+                "actions": [
+                    {"id": "com.t.bgpreset.key", "name": "Key", "static": True, **{"appearance": _bg("blue.png")}}
+                ]
+            },
+        }
+    )
+    env.manager.add_plugin(InstalledPlugin(manifest, root))
+    env.manager.activate_action(ActionTarget("com.t.bgpreset", "com.t.bgpreset.key", "ctx-preset", "dev", 0), {})
+    assert_that(_pixel(env.image(), 5, 5)).is_equal_to((0, 0, 255))
+
+    env.manager.remove_plugin("com.t.bg")
+
+    assert_that(_pixel(env.image(), 5, 5)).is_equal_to((0, 0, 0))
