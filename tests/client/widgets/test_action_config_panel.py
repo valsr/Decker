@@ -593,3 +593,24 @@ class TestBackgroundIntegration:  # pylint: disable=protected-access
 
         assert_that(panel.is_dirty).is_true()
         assert_that(panel._draft_appearance()["background"]["type"]).is_equal_to("image")
+
+
+class TestFrozenTop:  # pylint: disable=protected-access
+    def test_only_the_plugin_settings_scroll_under_a_separator(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        _show(panel)
+        form_page = panel.widget(1)
+        layout = form_page.layout()
+        assert layout is not None
+
+        kinds = [type(layout.itemAt(i).widget()).__name__ for i in range(layout.count()) if layout.itemAt(i).widget()]
+        assert_that(kinds).ends_with("QFrame", "QScrollArea")
+        scroll = layout.itemAt(layout.count() - 1).widget()
+        assert_that(scroll.widget()).is_same_as(panel._settings_form)
+        assert_that(panel._appearance_form.parent()).is_not_same_as(scroll.viewport())
+
+    def test_the_appearance_rows_are_title_background_icon(self, qapp):  # pylint: disable=unused-argument
+        panel = ActionConfigPanel()
+        _show(panel)
+
+        assert_that(list(panel._appearance_form._fields)).is_equal_to(["title", "background", "icon"])

@@ -1,4 +1,4 @@
-"""Floating single-row formatting toolbar for the text style control."""
+"""Single-row formatting toolbar for the text style control."""
 
 from collections.abc import Mapping
 from typing import Any
@@ -7,7 +7,6 @@ from PyQt6.QtCore import QRect, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QFont,
     QIcon,
-    QKeyEvent,
     QKeySequence,
     QPainter,
     QPixmap,
@@ -92,17 +91,15 @@ def _spin(bounds: tuple[int, int], suffix: str) -> QSpinBox:
 
 
 class TextStyleToolbar(QFrame):  # pylint: disable=too-many-instance-attributes
-    """Popup row: font, size, B/I/U/S, position, colour, outline, outline width, visible."""
+    """Row: font, size, B/I/U/S, position, colour, outline, outline width, visible."""
 
     style_changed = pyqtSignal()
-    closed = pyqtSignal()
     picker_opened = pyqtSignal()
     picker_closed = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent, Qt.WindowType.Popup)
+        super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoMouseReplay)  # a click on the cog closes, not reopens
         self._loading = False
         self._row = QHBoxLayout(self)
         self._row.setContentsMargins(6, 4, 6, 4)
@@ -155,18 +152,6 @@ class TextStyleToolbar(QFrame):  # pylint: disable=too-many-instance-attributes
             self._sync_outline_enabled(style["outline"] is not None)
         finally:
             self._loading = False
-
-    def keyPressEvent(self, event: QKeyEvent | None) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """Esc closes the popup."""
-        if event is not None and event.key() == Qt.Key.Key_Escape:
-            self.close()
-            return
-        super().keyPressEvent(event)
-
-    def hideEvent(self, event: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """Tell the owner the popup went away, however it was closed."""
-        super().hideEvent(event)
-        self.closed.emit()
 
     def _changed(self, *_args: Any) -> None:
         if not self._loading:

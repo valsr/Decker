@@ -3,29 +3,35 @@
 from typing import Any
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QWidget
 
 from decker.client.widgets.color_button import ColorButton
 from decker.client.widgets.icon_edit import IconEdit
+from decker.client.widgets.tri_state_button import TriStateButton, colour_wheel_icon, cross_icon, image_icon
 from decker.common.background import normalize_background
 
-_MODES: tuple[tuple[str, str], ...] = (("none", "None"), ("color", "Solid colour"), ("image", "Image"))
+
 
 
 class BackgroundEdit(QWidget):
-    """A mode combo plus the control for the chosen mode; the other mode's colour or image is kept."""
+    """A none | colour | image selector plus the control for the chosen mode; the other mode's choice is kept."""
 
     value_changed = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._mode = QComboBox()
-        for data, label in _MODES:
-            self._mode.addItem(label, data)
+        self._mode = TriStateButton(
+            [
+                ("none", "No background", cross_icon()),
+                ("color", "Solid colour", colour_wheel_icon()),
+                ("image", "Image", image_icon()),
+            ]
+        )
         self._colour = ColorButton("#000000", alpha=True)
         self._colour.set_show_name(False)
         self._colour.setToolTip("Background colour")
         self._image = IconEdit()
+        self._image.set_toolbar(True)
         self._image.set_show_colour(False)
         self._image.set_tint_thumbnail(False)  # the server draws backgrounds untinted
         self._image.set_texts("No image (shows black)", "Remove the background image")

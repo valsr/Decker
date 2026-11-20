@@ -153,8 +153,8 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         self._request_preview()
 
     def _build_form_page(self) -> QWidget:
-        content = QWidget()
-        layout = QVBoxLayout(content)
+        page = QWidget()
+        layout = QVBoxLayout(page)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.addWidget(self._header)
 
@@ -168,18 +168,22 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         top = QHBoxLayout()
         top.addWidget(self._preview, 0, _TOP)
         top.addLayout(rows, 1)
-        layout.addLayout(top)
-        layout.addWidget(self._settings_form)
-        layout.addStretch()
+        layout.addLayout(top)  # everything above the separator stays put while the plugin's settings scroll
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(separator)
 
         self._preview.set_icon_requested.connect(self._browse_icon)
         self._preview.clear_icon_requested.connect(self._clear_icon)
 
         scroll = QScrollArea()
-        scroll.setWidget(content)
+        scroll.setWidget(self._settings_form)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        return scroll
+        layout.addWidget(scroll, 1)
+        return page
 
     def _icon_edit(self) -> Any:
         field = self._appearance_form._fields.get("icon")  # pylint: disable=protected-access
