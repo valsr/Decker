@@ -9,6 +9,7 @@ from decker.common.model import (
     DevicePages,
     DeviceProfiles,
     DeviceRules,
+    ScreensaverSettings,
     WindowInfo,
 )
 
@@ -94,6 +95,24 @@ class AppRulesUpdatedEvent:
     """The active device's app rules or default rule changed."""
 
     rules: DeviceRules
+
+
+@dataclass(frozen=True)
+class ScreensaverSettingsEvent:
+    """A device's brightness and screensaver settings, with its live state and last activation error."""
+
+    device_id: str
+    settings: ScreensaverSettings
+    active: bool
+    last_error: str
+
+
+@dataclass(frozen=True)
+class ScreensaverStateEvent:
+    """A device's screensaver became active or inactive."""
+
+    device_id: str
+    active: bool
 
 
 @dataclass(frozen=True)
@@ -187,6 +206,8 @@ AppEvent = (
     | PagesUpdatedEvent
     | ProfilesUpdatedEvent
     | AppRulesUpdatedEvent
+    | ScreensaverSettingsEvent
+    | ScreensaverStateEvent
     | WindowFocusedEvent
     | WindowPickedEvent
     | DetectionStatusEvent
