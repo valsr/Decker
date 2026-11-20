@@ -29,6 +29,7 @@ from decker.client.events import ScreensaverSettingsEvent, ScreensaverStateEvent
 from decker.client.server_settings import ServerSettingsInfo
 from decker.client.themes import ThemeColors, apply_theme
 from decker.client.widgets.plugins_tab import PluginsTab
+from decker.client.widgets.screensaver_panel import ScreensaverPanel
 
 _STATUS_REFRESH_MS = 1000
 _RESTART_REVERT_MS = 30_000
@@ -78,6 +79,7 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._custom_path_input: QLineEdit = QLineEdit()
         self._browse_btn: QPushButton = QPushButton("Browse…")
         self._plugins_tab: PluginsTab = PluginsTab()
+        self._screensaver_panel: ScreensaverPanel = ScreensaverPanel()
         self._failed_list = self._plugins_tab._failed_list  # pylint: disable=protected-access
         self._no_failures_label = self._plugins_tab._no_failures_label  # pylint: disable=protected-access
         self._message_label: QLabel = QLabel()
@@ -95,6 +97,8 @@ class SettingsDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._tabs.addTab(self._server_tab, "Server")
         self._tabs.addTab(self._ui_tab, "UI")
         self._tabs.addTab(self._plugins_tab, "Plugins")
+        self._tabs.addTab(self._screensaver_panel, "Device")
+        self.add_screensaver_listener(self._screensaver_panel.handle_event)
 
         self._buttons.rejected.connect(self.reject)
         apply_btn = self._buttons.button(QDialogButtonBox.StandardButton.Apply)

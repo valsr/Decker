@@ -50,7 +50,7 @@ class TestLayout:
         tabs = [dialog._tabs.tabText(i) for i in range(dialog._tabs.count())]
 
         assert_that(dialog.isModal()).is_false()
-        assert_that(tabs).is_equal_to(["General", "Server", "UI", "Plugins"])
+        assert_that(tabs).is_equal_to(["General", "Server", "UI", "Plugins", "Device"])
 
     def test_bottom_buttons_are_apply_and_close(self, dialog):
         buttons = [dialog._buttons.standardButton(b) for b in dialog._buttons.buttons()]
