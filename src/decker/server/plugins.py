@@ -246,9 +246,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def list_actions(self) -> list[dict[str, Any]]:
         """Every action declared across all loaded plugin manifests, with its settings schema."""
-        return self._action_runner.listing(
+        listed = self._action_runner.listing(
             lambda plugin, spec: self._icon_b64(plugin.plugin_dir, spec.icon or plugin.manifest.icon)
         )
+        return [{**item, "plugin_builtin": self.is_builtin(item["plugin_uuid"])} for item in listed]
 
     def run_action(self, action_id: str, settings: dict[str, Any]) -> None:
         """Run an action in the background; a failure is announced as an ``action_failed`` event."""
@@ -377,6 +378,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                     "plugin_builtin": self.is_builtin(manifest.id),
                     "card_uuid": spec.id,
                     "card_name": spec.name,
+                    "action": spec.action or "",  # the action a preset card runs, "" for any other card
                     "icon_b64": self._icon_b64(plugin.plugin_dir, spec.icon or manifest.icon),
                     "tooltip": spec.tooltip,
                     "settings_schema": schema_to_json(spec.settings),

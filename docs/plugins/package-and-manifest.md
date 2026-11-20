@@ -145,6 +145,8 @@ A card is what a key shows: it draws an image and a title, and may react to pres
 | `action` | With `card`: the id of the [action](#actions) a press runs. It may belong to any plugin. |
 | `action_settings` | With `card`: the action's preconfigured settings. The card's own `settings` values, if it declares any, override them. |
 
+In the key picker an action is listed on the Actions tab with the icon of its preset card, or a generic task icon when no plugin ships one; dragging it onto a key drops that preset card, or Run Action set to the action.
+
 A preset of Run Action runs no code of its own and needs no `runtime`; the action it runs lives in the plugin that declares it.
 
 ### `actions[]`

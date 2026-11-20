@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 from decker.client.call_bridge import CallBridge
 from decker.client.context import AppContext
 from decker.client.events import (
+    ActionListUpdatedEvent,
     AppEvent,
     AppRulesUpdatedEvent,
     CardListUpdatedEvent,
@@ -150,6 +151,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             self._cards = event.cards
             self._sidebar.set_cards(event.cards)
             self._refresh_config_panel()
+        elif isinstance(event, ActionListUpdatedEvent):
+            self._sidebar.set_actions(event.actions)
         elif isinstance(event, KeyDisplayStatesUpdatedEvent):
             self._on_display_states_updated(event.device_id, event.states)
         elif isinstance(event, PagesUpdatedEvent):
@@ -605,7 +608,8 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if not plugin_uuid or not card_uuid:
             return
         context_id = uuid.uuid4().hex
-        settings: dict[str, Any] = {}
+        preset_action = str(card_data.get("preset_action") or "")
+        settings: dict[str, Any] = {"action": preset_action} if preset_action else {}  # Run Action, set to that action
         cm = AppContext.get().connection_manager
         if cm is None:
             return

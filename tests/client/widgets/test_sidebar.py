@@ -68,7 +68,7 @@ class TestSidebarWidget:
         layout = sidebar.layout()
         assert isinstance(layout, QVBoxLayout)
 
-        assert_that(layout.stretch(layout.indexOf(sidebar._scroll))).is_equal_to(1)  # pylint: disable=protected-access
+        assert_that(layout.stretch(layout.indexOf(sidebar._stack))).is_equal_to(1)  # pylint: disable=protected-access
 
 
 class TestSections:  # pylint: disable=protected-access
@@ -201,3 +201,125 @@ class TestDrag:  # pylint: disable=protected-access
 
     def test_start_drag_without_current_item_does_nothing(self, qapp):  # pylint: disable=unused-argument
         _DraggableCardList().startDrag(Qt.DropAction.CopyAction)  # should not raise
+
+
+_ACTION_LIST: list[dict[str, Any]] = [
+    {
+        "plugin_uuid": "com.decker.core",
+        "plugin_name": "Core",
+        "plugin_builtin": True,
+        "action_uuid": "com.decker.core.http",
+        "action_name": "HTTP Request",
+    },
+    {"plugin_uuid": "com.t.audio", "plugin_name": "Audio", "action_uuid": "com.t.audio.up", "action_name": "Volume up"},
+    {"plugin_uuid": "com.t.audio", "plugin_name": "Audio", "action_uuid": "com.t.audio.mute", "action_name": "Mute"},
+]
+_PRESET: dict[str, Any] = {
+    "plugin_uuid": "com.t.audio",
+    "plugin_name": "Audio",
+    "card_uuid": "com.t.audio.upcard",
+    "card_name": "Volume Up",
+    "action": "com.t.audio.up",
+    "icon_b64": _COUNTER["icon_b64"],
+}
+
+
+def _texts_and_icons(pane):
+    result = {}
+    for section in pane.sections:
+        for row in range(section.card_list.count()):
+            item = section.card_list.item(row)
+            assert item is not None
+            result[item.text()] = item.icon()
+    return result
+
+
+def _drop_payload(section, row: int = 0) -> dict:
+    item = section.card_list.item(row)
+    assert item is not None
+    mime = section.card_list.build_drag(item).mimeData()
+    assert mime is not None
+    return json.loads(bytes(mime.data("application/x-decker-card").data()))
+
+
+class TestTabs:  # pylint: disable=protected-access
+    def test_there_are_a_cards_tab_and_an_actions_tab_with_icons(self, qapp):  # pylint: disable=unused-argument
+        sidebar = SidebarWidget()
+
+        assert_that(sidebar.tab_names).is_equal_to(["Cards", "Actions"])
+        assert_that([not sidebar._tabs.tabIcon(i).isNull() for i in range(2)]).is_equal_to([True, True])
+
+    def test_the_tabs_switch_the_list_and_the_search_hint(self, qapp):  # pylint: disable=unused-argument
+        sidebar = SidebarWidget()
+        sidebar.set_cards(_ACTIONS)
+        sidebar.set_actions(_ACTION_LIST)
+
+        assert_that(sidebar._stack.currentWidget()).is_same_as(sidebar._cards_pane)
+        assert_that(sidebar._search.placeholderText()).is_equal_to("Search cards...")
+        sidebar._tabs.setCurrentIndex(1)
+
+        assert_that(sidebar._stack.currentWidget()).is_same_as(sidebar._actions_pane)
+        assert_that(sidebar._search.placeholderText()).is_equal_to("Search actions...")
+
+    def test_actions_are_grouped_by_plugin_with_the_built_in_one_first(self, qapp):  # pylint: disable=unused-argument
+        sidebar = SidebarWidget()
+        sidebar.set_actions(_ACTION_LIST)
+
+        assert_that(sidebar.action_sections).is_equal_to(
+            [
+                ("Built in", ["HTTP Request"]),
+                ("Audio", ["Volume up", "Mute"]),
+            ]
+        )
+
+    def test_one_search_filters_both_lists(self, qapp):  # pylint: disable=unused-argument
+        sidebar = SidebarWidget()
+        sidebar.set_cards(_ACTIONS)
+        sidebar.set_actions(_ACTION_LIST)
+
+        sidebar._search.setText("mute")
+
+        assert_that(sidebar.action_sections).is_equal_to([("Audio", ["Mute"])])
+        assert_that(sidebar.sections).is_empty()
+
+    def test_an_action_without_a_preset_card_uses_the_task_icon(self, qapp):  # pylint: disable=unused-argument
+        sidebar = SidebarWidget()
+        sidebar.set_cards([_PRESET])
+        sidebar.set_actions(_ACTION_LIST)
+        icons = _texts_and_icons(sidebar._actions_pane)
+
+        task = icons["Mute"].pixmap(ICON_SIZE, ICON_SIZE).toImage()
+        preset = icons["Volume up"].pixmap(ICON_SIZE, ICON_SIZE).toImage()
+
+        assert_that(task == preset).is_false()
+        assert_that(icons["HTTP Request"].pixmap(ICON_SIZE, ICON_SIZE).toImage() == task).is_true()
+
+    def test_a_preset_card_is_what_dragging_its_action_drops(self, qapp):  # pylint: disable=unused-argument
+        sidebar = SidebarWidget()
+        sidebar.set_cards([_PRESET])
+        sidebar.set_actions(_ACTION_LIST)
+        audio = sidebar._actions_pane.sections[1]  # Volume up is its first tile
+
+        payload = _drop_payload(audio, 0)
+
+        assert_that(payload["card_uuid"]).is_equal_to("com.t.audio.upcard")
+        assert_that(payload).does_not_contain_key("preset_action")
+
+    def test_an_action_without_a_preset_drops_run_action_set_to_it(self, qapp):  # pylint: disable=unused-argument
+        sidebar = SidebarWidget()
+        sidebar.set_actions(_ACTION_LIST)
+
+        payload = _drop_payload(sidebar._actions_pane.sections[0])  # the built-in section: HTTP Request
+
+        assert_that(payload["plugin_uuid"]).is_equal_to("com.decker.core")
+        assert_that(payload["card_uuid"]).is_equal_to("com.decker.core.runaction")
+        assert_that(payload["preset_action"]).is_equal_to("com.decker.core.http")
+
+    def test_action_tiles_have_no_options_menu(self, qapp):  # pylint: disable=unused-argument
+        sidebar = SidebarWidget()
+        sidebar.set_actions(_ACTION_LIST)
+
+        card_list = sidebar._actions_pane.sections[0].card_list
+
+        assert_that(card_list.contextMenuPolicy()).is_equal_to(Qt.ContextMenuPolicy.DefaultContextMenu)
+        assert_that(card_list.actions()).is_empty()

@@ -2180,6 +2180,13 @@ class TestRunActionCard:
         assert_that(listed).contains_key("com.decker.core.httprequest")
         assert_that([f["key"] for f in listed["com.decker.core.httprequest"]["settings_schema"]]).contains("url")
 
+    def test_the_action_list_marks_built_in_plugins_and_the_card_list_names_preset_actions(self, env):
+        action = next(a for a in env.manager.list_actions() if a["action_uuid"] == "com.decker.core.httprequest")
+        card = next(c for c in env.manager.list_cards() if c["card_uuid"] == "com.decker.core.runaction")
+
+        assert_that(action["plugin_builtin"]).is_true()
+        assert_that(card["action"]).is_equal_to("")
+
     def test_run_action_is_a_card_in_the_card_list_and_the_http_action_is_not(self, env):
         ids = [c["card_uuid"] for c in env.manager.list_cards()]
 

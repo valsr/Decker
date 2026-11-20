@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QMenu, QMessageBox
 from decker.client.call_bridge import CallBridge
 from decker.client.context import AppContext
 from decker.client.events import (
+    ActionListUpdatedEvent,
     AppRulesUpdatedEvent,
     CardListUpdatedEvent,
     DetectionStatusEvent,
@@ -513,6 +514,34 @@ class TestKeyInteractions:
         view._on_card_dropped(4, {"plugin_uuid": "com.p", "card_uuid": "com.p.a"})  # pylint: disable=protected-access
         assert_that(mock_cm.call.call_args[0][:4]).is_equal_to(("key_assign", "dev1", "p1", 4))
         assert_that(view._key_slots).contains_key(4)  # pylint: disable=protected-access
+
+    def test_dropping_an_action_assigns_run_action_with_that_action_chosen(
+        self, qapp, tmp_path
+    ):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        _active_dev1(view)
+        mock_cm = MagicMock()
+        mock_cm.call.return_value = True
+        AppContext.get().connection_manager = mock_cm
+
+        view._on_card_dropped(  # pylint: disable=protected-access
+            2,
+            {"plugin_uuid": "com.decker.core", "card_uuid": "com.decker.core.runaction", "preset_action": "com.t.mute"},
+        )
+
+        args = mock_cm.call.call_args[0]
+        assert_that(args[:7]).is_equal_to(
+            ("key_assign", "dev1", "p1", 2, "com.decker.core", "com.decker.core.runaction", args[6])
+        )
+        assert_that(json.loads(args[7])).is_equal_to({"action": "com.t.mute"})
+
+    def test_action_list_event_fills_the_actions_tab(self, qapp, tmp_path):  # pylint: disable=unused-argument
+        view = _make_view(tmp_path)
+        actions = [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "Do"}]
+
+        view.handle_event(ActionListUpdatedEvent(actions=actions))
+
+        assert_that(view._sidebar.action_sections).is_equal_to([("P", ["Do"])])  # pylint: disable=protected-access
 
     def test_save_key_settings_calls_update_settings_rpc(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)

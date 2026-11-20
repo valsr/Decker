@@ -1,11 +1,12 @@
-"""Sidebar: searchable plugin cards (icon + name) in one collapsible section per plugin, dragged onto keys."""
+"""Sidebar: a Cards tab and an Actions tab, each a searchable list in one collapsible section per plugin."""
 
 import json
 import math
+from collections.abc import Callable
 from typing import Any
 
 from PyQt6.QtCore import QByteArray, QMimeData, QPoint, QSize, Qt
-from PyQt6.QtGui import QDrag, QIcon
+from PyQt6.QtGui import QDrag, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -15,19 +16,25 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
+    QTabBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from decker.client.card_icons import card_pixmap
+from decker.client.card_icons import asset_pixmap, card_pixmap
+from decker.plugin.manifest import RUN_ACTION_CARD_ID
 
 _MIME_TYPE = "application/x-decker-card"
 ICON_SIZE = 48
 DRAG_ICON_SIZE = 56
 _TILE_SIZE = QSize(96, 104)  # room for a two-line name under the icon
 _ICON_SOURCE_SIZE = ICON_SIZE * 2  # rendered at 2x so icons stay sharp on high-DPI screens
-_DRAG_FIELDS = ("plugin_uuid", "plugin_name", "card_uuid", "card_name")
+_DRAG_FIELDS = ("plugin_uuid", "plugin_name", "card_uuid", "card_name", "preset_action")
+_CORE_PLUGIN_ID = "com.decker.core"
+_DRAG_PIXMAP_ROLE = Qt.ItemDataRole.UserRole + 1  # an item's own drag picture, when it is not the card's icon
+_TAB_ICON = 18
 BUILTIN_TITLE = "Built in"
 
 
@@ -42,7 +49,17 @@ class _DraggableCardList(QListWidget):
         mime.setData(_MIME_TYPE, QByteArray(json.dumps(payload).encode()))
         drag = QDrag(self)
         drag.setMimeData(mime)
-        pixmap = card_pixmap(card, DRAG_ICON_SIZE)
+        override = item.data(_DRAG_PIXMAP_ROLE)
+        pixmap = (
+            override.scaled(
+                DRAG_ICON_SIZE,
+                DRAG_ICON_SIZE,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            if isinstance(override, QPixmap)
+            else card_pixmap(card, DRAG_ICON_SIZE)
+        )
         drag.setPixmap(pixmap)
         drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
         return drag
@@ -116,88 +133,210 @@ class _Section(QWidget):
         self.card_list.setVisible(expanded)
 
 
-class SidebarWidget(QFrame):
-    """Search-filterable plugin cards: a collapsible section per plugin, the built-in one first."""
+class _Pane(QScrollArea):
+    """A scrolling list of entries grouped into one collapsible section per plugin, the built-in plugins first."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        name_key: str,
+        id_key: str,
+        icon_for: Callable[[dict[str, Any]], QIcon],
+        drag_for: Callable[[dict[str, Any]], tuple[dict[str, Any], QPixmap | None]],
+    ) -> None:
         super().__init__()
-        self._cards: list[dict[str, Any]] = []
-        self._icons: dict[tuple[str, str], QIcon] = {}
-        self._folded: set[str] = set()  # plugin ids the user collapsed; kept across refreshes and searches
-        self._sections: list[_Section] = []
-
-        self._search = QLineEdit()
-        self._search.setPlaceholderText("Search cards...")
-        self._search.textChanged.connect(self._apply_filter)
-
+        self._name_key = name_key
+        self._id_key = id_key
+        self._icon_for = icon_for
+        self._drag_for = drag_for
+        self._entries: list[dict[str, Any]] = []
+        self._needle = ""
+        self.folded: set[str] = set()  # plugin ids the user collapsed; kept across refreshes and searches
+        self.sections: list[_Section] = []
         self._content = QWidget()
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.addStretch(1)
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._scroll.setWidget(self._content)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self._search)
-        layout.addWidget(self._scroll, 1)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setWidget(self._content)
 
     @property
-    def sections(self) -> list[tuple[str, list[str]]]:
-        """``(title, card names)`` of every section shown, in order."""
-        return [(s.header.text(), [s.card_list.item(i).text() for i in range(s.card_list.count())]) for s in self._sections]  # type: ignore[union-attr]
+    def listing(self) -> list[tuple[str, list[str]]]:
+        """``(title, names)`` of every section shown, in order."""
+        return [
+            (s.header.text(), [s.card_list.item(i).text() for i in range(s.card_list.count())])  # type: ignore[union-attr]
+            for s in self.sections
+        ]
 
-    def set_cards(self, cards: list[dict[str, Any]]) -> None:
-        """Replace the full card list and reapply the current search filter."""
-        self._cards = cards
-        self._icons = {}
-        self._apply_filter(self._search.text())
+    def set_entries(self, entries: list[dict[str, Any]]) -> None:
+        """Replace the entries and redraw with the current search."""
+        self._entries = entries
+        self.refresh()
 
-    def _apply_filter(self, text: str) -> None:
-        needle = text.strip().lower()
-        for section in self._sections:
+    def search(self, text: str) -> None:
+        """Show only entries whose name contains ``text`` (case-insensitive)."""
+        self._needle = text.strip().lower()
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Rebuild the sections from the entries."""
+        for section in self.sections:
             self._content_layout.removeWidget(section)
             section.deleteLater()
-        self._sections = []
+        self.sections = []
         groups: dict[str, list[dict[str, Any]]] = {}
-        for card in self._cards:
-            if needle and needle not in card.get("card_name", "").lower():
+        for entry in self._entries:
+            if self._needle and self._needle not in str(entry.get(self._name_key, "")).lower():
                 continue
-            groups.setdefault(card.get("plugin_uuid", ""), []).append(card)
+            groups.setdefault(entry.get("plugin_uuid", ""), []).append(entry)
         for plugin_id in sorted(groups, key=lambda pid: self._order(pid, groups[pid])):
             self._add_section(plugin_id, groups[plugin_id])
 
     @staticmethod
-    def _order(plugin_id: str, cards: list[dict[str, Any]]) -> tuple[bool, str]:
-        builtin = any(a.get("plugin_builtin") for a in cards)
-        return (not builtin, str(cards[0].get("plugin_name") or plugin_id).lower())
+    def _order(plugin_id: str, entries: list[dict[str, Any]]) -> tuple[bool, str]:
+        builtin = any(e.get("plugin_builtin") for e in entries)
+        return (not builtin, str(entries[0].get("plugin_name") or plugin_id).lower())
 
-    def _add_section(self, plugin_id: str, cards: list[dict[str, Any]]) -> None:
-        builtin = any(a.get("plugin_builtin") for a in cards)
-        title = BUILTIN_TITLE if builtin else str(cards[0].get("plugin_name") or plugin_id)
-        section = _Section(plugin_id, title, plugin_id not in self._folded)
+    def _add_section(self, plugin_id: str, entries: list[dict[str, Any]]) -> None:
+        builtin = any(e.get("plugin_builtin") for e in entries)
+        title = BUILTIN_TITLE if builtin else str(entries[0].get("plugin_name") or plugin_id)
+        section = _Section(plugin_id, title, plugin_id not in self.folded)
         section.header.toggled.connect(lambda expanded, pid=plugin_id: self._remember_fold(pid, expanded))
-        for card in cards:
-            name = card.get("card_name", "")
-            item = QListWidgetItem(self._icon_for(card), name)
-            item.setData(Qt.ItemDataRole.UserRole, card)
-            plugin_name = card.get("plugin_name", "")
+        for entry in entries:
+            name = str(entry.get(self._name_key, ""))
+            drag_entry, drag_pixmap = self._drag_for(entry)
+            item = QListWidgetItem(self._icon_for(entry), name)
+            item.setData(Qt.ItemDataRole.UserRole, drag_entry)
+            if drag_pixmap is not None:
+                item.setData(_DRAG_PIXMAP_ROLE, drag_pixmap)
+            plugin_name = entry.get("plugin_name", "")
             item.setToolTip(f"{plugin_name}: {name}" if plugin_name else name)
             item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
             section.card_list.addItem(item)
         section.card_list.fit_height()
-        self._content_layout.insertWidget(len(self._sections), section)
-        self._sections.append(section)
+        self._content_layout.insertWidget(len(self.sections), section)
+        self.sections.append(section)
 
     def _remember_fold(self, plugin_id: str, expanded: bool) -> None:
-        (self._folded.discard if expanded else self._folded.add)(plugin_id)
+        (self.folded.discard if expanded else self.folded.add)(plugin_id)
 
-    def _icon_for(self, card: dict[str, Any]) -> QIcon:
+
+def _tile_icon(pixmap: QPixmap) -> QIcon:
+    icon = QIcon(pixmap)
+    icon.addPixmap(pixmap, QIcon.Mode.Selected)  # keep the icon untinted on the selected tile
+    return icon
+
+
+class SidebarWidget(QFrame):  # pylint: disable=too-many-instance-attributes
+    """Cards and Actions tabs over one search box; each tab lists its entries grouped by plugin."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._cards: list[dict[str, Any]] = []
+        self._card_icons: dict[tuple[str, str], QIcon] = {}
+        self._tint = self.palette().text().color().name()
+
+        self._cards_pane = _Pane("card_name", "card_uuid", self._card_icon, self._card_drag)
+        self._actions_pane = _Pane("action_name", "action_uuid", self._action_icon, self._action_drag)
+        self._tabs = QTabBar()
+        self._tabs.setExpanding(True)
+        self._tabs.setDrawBase(False)
+        self._tabs.setIconSize(QSize(_TAB_ICON, _TAB_ICON))
+        for name, asset, tip in (
+            ("Cards", "images.svg", "Cards: what a key shows"),
+            ("Actions", "tasks.svg", "Actions: things a key can run"),
+        ):
+            index = self._tabs.addTab(QIcon(asset_pixmap(asset, _TAB_ICON * 2, self._tint)), name)
+            self._tabs.setTabToolTip(index, tip)
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._cards_pane)
+        self._stack.addWidget(self._actions_pane)
+        self._tabs.currentChanged.connect(self._stack.setCurrentIndex)
+        self._tabs.currentChanged.connect(lambda _i: self._update_placeholder())
+
+        self._search = QLineEdit()
+        self._search.textChanged.connect(self._cards_pane.search)
+        self._search.textChanged.connect(self._actions_pane.search)
+        self._update_placeholder()
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self._tabs)
+        layout.addWidget(self._search)
+        layout.addWidget(self._stack, 1)
+
+    # -- the cards pane keeps its old names, which the dashboard and the tests use
+    @property
+    def _scroll(self) -> QScrollArea:
+        return self._cards_pane
+
+    @property
+    def _sections(self) -> list[_Section]:
+        return self._cards_pane.sections
+
+    @property
+    def _icons(self) -> dict[tuple[str, str], QIcon]:
+        return self._card_icons
+
+    @property
+    def sections(self) -> list[tuple[str, list[str]]]:
+        """``(title, card names)`` of every card section shown, in order."""
+        return self._cards_pane.listing
+
+    @property
+    def action_sections(self) -> list[tuple[str, list[str]]]:
+        """``(title, action names)`` of every action section shown, in order."""
+        return self._actions_pane.listing
+
+    @property
+    def tab_names(self) -> list[str]:
+        """The tab titles, in order."""
+        return [self._tabs.tabText(i) for i in range(self._tabs.count())]
+
+    def set_cards(self, cards: list[dict[str, Any]]) -> None:
+        """Replace the full card list (presets of actions change the Actions tab too)."""
+        self._cards = cards
+        self._card_icons = {}
+        self._cards_pane.set_entries(cards)
+        self._actions_pane.refresh()
+
+    def set_actions(self, actions: list[dict[str, Any]]) -> None:
+        """Replace the full action list."""
+        self._actions_pane.set_entries(actions)
+
+    def _update_placeholder(self) -> None:
+        self._search.setPlaceholderText("Search cards..." if self._tabs.currentIndex() == 0 else "Search actions...")
+
+    def _card_icon(self, card: dict[str, Any]) -> QIcon:
         key = (card.get("plugin_uuid", ""), card.get("card_uuid", ""))
-        if key not in self._icons:
-            pixmap = card_pixmap(card, _ICON_SOURCE_SIZE)
-            icon = QIcon(pixmap)
-            icon.addPixmap(pixmap, QIcon.Mode.Selected)  # keep the icon untinted on the selected tile
-            self._icons[key] = icon
-        return self._icons[key]
+        if key not in self._card_icons:
+            self._card_icons[key] = _tile_icon(card_pixmap(card, _ICON_SOURCE_SIZE))
+        return self._card_icons[key]
+
+    @staticmethod
+    def _card_drag(card: dict[str, Any]) -> tuple[dict[str, Any], QPixmap | None]:
+        return card, None
+
+    def _preset_of(self, action_id: str) -> dict[str, Any] | None:
+        """The ready-made card a plugin ships for this action, if there is one."""
+        return next((c for c in self._cards if c.get("action") == action_id), None)
+
+    def _action_icon(self, action: dict[str, Any]) -> QIcon:
+        preset = self._preset_of(str(action.get("action_uuid", "")))
+        if preset is not None:
+            return self._card_icon(preset)
+        return _tile_icon(asset_pixmap("tasks.svg", _ICON_SOURCE_SIZE, self._tint))
+
+    def _action_drag(self, action: dict[str, Any]) -> tuple[dict[str, Any], QPixmap | None]:
+        """What dragging an action drops: its ready-made card, else the Run Action card set to run it."""
+        action_id = str(action.get("action_uuid", ""))
+        preset = self._preset_of(action_id)
+        if preset is not None:
+            return preset, None
+        run_action = {
+            "plugin_uuid": _CORE_PLUGIN_ID,
+            "plugin_name": "Core",
+            "card_uuid": RUN_ACTION_CARD_ID,
+            "card_name": str(action.get("action_name", "")),
+            "preset_action": action_id,
+        }
+        return run_action, asset_pixmap("tasks.svg", _ICON_SOURCE_SIZE, self._tint)
