@@ -4,6 +4,7 @@ import pytest
 from assertpy import assert_that
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -167,21 +168,16 @@ class TestAppearanceForm:  # pylint: disable=protected-access
         {"key": "background", "type": "color", "label": "Background", "default": "#000000", "alpha": True},
     ]
 
-    def test_text_style_has_its_own_row_and_the_rest_share_one(self, qapp):  # pylint: disable=unused-argument
+    def test_each_field_gets_its_own_aligned_labelled_row(self, qapp):  # pylint: disable=unused-argument
         form = AppearanceForm()
         form.set_schema(self._SCHEMA, {})
 
         layout = form.layout()
-        assert isinstance(layout, QVBoxLayout)
-        assert_that(layout.count()).is_equal_to(2)
+        assert isinstance(layout, QGridLayout)
         texts = [lb.text() for lb in form.findChildren(QLabel) if lb.text().endswith(":")]
         assert_that(texts).is_equal_to(["Title:", "Icon:", "Background:"])
-        first, second = (layout.itemAt(i).layout() for i in range(2))  # type: ignore[union-attr]
-        assert first is not None and second is not None
-        assert_that(first.indexOf(form._fields["title"].widget)).is_greater_than_or_equal_to(0)
-        assert_that(second.indexOf(form._fields["icon"].widget)).is_less_than(
-            second.indexOf(form._fields["background"].widget)
-        )
+        rows = {key: layout.getItemPosition(layout.indexOf(f.widget))[0] for key, f in form._fields.items()}
+        assert_that(rows).is_equal_to({"title": 0, "icon": 1, "background": 2})
 
     def test_colour_fields_are_swatch_only(self, qapp):  # pylint: disable=unused-argument
         form = AppearanceForm()
@@ -331,15 +327,15 @@ class TestChangedEmitsOncePerEdit:  # pylint: disable=protected-access
 
 
 class TestCompactIcon:  # pylint: disable=protected-access
-    def test_the_appearance_form_uses_a_compact_icon_row_and_regular_forms_do_not(
+    def test_the_appearance_form_docks_the_icon_in_a_toolbar_and_regular_forms_do_not(
         self, qapp
     ):  # pylint: disable=unused-argument
         appearance = AppearanceForm()
         appearance.set_schema([{"key": "icon", "type": "icon", "label": "Icon"}], {})
         regular = _form([{"key": "icon", "type": "icon", "label": "Icon"}])
 
-        assert_that(appearance._fields["icon"].widget._compact).is_true()  # type: ignore[attr-defined]
-        assert_that(regular._fields["icon"].widget._compact).is_false()  # type: ignore[attr-defined]
+        assert_that(appearance._fields["icon"].widget._toolbar).is_true()  # type: ignore[attr-defined]
+        assert_that(regular._fields["icon"].widget._toolbar).is_false()  # type: ignore[attr-defined]
 
 
 class TestProfileFields:  # pylint: disable=protected-access

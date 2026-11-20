@@ -6,8 +6,9 @@ from collections.abc import Callable
 from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -29,6 +30,18 @@ from decker.common.icon_ref import (
 )
 
 _PREVIEW_SIZE = 24
+
+
+class _ClickLabel(QLabel):
+    """A label that reports a left click."""
+
+    clicked = pyqtSignal()
+
+    def mouseReleaseEvent(self, ev: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
+        """Emit ``clicked`` for a left click inside the label."""
+        if ev is not None and ev.button() == Qt.MouseButton.LeftButton and self.rect().contains(ev.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(ev)
 
 
 def _app_rpc() -> RpcCaller | None:
@@ -53,8 +66,10 @@ class IconEdit(QWidget):
         self._ref = ""
         self._color = "#ffffff"
         self._raw: dict[str, str] = {}
-        self._preview = QLabel()
+        self._preview = _ClickLabel()
         self._preview.setFixedSize(_PREVIEW_SIZE, _PREVIEW_SIZE)
+        self._preview.clicked.connect(self._on_preview_clicked)
+        self._toolbar = False
         self._name = QLabel()
         self._compact = False
         self._show_colour = True
@@ -71,14 +86,47 @@ class IconEdit(QWidget):
         self._colour.setToolTip("Icon fill colour")
         self._colour.color_changed.connect(self._on_colour_changed)
 
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(self._preview)
-        row.addWidget(self._name, 1)
-        row.addWidget(self._browse_btn)
-        row.addWidget(self._clear)
-        row.addWidget(self._colour)
+        self._row = QHBoxLayout(self)
+        self._row.setContentsMargins(0, 0, 0, 0)
+        self._row.addWidget(self._preview)
+        self._row.addWidget(self._name, 1)
+        self._row.addWidget(self._browse_btn)
+        self._row.addWidget(self._clear)
+        self._row.addWidget(self._colour)
         self._refresh()
+
+    def set_toolbar(self, toolbar: bool) -> None:
+        """Dock the thumbnail (click it to choose) and the fill colour of an SVG in a frame, delete button beside it."""
+        if toolbar == self._toolbar:
+            return
+        self._toolbar = toolbar
+        if not toolbar:
+            return
+        self._name.hide()
+        self._browse_btn.hide()
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self._preview.setToolTip("Click to choose an image")
+        self._preview.setCursor(Qt.CursorShape.PointingHandCursor)
+        frame = QFrame()
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        dock = QHBoxLayout(frame)
+        dock.setContentsMargins(4, 2, 4, 2)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        for widget in (self._preview, separator, self._colour):
+            dock.addWidget(widget)
+        self._row.addWidget(frame)
+        self._row.addWidget(self._clear)
+        self._clear.setIcon(QIcon.fromTheme("edit-delete"))
+        if not self._clear.icon().isNull():
+            self._clear.setText("")
+        self._separator = separator
+        self._refresh()
+
+    def _on_preview_clicked(self) -> None:
+        if self._toolbar:
+            self.browse()
 
     def set_compact(self, compact: bool) -> None:
         """Compact: thumbnail, clear and (once there is an icon) the colour; double-click the thumbnail to browse."""
@@ -155,8 +203,15 @@ class IconEdit(QWidget):
         parsed = parse_icon_ref(self._ref)
         self._name.setText(icon_display_name(parsed[1]) if parsed is not None else self._placeholder)
         self._clear.setEnabled(parsed is not None)
-        self._colour.setVisible(self._show_colour and (parsed is not None or not self._compact))
+        self._colour.setVisible(self._show_colour and self._wants_colour(parsed))
+        if self._toolbar:
+            self._separator.setVisible(self._colour.isVisibleTo(self))
         self._preview.setPixmap(self._preview_pixmap(parsed))
+
+    def _wants_colour(self, parsed: tuple[str, str] | None) -> bool:
+        if self._toolbar:
+            return parsed is not None and parsed[1].lower().endswith(".svg")  # only an SVG takes a fill colour
+        return parsed is not None or not self._compact
 
     def _preview_pixmap(self, parsed: tuple[str, str] | None) -> QPixmap:
         if parsed is None:

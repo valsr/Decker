@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFontComboBox,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -263,7 +264,7 @@ class SchemaForm(QWidget):
         return {key: field.get() for key, field in self._fields.items()}
 
 
-def _clear_layout(layout: QHBoxLayout | QVBoxLayout) -> None:
+def _clear_layout(layout: QHBoxLayout | QVBoxLayout | QGridLayout) -> None:
     """Remove and delete every widget in ``layout``, descending into nested layouts."""
     while layout.count():
         item = layout.takeAt(0)
@@ -272,26 +273,27 @@ def _clear_layout(layout: QHBoxLayout | QVBoxLayout) -> None:
         if (widget := item.widget()) is not None:
             widget.setParent(None)
             widget.deleteLater()
-        elif isinstance(nested := item.layout(), (QHBoxLayout, QVBoxLayout)):
+        elif isinstance(nested := item.layout(), (QHBoxLayout, QVBoxLayout, QGridLayout)):
             _clear_layout(nested)
 
 
 class AppearanceForm(QWidget):
-    """Text style fields on a row of their own; the other fields share the row below as ``Label: [widget]``."""
+    """The key's appearance as aligned ``Label: [control]`` rows (title, background, icon)."""
 
     changed = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
-        self._rows = QVBoxLayout(self)
-        self._rows.setContentsMargins(0, 0, 0, 0)
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setColumnStretch(1, 1)
         self._fields: dict[str, _Field] = {}
 
     def set_schema(self, schema: list[dict[str, Any]], values: dict[str, Any]) -> None:
-        """Rebuild the rows for ``schema``; sections are ignored and the text style field takes the spare width."""
-        _clear_layout(self._rows)
+        """Rebuild the rows for ``schema``; sections are ignored."""
+        _clear_layout(self._grid)
         self._fields = {}
-        text_row, other_row = QHBoxLayout(), QHBoxLayout()
+        row = 0
         for entry in schema:
             field = None if "section" in entry else _build_field(entry, values)
             if field is None:
@@ -299,16 +301,14 @@ class AppearanceForm(QWidget):
             if isinstance(field.widget, ColorButton):
                 field.widget.set_show_name(False)
             if isinstance(field.widget, IconEdit):
-                field.widget.set_compact(True)
+                field.widget.set_toolbar(True)
             self._fields[entry["key"]] = field
             _watch(field.widget, self.changed.emit)
-            wide = entry.get("type") == "text_style"
-            row = text_row if wide else other_row
-            row.addWidget(QLabel(f"{entry.get('label', entry['key'])}:"))
-            row.addWidget(field.widget, 1 if wide else 0)
-        other_row.addStretch()
-        for row in (text_row, other_row):
-            self._rows.addLayout(row)
+            label = QLabel(f"{entry.get('label', entry['key'])}:")
+            self._grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+            wide = entry.get("type") == "text_style"  # the title takes the whole width so its toolbar has room
+            self._grid.addWidget(field.widget, row, 1, Qt.AlignmentFlag(0) if wide else Qt.AlignmentFlag.AlignLeft)
+            row += 1
 
     def values(self) -> dict[str, Any]:
         """The values currently entered, keyed by schema key."""

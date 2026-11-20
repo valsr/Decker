@@ -6,8 +6,8 @@ from decker.common.text_style import LEGACY_TITLE_KEYS
 
 APPEARANCE_SCHEMA: list[dict[str, Any]] = [
     {"key": "title", "type": "text_style", "label": "Title", "template": True},
-    {"key": "icon", "type": "icon", "label": "Icon"},
     {"key": "background", "type": "background", "label": "Background"},
+    {"key": "icon", "type": "icon", "label": "Icon"},
 ]
 
 # The flat title_* / show_title keys predate the nested title; they stay accepted and are folded on read.
