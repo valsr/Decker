@@ -227,3 +227,14 @@ def test_import_rejects_images_over_the_configured_limit(tmp_path: Path, isolate
 
     assert_that(result.ok).is_false()
     assert_that(result.error).contains("1024")
+
+
+def test_delete_icon_removes_a_listed_icon_only(tmp_path: Path) -> None:
+    (tmp_path / "keep.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>")
+    (tmp_path / "gone.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>")
+    store = UserIcons(tmp_path)
+
+    assert_that(store.delete_icon("gone.svg")).is_true()
+    assert_that(store.list_icons()).is_equal_to(["keep.svg"])
+    assert_that(store.delete_icon("gone.svg")).is_false()
+    assert_that(store.delete_icon("../outside.svg")).is_false()

@@ -87,6 +87,17 @@ class UserIcons:
         except OSError:
             return None
 
+    def delete_icon(self, name: str) -> bool:
+        """Delete a listed icon file; False when no such icon is listed or it cannot be removed."""
+        with self._lock:
+            if name not in self.list_icons():
+                return False
+            try:
+                (self.directory / name).unlink()
+            except OSError:
+                return False
+        return True
+
     def pack_info(self) -> dict[str, Any]:
         """The pack entry for the icon pack listing."""
         return {

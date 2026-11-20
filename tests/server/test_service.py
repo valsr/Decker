@@ -1046,6 +1046,23 @@ class TestIconImportRpcs:
         packs = [p for p in json.loads(svc.iconpacks_list()) if p["id"] == "decker.user"]
         assert_that(packs[0]["icon_count"]).is_equal_to(1)
 
+    def test_icon_delete_removes_the_icon_from_the_user_pack(self, icon_service):
+        svc, folder = icon_service
+        result = json.loads(svc.icon_import("My Cat", "cat.png", self._png(), ""))
+
+        assert_that(svc.icon_delete(result["file"])).is_true()
+        assert_that((folder / result["file"]).exists()).is_false()
+        assert_that(svc.icon_delete(result["file"])).is_false()
+
+    def test_icon_delete_is_refused_for_remote_clients(self, icon_service):
+        svc, folder = icon_service
+        result = json.loads(svc.icon_import("My Cat", "cat.png", self._png(), ""))
+        svc._peer_host = "203.0.113.5"  # pylint: disable=protected-access
+        with patch("decker.server.service.config.get_as_or_default", return_value=False):
+            with pytest.raises(PermissionError):
+                svc.icon_delete(result["file"])
+        assert_that((folder / result["file"]).is_file()).is_true()
+
     def test_icon_import_prefills_the_name_from_the_filename(self, icon_service):
         svc, _ = icon_service
         result = json.loads(svc.icon_import("", "Happy Dog.png", self._png(), ""))
