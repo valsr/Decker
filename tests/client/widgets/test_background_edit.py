@@ -1,5 +1,6 @@
 from assertpy import assert_that
 
+from decker.client.icon_picker import NO_TINT
 from decker.client.widgets.background_edit import BackgroundEdit
 from decker.client.widgets.schema_form import AppearanceForm
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
@@ -110,3 +111,26 @@ class TestBackgroundEditImagePrompt:  # pylint: disable=protected-access
         edit._mode.setCurrentIndex(edit._mode.findData("color"))
         edit._mode.setCurrentIndex(edit._mode.findData("image"))
         assert_that(edit.value()).is_equal_to(_bg("image", "#336699", "pack:p/a.png"))
+
+
+def test_background_image_thumbnail_and_browser_are_untinted(qapp, monkeypatch):  # pylint: disable=unused-argument
+    seen: list[tuple] = []
+
+    class FakeDialog:
+        icon_chosen = type("S", (), {"connect": lambda *_a: None})()
+
+        def __init__(self, *args) -> None:
+            seen.append(args)
+
+        def exec(self) -> None:
+            pass
+
+    monkeypatch.setattr("decker.client.widgets.icon_edit.IconBrowserDialog", FakeDialog)
+    edit = BackgroundEdit()
+    edit.set_value(_bg("image"))
+
+    edit._image.browse()  # pylint: disable=protected-access
+
+    assert_that(edit._image._thumb_tint()).is_none()  # pylint: disable=protected-access
+    assert_that(seen).is_length(1)
+    assert_that(seen[0][2]).is_equal_to(NO_TINT)

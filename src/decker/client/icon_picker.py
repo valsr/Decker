@@ -109,6 +109,9 @@ def _blank_pixmap() -> QPixmap:
     return pixmap
 
 
+NO_TINT = ""  # pass as IconBrowserDialog's tint to show images as they are (e.g. backgrounds, which are never tinted)
+
+
 class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-many-instance-attributes
     """Icon browser: packs grouped by plugin on the left; a searchable thumbnail grid on the right."""
 
@@ -125,7 +128,7 @@ class IconBrowserDialog(QDialog):  # pylint: disable=too-few-public-methods,too-
         self.setWindowTitle("Choose image")
         self.resize(820, 520)
         self._cm = connection_manager
-        self._tint = tint or self.palette().text().color().name()
+        self._tint: str | None = self.palette().text().color().name() if tint is None else (tint or None)
         self._cache = cache if cache is not None else icon_cache()
         self._packs: list[dict[str, Any]] = []
         self._names: dict[str, list[str]] = {}

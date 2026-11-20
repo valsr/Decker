@@ -27,6 +27,7 @@ class BackgroundEdit(QWidget):
         self._colour.setToolTip("Background colour")
         self._image = IconEdit()
         self._image.set_show_colour(False)
+        self._image.set_tint_thumbnail(False)  # the server draws backgrounds untinted
         self._image.set_texts("No image (shows black)", "Remove the background image")
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
