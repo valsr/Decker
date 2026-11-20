@@ -16,6 +16,7 @@ PLUGIN_WIDE = "\0plugin"  # queue key for context-less events
 
 _REGISTRY: dict[str, type["DeckerPlugin"]] = {}
 _T = TypeVar("_T", bound=type["DeckerPlugin"])
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 
 class DeckerPlugin:
@@ -63,6 +64,24 @@ def card(card_id: str) -> "Callable[[_T], _T]":
     return decorate
 
 
+_ACTIONS: dict[str, Callable[[dict[str, Any]], Any]] = {}
+
+
+def action(action_id: str) -> "Callable[[_F], _F]":
+    """Register a function ``fn(settings: dict) -> None`` under a manifest action id; it runs when the action does."""
+
+    def decorate(fn: _F) -> _F:
+        _ACTIONS[action_id] = fn
+        return fn
+
+    return decorate
+
+
+def registered_actions() -> dict[str, Callable[[dict[str, Any]], Any]]:
+    """The actions registered so far with @action."""
+    return dict(_ACTIONS)
+
+
 def registered_cards() -> dict[str, type[DeckerPlugin]]:
     """The cards registered so far with @card."""
     return dict(_REGISTRY)
@@ -86,8 +105,14 @@ def _warn(text: str) -> None:
 
 
 class _Runtime:  # pylint: disable=too-many-instance-attributes
-    def __init__(self, cards: Mapping[str, type[DeckerPlugin]], stdout: BinaryIO) -> None:
+    def __init__(
+        self,
+        cards: Mapping[str, type[DeckerPlugin]],
+        stdout: BinaryIO,
+        actions: Mapping[str, Callable[[dict[str, Any]], Any]] | None = None,
+    ) -> None:
         self._cards = cards
+        self._actions = actions or {}
         self._stdout = stdout
         self._write_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -150,9 +175,31 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
             self._on_hello(payload)
         elif event == "global_settings_changed":
             self._on_global_settings(payload)
+        elif event == "run_action":
+            self._submit_action(payload)
         elif event in _HANDLERS:
             self._enqueue(context or PLUGIN_WIDE, {"event": event, "context": context, "payload": payload})
         return True
+
+    def _submit_action(self, payload: dict[str, Any]) -> None:
+        try:
+            self._pool.submit(self._run_action, payload)
+        except RuntimeError:
+            pass  # pool already shut down
+
+    def _run_action(self, payload: dict[str, Any]) -> None:
+        request = payload.get("request")
+        handler = self._actions.get(str(payload.get("action")))
+        if handler is None:
+            self.send("action_result", None, {"request": request, "ok": False, "error": "no such action"})
+            return
+        try:
+            handler(self._dict(payload.get("settings")))
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.log_error(f"action {payload.get('action')} failed: {type(exc).__name__}: {exc}")
+            self.send("action_result", None, {"request": request, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return
+        self.send("action_result", None, {"request": request, "ok": True})
 
     def _on_hello(self, payload: dict[str, Any]) -> None:
         settings = payload.get("global_settings")
@@ -246,6 +293,11 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
             self.send("set_gestures", ctx.context, {"gestures": sorted(str(g) for g in gestures)})
 
 
-def run(cards: Mapping[str, type[DeckerPlugin]], stdin: BinaryIO, stdout: BinaryIO) -> int:
+def run(
+    cards: Mapping[str, type[DeckerPlugin]],
+    stdin: BinaryIO,
+    stdout: BinaryIO,
+    actions: Mapping[str, Callable[[dict[str, Any]], Any]] | None = None,
+) -> int:
     """Serve the protocol on the given streams until shutdown or EOF; returns the exit code."""
-    return _Runtime(cards, stdout).serve(stdin)
+    return _Runtime(cards, stdout, actions).serve(stdin)

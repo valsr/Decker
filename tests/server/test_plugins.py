@@ -1,4 +1,5 @@
 import base64
+import http.server
 import io
 import json
 import shutil
@@ -364,7 +365,7 @@ class TestListing:
         plugins = {p.manifest.id for p in env.manager.plugins()}
 
         assert_that(plugins).is_equal_to(
-            {_COUNTER, "com.decker.rec", "com.t.static", "com.t.mixed", "com.decker.blank"}
+            {_COUNTER, "com.decker.rec", "com.t.static", "com.t.mixed", "com.decker.blank", "com.decker.core"}
         )
         assert_that(env.manager.load_failures()).is_empty()
 
@@ -1235,7 +1236,7 @@ def test_duplicate_plugin_id_is_rejected(tmp_path):
     manager.create(SimpleNamespace(device_manager=FakeDeviceManager(), event_bus=FakeBus()))  # type: ignore[arg-type]
     try:
         assert_that(manager.load_failures()).extracting("error").contains("duplicate plugin id")
-        assert_that(manager.plugins()).is_length(2)  # the fixture plugin and the built-in Blank
+        assert_that(manager.plugins()).is_length(3)  # the fixture plugin and the built-in Blank and Core
     finally:
         manager.destroy()
 
@@ -2124,3 +2125,63 @@ class TestAnimatedKeyFaces:
 
         assert_that(entries[2]["animation_id"]).is_equal_to(_animation(env, device_id, 2).animation_id)
         assert_that(entries[3]).is_equal_to({"key_index": 3, "label": "plain", "animation_id": None})
+
+
+class TestRunActionCard:
+    """A press of the built-in Run Action card runs the chosen action through the manager."""
+
+    _TARGET = _target("com.decker.core", "com.decker.core.runaction", "ctx-run", 6)
+
+    def _press(self, env) -> None:
+        env.manager.dispatch_key_down(self._TARGET)
+        env.manager.dispatch_key_up(self._TARGET)
+
+    def test_a_press_runs_the_http_request_action(self, env):
+        from tests.server.test_actions import (  # noqa: F401  # pylint: disable=import-outside-toplevel
+            _Handler,
+            server,
+        )
+
+        httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        _Handler.seen = []
+        try:
+            url = f"http://127.0.0.1:{httpd.server_address[1]}/hook"
+            env.manager.store_settings(
+                self._TARGET,
+                {
+                    "action": "com.decker.core.httprequest",
+                    "parameters": {"method": "POST", "url": url, "body": "hi"},
+                },
+            )
+            env.manager.activate_card(self._TARGET)
+
+            self._press(env)
+
+            assert _wait_for(lambda: bool(_Handler.seen))
+            assert_that(_Handler.seen[0]).is_equal_to(("POST", "/hook", b"hi"))
+        finally:
+            httpd.shutdown()
+
+    def test_a_failing_action_is_announced_as_an_event(self, env):
+        env.manager.store_settings(
+            self._TARGET,
+            {"action": "com.decker.core.httprequest", "parameters": {"url": "ftp://nope"}},
+        )
+        env.manager.activate_card(self._TARGET)
+
+        self._press(env)
+
+        assert _wait_for(lambda: any(name == "action_failed" for name, _ in env.bus.events))
+
+    def test_actions_are_listed_with_their_schema(self, env):
+        listed = {a["action_uuid"]: a for a in env.manager.list_actions()}
+
+        assert_that(listed).contains_key("com.decker.core.httprequest")
+        assert_that([f["key"] for f in listed["com.decker.core.httprequest"]["settings_schema"]]).contains("url")
+
+    def test_run_action_is_a_card_in_the_card_list_and_the_http_action_is_not(self, env):
+        ids = [c["card_uuid"] for c in env.manager.list_cards()]
+
+        assert_that(ids).contains("com.decker.core.runaction")
+        assert_that(ids).does_not_contain("com.decker.core.httprequest")

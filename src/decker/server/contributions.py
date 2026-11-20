@@ -22,7 +22,11 @@ class ContributionHandler(Protocol):
 
 def contributed_kinds(plugin: InstalledPlugin) -> frozenset[str]:
     """Return the contribution kinds the plugin's manifest actually declares."""
-    kinds = {"cards": plugin.manifest.cards, "icon_packs": plugin.manifest.icon_packs}
+    kinds = {
+        "cards": plugin.manifest.cards,
+        "actions": plugin.manifest.actions,
+        "icon_packs": plugin.manifest.icon_packs,
+    }
     return frozenset(kind for kind, entries in kinds.items() if entries)
 
 

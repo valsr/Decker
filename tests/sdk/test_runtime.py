@@ -37,7 +37,11 @@ class Harness:
         self.from_plugin = os.fdopen(out_r, "rb")
         self.code: list[int] = []
         actions = {"test.echo.echo": self.module.Echo}
-        self.thread = threading.Thread(target=lambda: self.code.append(run(actions, self._plugin_in, self._plugin_out)))
+        self.thread = threading.Thread(
+            target=lambda: self.code.append(
+                run(actions, self._plugin_in, self._plugin_out, {"test.echo.record": self.module.record})
+            )
+        )
         self.thread.start()
 
     def send(self, event: str, context: str | None = None, payload: dict | None = None) -> None:
@@ -363,3 +367,46 @@ def test_go_to_profile_emits_the_id() -> None:
     ctx.go_to_profile(2)
 
     assert_that(sent).is_equal_to([("switch_profile", "c1", {"profile_id": 2})])
+
+
+class TestActions:
+    def test_run_action_calls_the_function_and_reports_ok(self):
+        harness = Harness()
+        try:
+            harness.hello()
+            harness.send("run_action", None, {"action": "test.echo.record", "request": "r1", "settings": {"n": 3}})
+
+            result = harness.recv_until("action_result")
+
+            assert_that(result["payload"]).is_equal_to({"request": "r1", "ok": True})
+            assert_that(harness.module.ACTION_CALLS).contains({"n": 3})
+        finally:
+            harness.close()
+
+    def test_a_raising_action_reports_the_error(self):
+        harness = Harness()
+        try:
+            harness.hello()
+            harness.send(
+                "run_action", None, {"action": "test.echo.record", "request": "r2", "settings": {"fail": True}}
+            )
+
+            payload = harness.recv_until("action_result")["payload"]
+
+            assert_that(payload["ok"]).is_false()
+            assert_that(payload["request"]).is_equal_to("r2")
+            assert_that(payload["error"]).contains("ValueError", "nope")
+        finally:
+            harness.close()
+
+    def test_an_unknown_action_is_answered_not_ignored(self):
+        harness = Harness()
+        try:
+            harness.hello()
+            harness.send("run_action", None, {"action": "test.echo.missing", "request": "r3"})
+
+            payload = harness.recv_until("action_result")["payload"]
+
+            assert_that(payload).is_equal_to({"request": "r3", "ok": False, "error": "no such action"})
+        finally:
+            harness.close()

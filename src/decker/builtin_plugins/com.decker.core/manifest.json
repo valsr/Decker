@@ -1,0 +1,52 @@
+{
+  "format": 2,
+  "id": "com.decker.core",
+  "name": "Core",
+  "version": "0.6.0",
+  "author": "Decker",
+  "description": "Run Action, a card that runs any available action, and the actions Decker ships.",
+  "icon": "icons/blank",
+  "category": "Utilities",
+  "contributes": {
+    "cards": [
+      {
+        "id": "com.decker.core.runaction",
+        "name": "Run Action",
+        "tooltip": "Runs an action when pressed",
+        "icon": "icons/blank",
+        "gestures": ["press"],
+        "appearance": { "background": "#000000" },
+        "settings": [
+          { "key": "action", "type": "action", "label": "Action" },
+          { "key": "parameters", "type": "action_params", "label": "Parameters", "action_field": "action" }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "com.decker.core.httprequest",
+        "name": "HTTP Request",
+        "tooltip": "Sends an HTTP request",
+        "icon": "icons/blank",
+        "settings": [
+          {
+            "key": "method",
+            "type": "choice",
+            "label": "Method",
+            "options": [
+              { "label": "GET", "value": "GET" },
+              { "label": "POST", "value": "POST" },
+              { "label": "PUT", "value": "PUT" },
+              { "label": "PATCH", "value": "PATCH" },
+              { "label": "DELETE", "value": "DELETE" }
+            ]
+          },
+          { "key": "url", "type": "text", "label": "URL", "placeholder": "https://example.com/hook" },
+          { "key": "body", "type": "text", "label": "Body", "multiline": true },
+          { "key": "content_type", "type": "text", "label": "Content type", "placeholder": "application/json" },
+          { "key": "timeout", "type": "int", "label": "Timeout (seconds)", "default": 10, "min": 1, "max": 120 }
+        ]
+      }
+    ]
+  }
+}

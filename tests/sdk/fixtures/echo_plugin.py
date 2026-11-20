@@ -4,7 +4,7 @@ import os
 import threading
 import time
 
-from decker_plugin_sdk import CardContext, DeckerPlugin, Gesture, card
+from decker_plugin_sdk import CardContext, DeckerPlugin, Gesture, action, card
 
 BLOCK = threading.Event()
 SEEN: list[str] = []
@@ -34,3 +34,13 @@ class Echo(DeckerPlugin):
         if settings.get("dbl"):
             return frozenset({Gesture.PRESS, Gesture.DOUBLE_PRESS})
         return None
+
+
+ACTION_CALLS: list[dict] = []
+
+
+@action("test.echo.record")
+def record(settings: dict) -> None:
+    if settings.get("fail"):
+        raise ValueError("nope")
+    ACTION_CALLS.append(settings)

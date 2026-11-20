@@ -55,24 +55,25 @@ def _pack_dir(tmp_path: Path) -> None:
 
 
 def test_registry_dispatches_by_kind(tmp_path):
-    actions, packs = _Recorder("cards"), _Recorder("icon_packs")
-    registry = ContributionRegistry([actions, packs])
+    cards, actions, packs = _Recorder("cards"), _Recorder("actions"), _Recorder("icon_packs")
+    registry = ContributionRegistry([cards, actions, packs])
 
     registry.add(_plugin(tmp_path, _PACK))
     registry.remove("com.t.p")
 
+    assert_that(cards.calls).is_equal_to([("unregister", "com.t.p")])
     assert_that(actions.calls).is_equal_to([("unregister", "com.t.p")])
     assert_that(packs.calls).is_equal_to([("register", "com.t.p"), ("unregister", "com.t.p")])
 
 
 def test_registry_requires_every_known_kind():
     with pytest.raises(AssertionError):
-        ContributionRegistry([_Recorder("cards")])
+        ContributionRegistry([_Recorder("cards"), _Recorder("actions")])
 
 
 def test_handler_failure_rolls_back(tmp_path):
     actions, packs = _Recorder("cards"), _Recorder("icon_packs", fail=True)
-    registry = ContributionRegistry([actions, packs])
+    registry = ContributionRegistry([actions, _Recorder("actions"), packs])
     plugin = _plugin(tmp_path, {"cards": [_ACTION], **_PACK}, runtime=True)
 
     with pytest.raises(RuntimeError):

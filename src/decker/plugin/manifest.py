@@ -19,7 +19,8 @@ from decker.plugin.settings_schema import (
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?")
 SUPPORTED_FORMATS = (1, 2)
 CARDS_FORMAT = 2  # format 1 predates the card/action split: its ``contributes.actions`` entries are cards
-KNOWN_CONTRIBUTION_KINDS = frozenset({"cards", "icon_packs"})
+KNOWN_CONTRIBUTION_KINDS = frozenset({"cards", "actions", "icon_packs"})
+RUN_ACTION_CARD_ID = "com.decker.core.runaction"  # the built-in card that runs the action chosen in its settings
 _LEGACY_CARD_KIND = "actions"
 VALID_GESTURES = frozenset({"press", "double_press", "long_press"})
 _RUNTIME_TYPES = ("python", "executable")
@@ -79,6 +80,30 @@ class CardSpec:
     settings: tuple[SettingEntry, ...] = ()
     appearance: dict[str, Any] = field(default_factory=dict, hash=False)
     static: bool = False
+    base: str | None = None  # the card this one is a preset of (only the Run Action card can be one)
+    action: str | None = None  # the action a press runs, for a preset of Run Action
+    action_settings: dict[str, Any] = field(default_factory=dict, hash=False)  # that action's preconfigured settings
+
+    @property
+    def bound(self) -> bool:
+        """Whether a press runs an action: the Run Action card itself and every preset of it. It needs no process."""
+        return self.id == RUN_ACTION_CARD_ID or self.base == RUN_ACTION_CARD_ID
+
+    @property
+    def headless(self) -> bool:
+        """Whether the card has no process of its own: a static preset or a card that runs an action."""
+        return self.static or self.bound
+
+
+@dataclass(frozen=True)
+class ActionSpec:
+    """A headless action a plugin contributes: code to run with settings, drawing nothing."""
+
+    id: str
+    name: str
+    tooltip: str = ""
+    icon: str | None = None
+    settings: tuple[SettingEntry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -109,6 +134,7 @@ class PluginManifest:
     permissions: tuple[str, ...]
     global_settings: tuple[SettingEntry, ...]
     cards: tuple[CardSpec, ...]
+    actions: tuple[ActionSpec, ...]
     icon_packs: tuple[IconPackSpec, ...]
     platforms: PlatformSpec | None = None
 
@@ -140,13 +166,14 @@ class PluginManifest:
         runtime = _parse_runtime(data.get("runtime")) if data.get("runtime") is not None else None
         cards = tuple(_parse_card(e, plugin_id) for e in _as_list(contributes.get("cards", []), "cards"))
         packs = tuple(_parse_icon_pack(e, plugin_id) for e in _as_list(contributes.get("icon_packs", []), "icon_packs"))
-        needs_runtime = next((a for a in cards if not a.static), None)
+        actions = tuple(_parse_action(e, plugin_id) for e in _as_list(contributes.get("actions", []), "actions"))
+        needs_runtime = next((a for a in cards if not a.static and not a.bound), None)
         if needs_runtime and runtime is None:
             raise ManifestValidationError(
                 f"manifest contributes cards but declares no runtime (card {needs_runtime.id} is not static)"
             )
-        if not cards and not packs:
-            raise ManifestValidationError("manifest contributes no cards or icon packs")
+        if not cards and not actions and not packs:
+            raise ManifestValidationError("manifest contributes no cards, actions or icon packs")
 
         return cls(
             format=fmt,
@@ -163,6 +190,7 @@ class PluginManifest:
             permissions=tuple(str(p) for p in _as_list(data.get("permissions", []), "permissions")),
             global_settings=_parse_global_settings(data.get("global_settings", [])),
             cards=cards,
+            actions=actions,
             icon_packs=packs,
             platforms=_parse_platforms(data),
         )
@@ -273,6 +301,7 @@ def _parse_card(entry: Any, plugin_id: str) -> CardSpec:
         if key not in APPEARANCE_KEYS:
             raise ManifestValidationError(f"card {card_id} has unknown appearance key {key!r}")
     states = tuple(_parse_state(s, card_id) for s in _as_list(entry.get("states", []), "states"))
+    base, action, action_settings = _parse_binding(entry, card_id, plugin_id)
     return CardSpec(
         id=card_id,
         name=str(entry["name"]),
@@ -283,6 +312,45 @@ def _parse_card(entry: Any, plugin_id: str) -> CardSpec:
         settings=_parse_settings(entry.get("settings", []), f"card {card_id} settings"),
         appearance=dict(appearance),
         static=static,
+        base=base,
+        action=action,
+        action_settings=action_settings,
+    )
+
+
+def _parse_binding(
+    entry: dict[str, Any], card_id: str, plugin_id: str
+) -> tuple[str | None, str | None, dict[str, Any]]:
+    """The ``card`` / ``action`` / ``action_settings`` keys of a preset of the Run Action card."""
+    base = entry.get("card")
+    if base is None:
+        if "action" in entry or "action_settings" in entry:
+            raise ManifestValidationError(f'card {card_id} binds an action, so it needs "card": "{RUN_ACTION_CARD_ID}"')
+        return None, None, {}
+    if base != RUN_ACTION_CARD_ID:
+        raise ManifestValidationError(f"card {card_id} is based on unknown card {base!r}")
+    if entry.get("static"):
+        raise ManifestValidationError(f"card {card_id} cannot be both static and a preset of {RUN_ACTION_CARD_ID}")
+    action = entry.get("action")
+    if not isinstance(action, str) or not is_valid_plugin_id(action):
+        raise ManifestValidationError(f'card {card_id} needs an "action" id to run')
+    params = entry.get("action_settings", {})
+    if not isinstance(params, dict):
+        raise ManifestValidationError(f"card {card_id} action_settings must be an object")
+    del plugin_id  # the action may belong to any plugin
+    return base, action, dict(params)
+
+
+def _parse_action(entry: Any, plugin_id: str) -> ActionSpec:
+    if not isinstance(entry, dict) or "id" not in entry or "name" not in entry:
+        raise ManifestValidationError(f"invalid action entry: {entry!r}")
+    action_id = _parse_contribution_id(entry["id"], plugin_id, "action id")
+    return ActionSpec(
+        id=action_id,
+        name=str(entry["name"]),
+        tooltip=str(entry.get("tooltip") or ""),
+        icon=_optional_str(entry.get("icon")),
+        settings=_parse_settings(entry.get("settings", []), f"action {action_id} settings"),
     )
 
 
