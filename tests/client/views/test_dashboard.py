@@ -1173,7 +1173,7 @@ class TestProfiles:  # pylint: disable=protected-access
         )
 
         assert_that(dialog._rule_list.count()).is_equal_to(1)
-        assert_that(dialog._status_label.text()).contains("active")
+        assert_that(dialog._status is not None and dialog._status.state == "active").is_true()
         assert_that(dialog._name_edit.text()).is_equal_to("Renamed")
         dialog.close()
 
@@ -1186,7 +1186,7 @@ class TestProfiles:  # pylint: disable=protected-access
         view._page_tabs.profile_selector.edit_requested.emit(2)
 
         assert_that(_open_dialog(view)._rule_list.count()).is_equal_to(1)
-        assert_that(_open_dialog(view)._status_label.text()).contains("kwin")
+        assert_that(_open_dialog(view)._status.backend).is_equal_to("kwin")
         _open_dialog(view).close()
 
     def test_pages_for_the_dialog_come_from_pages_list_of_that_profile(self, qapp, tmp_path):

@@ -262,7 +262,7 @@ class TestRules:
 
     def test_empty_contains_value_is_flagged_before_saving(self, dialog, api):
         _select_rule(dialog, 1)
-        row = dialog._editor._rows[0]
+        row = dialog._editor._rows["title"]
 
         row.value.setText("")
         row.value.editingFinished.emit()
@@ -309,10 +309,27 @@ class TestStatus:
         assert_that(dialog._rule_list.item(0).toolTip()).contains("Window type")
         assert_that(dialog._rule_list.item(0).text()).starts_with("⚠")
 
-    def test_status_text(self, dialog):
-        assert_that(dialog._status_label.text()).contains("active").contains("kwin")
-        dialog.set_status(DetectionStatusEvent("unavailable", "no D-Bus", "kwin", False, None))
-        assert_that(dialog._status_label.text()).contains("unavailable").contains("no D-Bus")
+    def test_new_button_row_and_profile_icons(self, dialog):
+        row = [dialog._add_profile_button, dialog._clone_button, dialog._delete_profile_button]
+
+        assert_that([b.text() for b in row]).is_equal_to(["+ New", "Clone", "Delete"])
+        assert_that(len({b.parentWidget() for b in row})).is_equal_to(1)
+        assert_that(dialog._profile_list.item(0).icon().isNull()).is_false()  # the Decker icon stands in
+
+    def test_no_selected_rule_disables_and_clears_the_editor_without_an_error(self, dialog):
+        _select_rule(dialog, 1)
+        _select_rule(dialog, -1)
+
+        assert_that(dialog._editor.isEnabled()).is_false()
+        assert_that(dialog._editor._error.isHidden()).is_true()
+        assert_that(dialog._editor._name.text()).is_equal_to("")
+
+    def test_default_row_is_a_toggle_labelled_default_to(self, dialog):
+        assert_that(dialog._default_enable.text()).is_equal_to("Default to")
+        assert_that(dialog._default_enable.isCheckable()).is_true()
+
+    def test_there_is_no_window_detection_line(self, dialog):
+        assert_that(hasattr(dialog, "_status_label")).is_false()
 
     def test_spy_button_emits_spy_requested(self, dialog):
         seen: list[int] = []
@@ -326,13 +343,13 @@ class TestStatus:
 class TestRefreshDoesNotClobberEditing:
     def test_refresh_while_typing_keeps_text_and_focus(self, dialog):
         _select_rule(dialog, 0)
-        row = dialog._editor._rows[0]
+        row = dialog._editor._rows["window_class"]
         _focus(row.value)
         row.value.setText("typed")
 
         dialog.set_rules(DeviceRules("dev1", [_R1, _R2], DefaultRule(True, 0, "")))
 
-        assert_that(dialog._editor._rows[0]).is_same_as(row)
+        assert_that(dialog._editor._rows["window_class"]).is_same_as(row)
         assert_that(row.value.text()).is_equal_to("typed")
         assert_that(dialog._editor.focusWidget()).is_same_as(row.value)
 
@@ -345,13 +362,13 @@ class TestRefreshDoesNotClobberEditing:
 
     def test_echo_of_the_users_own_edit_does_not_rebuild_the_editor(self, dialog):
         _select_rule(dialog, 0)
-        row = dialog._editor._rows[0]
+        row = dialog._editor._rows["window_class"]
         dialog._editor._name.setText("Web")
         dialog._editor._name.editingFinished.emit()
 
         dialog.set_rules(DeviceRules("dev1", [replace(_R1, name="Web"), _R2], DefaultRule()))
 
-        assert_that(dialog._editor._rows[0]).is_same_as(row)
+        assert_that(dialog._editor._rows["window_class"]).is_same_as(row)
 
 
 class TestPages:
@@ -463,7 +480,7 @@ class TestFocusAndResync:
 
     def test_after_focus_leaves_a_different_server_rule_updates_the_editor(self, dialog):
         _select_rule(dialog, 0)
-        _focus(dialog._editor._rows[0].value)
+        _focus(dialog._editor._rows["window_class"].value)
         _focus(dialog._add_rule_button)
 
         self._other_client_change(dialog, name="Theirs")
@@ -472,20 +489,20 @@ class TestFocusAndResync:
 
     def test_a_focused_field_with_unsaved_text_is_not_rebuilt(self, dialog):
         _select_rule(dialog, 0)
-        row = dialog._editor._rows[0]
+        row = dialog._editor._rows["window_class"]
         _focus(row.value)
         row.value.setText("typed")
 
         self._other_client_change(dialog, name="Theirs")
 
-        assert_that(dialog._editor._rows[0]).is_same_as(row)
+        assert_that(dialog._editor._rows["window_class"]).is_same_as(row)
         assert_that(row.value.text()).is_equal_to("typed")
         assert_that(QApplication.focusWidget()).is_same_as(row.value)
         assert_that(dialog._editor._name.text()).is_equal_to("Browser")
 
     def test_blur_syncs_an_untouched_editor_to_the_latest_server_rule(self, dialog):
         _select_rule(dialog, 0)
-        _focus(dialog._editor._rows[0].value)
+        _focus(dialog._editor._rows["window_class"].value)
         self._other_client_change(dialog, name="Theirs")
         assert_that(dialog._editor._name.text()).is_equal_to("Browser")
 
@@ -495,7 +512,7 @@ class TestFocusAndResync:
 
     def test_blur_keeps_the_users_unsaved_text(self, dialog):
         _select_rule(dialog, 0)
-        row = dialog._editor._rows[0]
+        row = dialog._editor._rows["window_class"]
         _focus(row.value)
         row.value.setText("typed")
         self._other_client_change(dialog, name="Theirs")
@@ -507,7 +524,7 @@ class TestFocusAndResync:
 
     def test_a_stale_editor_cannot_overwrite_another_clients_change(self, dialog, api):
         _select_rule(dialog, 0)
-        _focus(dialog._editor._rows[0].value)
+        _focus(dialog._editor._rows["window_class"].value)
         self._other_client_change(dialog, conditions=[MatchCondition("window_class", "equals", "chrome")])
         _focus(dialog._add_rule_button)
 

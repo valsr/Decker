@@ -159,7 +159,7 @@ def test_unsupported_fields_greyed(spy):
 
     assert_that(_value(spy, "desktop_file")).is_equal_to("not available on this system")
     assert_that(spy._values["desktop_file"].isEnabled()).is_false()
-    assert_that(spy._copy_buttons["desktop_file"].isEnabled()).is_false()
+    assert_that(spy._set_buttons["desktop_file"].isEnabled()).is_false()
     assert_that(spy._values["title"].isEnabled()).is_true()
 
 
@@ -172,12 +172,26 @@ def test_disabled_with_reason_when_unavailable(spy):
     assert_that(spy._status_label.text()).contains("no portal")
 
 
-def test_copy_button_copies_value(spy):
+def test_set_buttons_need_a_selected_rule_and_a_value(spy):
+    got: list[tuple[str, str]] = []
+    spy.set_condition.connect(lambda field, value: got.append((field, value)))
     _pick(spy, _KONSOLE)
 
-    spy._copy_buttons["executable"].click()
+    assert_that(spy._set_buttons["executable"].isEnabled()).is_false()
+    spy.set_rule_selected(True)
+    assert_that(spy._set_buttons["executable"].isEnabled()).is_true()
+    spy._set_buttons["executable"].click()
 
-    assert_that((QApplication.clipboard() or pytest.fail("no clipboard")).text()).is_equal_to("/usr/bin/konsole")
+    assert_that(got).is_equal_to([("executable", "/usr/bin/konsole")])
+    assert_that("pid" in spy._set_buttons).is_false()
+
+
+def test_set_button_stays_off_for_an_empty_value(spy):
+    _pick(spy, WindowInfo("x", "", "", "", "", 5))
+    spy.set_rule_selected(True)
+
+    assert_that(spy._set_buttons["title"].isEnabled()).is_false()
+    assert_that(spy._set_buttons["window_class"].isEnabled()).is_true()
 
 
 def test_create_rule_button_emits_window(spy):
@@ -185,10 +199,12 @@ def test_create_rule_button_emits_window(spy):
     spy.create_rule.connect(got.append)
     assert_that(spy._create_button.isEnabled()).is_false()
 
+    spy.show()
     _pick(spy, _KONSOLE)
     spy._create_button.click()
 
     assert_that(got).is_equal_to([_KONSOLE])
+    assert_that(spy.isVisible()).is_false()  # creating the rule closes the Spy
 
 
 def test_rule_from_window_prefills_class_and_non_normal_type():

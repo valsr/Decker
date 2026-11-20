@@ -1,4 +1,4 @@
-"""Window Spy: shows the focused or picked window's properties and turns them into a rule."""
+"""Window Spy: shows the focused or picked window's properties; Set fills the selected rule, or make a new one."""
 
 from collections.abc import Callable
 from typing import Any
@@ -41,6 +41,7 @@ class WindowSpyDialog(QDialog):  # pylint: disable=too-many-instance-attributes
     """Non-modal inspector for the window a rule should match."""
 
     create_rule = pyqtSignal(object)  # WindowInfo
+    set_condition = pyqtSignal(str, str)  # field, value: switch that condition on the selected rule to ``is value``
 
     def __init__(
         self,
@@ -61,7 +62,8 @@ class WindowSpyDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._countdown = 0
         self._capturing = False
         self._values: dict[str, QLineEdit] = {}
-        self._copy_buttons: dict[str, QPushButton] = {}
+        self._set_buttons: dict[str, QPushButton] = {}
+        self._can_set = False
         self._tick_timer = QTimer(self)
         self._tick_timer.setInterval(tick_ms)
         self._timeout_timer = QTimer(self)
@@ -84,16 +86,20 @@ class WindowSpyDialog(QDialog):  # pylint: disable=too-many-instance-attributes
         self._message.setWordWrap(True)
         self._status_label = QLabel()
         self._status_label.setWordWrap(True)
-        self._create_button = QPushButton("Create rule from this window")
+        self._create_button = QPushButton("Create new rule")
         grid = QGridLayout()
         for row, (field, name) in enumerate(_FIELDS.items()):
-            edit, copy = QLineEdit(), QPushButton("Copy")
+            edit = QLineEdit()
             edit.setReadOnly(True)
-            copy.clicked.connect(lambda _c=False, f=field: self._copy(f))
-            self._values[field], self._copy_buttons[field] = edit, copy
+            self._values[field] = edit
             grid.addWidget(QLabel(name), row, 0)
             grid.addWidget(edit, row, 1)
-            grid.addWidget(copy, row, 2)
+            if field in FIELD_NAMES:  # the process id is not something a rule can match on
+                button = QPushButton("Set")
+                button.setToolTip("Set the selected rule's condition to this value and switch it on")
+                button.clicked.connect(lambda _c=False, f=field: self._set(f))
+                self._set_buttons[field] = button
+                grid.addWidget(button, row, 2)
         grid.setColumnStretch(1, 1)
         layout = QVBoxLayout(self)
         for widget in (self._pick_button, self._capture_button, self._follow):
@@ -195,11 +201,17 @@ class WindowSpyDialog(QDialog):  # pylint: disable=too-many-instance-attributes
     def _on_create(self) -> None:
         if self._window is not None:
             self.create_rule.emit(self._window)
+            self.close()
 
-    def _copy(self, field: str) -> None:
-        clipboard = QApplication.clipboard()
-        if clipboard is not None and self._values[field].isEnabled():
-            clipboard.setText(self._values[field].text())
+    def _set(self, field: str) -> None:
+        edit = self._values[field]
+        if self._can_set and edit.isEnabled() and edit.text():
+            self.set_condition.emit(field, edit.text())
+
+    def set_rule_selected(self, selected: bool) -> None:
+        """Whether a rule is selected in the dialog, i.e. whether Set has something to fill."""
+        self._can_set = selected
+        self._render()
 
     # ------------------------------------------------------------------ rendering
 
@@ -232,4 +244,6 @@ class WindowSpyDialog(QDialog):  # pylint: disable=too-many-instance-attributes
             text = "" if window is None else str(getattr(window, field) or "")
             edit.setText(_UNAVAILABLE if missing else text)
             edit.setEnabled(not missing)
-            self._copy_buttons[field].setEnabled(not missing)
+            button = self._set_buttons.get(field)
+            if button is not None:
+                button.setEnabled(not missing and self._can_set and bool(text))

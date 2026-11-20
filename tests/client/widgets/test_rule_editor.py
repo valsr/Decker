@@ -48,12 +48,58 @@ def test_editing_the_name_emits_changed_and_updates_rule(editor):
     assert_that(editor.rule().name).is_equal_to("Web")
 
 
-def test_add_and_remove_condition_rows(editor):
-    editor._add_condition_button.click()
+def test_each_category_has_a_row_whose_toggle_adds_or_drops_the_condition(editor):
+    assert_that(list(editor._rows)).is_equal_to(["window_class", "window_type", "title", "executable", "desktop_file"])
+    assert_that([r.enabled for r in editor._rows.values()]).is_equal_to([True, False, False, False, False])
 
-    assert_that(editor.rule().conditions).is_length(2)
-    editor._rows[0].remove.click()
-    assert_that(editor.rule().conditions).is_length(1)
+    title = editor._rows["title"]
+    title.value.setText("Docs")
+    title.toggle.click()
+
+    assert_that(editor.rule().conditions).is_equal_to(
+        [MatchCondition("window_class", "equals", "firefox"), MatchCondition("title", "equals", "Docs")]
+    )
+    editor._rows["window_class"].toggle.click()
+    assert_that(editor.rule().conditions).is_equal_to([MatchCondition("title", "equals", "Docs")])
+    assert_that(editor._rows["window_class"].value.isEnabled()).is_false()
+
+
+def test_extra_conditions_on_a_category_survive_a_round_trip(qapp):
+    widget = RuleEditor(lambda _id: [])
+    widget.set_profiles(_PROFILES)
+    rule = AppRule(
+        "r1",
+        "B",
+        True,
+        [MatchCondition("title", "contains", "a"), MatchCondition("title", "contains", "b")],
+        2,
+        "",
+    )
+
+    widget.set_rule(rule)
+
+    assert_that(widget.rule()).is_equal_to(rule)
+
+
+def test_set_condition_switches_the_category_on_with_is_and_saves(editor):
+    seen: list[int] = []
+    editor.changed.connect(lambda: seen.append(1))
+    row = editor._rows["executable"]
+    row.op.setCurrentIndex(row.op.findData("regex"))
+
+    editor.set_condition("executable", "/usr/bin/kate")
+
+    assert_that(row.enabled).is_true()
+    assert_that(row.condition()).is_equal_to(MatchCondition("executable", "equals", "/usr/bin/kate"))
+    assert_that(seen).is_length(1)
+
+
+def test_clear_empties_the_editor_without_complaining(editor):
+    editor.clear()
+
+    assert_that(editor._error.isHidden()).is_true()
+    assert_that(editor._name.text()).is_equal_to("")
+    assert_that([r.enabled for r in editor._rows.values()]).is_equal_to([False] * 5)
 
 
 def test_page_dropdown_lists_only_chosen_profile_pages(editor):
@@ -69,12 +115,9 @@ def test_page_dropdown_lists_only_chosen_profile_pages(editor):
     assert_that(editor.rule().page_id).is_equal_to("")
 
 
-def test_field_and_operator_display_names(editor):
-    row = editor._rows[0]
+def test_operator_display_names(editor):
+    row = editor._rows["window_class"]
 
-    assert_that([row.field.itemText(i) for i in range(row.field.count())]).is_equal_to(
-        ["Window class", "Window type", "Title", "Executable", "Desktop file"]
-    )
     assert_that([row.op.itemText(i) for i in range(row.op.count())]).is_equal_to(
         ["is", "contains", "does not contain", "matches regex"]
     )
@@ -83,7 +126,7 @@ def test_field_and_operator_display_names(editor):
 def test_empty_contains_value_is_flagged_before_saving(editor):
     seen: list[int] = []
     editor.changed.connect(lambda: seen.append(1))
-    row = editor._rows[0]
+    row = editor._rows["window_class"]
 
     row.value.setText("")
     row.op.setCurrentIndex(row.op.findData("contains"))
@@ -97,7 +140,7 @@ def test_empty_contains_value_is_flagged_before_saving(editor):
 
 
 def test_valid_edit_clears_the_error(editor):
-    row = editor._rows[0]
+    row = editor._rows["window_class"]
     row.value.setText("")
     row.op.setCurrentIndex(row.op.findData("contains"))
     row.op.activated.emit(row.op.currentIndex())
@@ -117,7 +160,7 @@ def test_unsupported_field_warning(editor):
 
     assert_that(editor._warning.isHidden()).is_false()
     assert_that(editor._warning.text()).contains("Window class")
-    assert_that(editor._rows[0].field.toolTip()).contains("not supplied")
+    assert_that(editor._rows["window_class"].toolTip()).contains("not supplied")
 
     editor.set_unsupported_fields({"title"})
     assert_that(editor._warning.isHidden()).is_true()
@@ -165,7 +208,7 @@ def test_has_focus_means_a_field_is_focused_right_now(editor):
     QApplication.processEvents()
     assert_that(editor.has_focus()).is_false()
 
-    editor._rows[0].value.setFocus()
+    editor._rows["window_class"].value.setFocus()
     QApplication.processEvents()
     assert_that(editor.has_focus()).is_true()
 
@@ -179,7 +222,7 @@ def test_focus_left_is_emitted_when_focus_moves_outside(editor):
     seen: list[int] = []
     editor.focus_left.connect(lambda: seen.append(1))
 
-    editor._rows[0].value.setFocus()
+    editor._rows["window_class"].value.setFocus()
     editor._name.setFocus()
     QApplication.processEvents()
     assert_that(seen).is_empty()
