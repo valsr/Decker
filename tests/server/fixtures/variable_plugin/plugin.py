@@ -17,6 +17,7 @@ from decker_plugin_sdk import (
 _LOCK = threading.Lock()
 _COUNTER = [0]
 _SLOW_FLAG = Path(__file__).with_name("slow")  # the getter sleeps while this file exists
+_TICKS = Path(__file__).with_name("ticks")  # one byte per main tick: lets a test see main stop
 
 
 def _add(amount: int) -> None:
@@ -32,6 +33,8 @@ def start(ctx: PluginContext) -> None:
 @main(interval=0.1)
 def tick(_ctx: PluginContext) -> None:
     _add(1)
+    with _TICKS.open("ab") as ticks:
+        ticks.write(b".")
     signal_variable_updated("test_counter")
 
 
@@ -44,7 +47,7 @@ def counter() -> int:
 @variable("test_slow")
 def slow() -> str:
     if _SLOW_FLAG.exists():
-        time.sleep(3.0)
+        time.sleep(60.0)
     return "done"
 
 

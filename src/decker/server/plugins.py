@@ -173,6 +173,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         plugins_dir: Path | None = None,
         policy: SupervisorPolicy | None = None,
         settings_store: PluginSettingsStore | None = None,
+        variable_timeout: float | None = None,
     ) -> None:
         self._settings_store = settings_store if settings_store is not None else PluginSettingsStore()
         self._user_loader = PluginLoader(plugins_dir) if plugins_dir is not None else PluginLoader()
@@ -204,7 +205,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._action_runner = ActionRunner(self._supervisor, self._on_action_failed)
         self.icon_packs = IconPackRegistry(on_failure=self._record_failure)
         self.variables = VariableStore(on_change=self._on_variables_changed)
-        self._variable_runner = VariableRunner(self._supervisor, self.variables)
+        self._variable_runner = VariableRunner(
+            self._supervisor, self.variables, **({} if variable_timeout is None else {"timeout": variable_timeout})
+        )
         self._contributions = ContributionRegistry(
             [_CardsHandler(self), _ActionsHandler(self), self.icon_packs, _VariablesHandler(self)]
         )

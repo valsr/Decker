@@ -20,6 +20,9 @@ from decker.plugin.settings_store import PluginSettingsStore
 from decker.server.plugins import PluginManager
 from tests.server.test_plugins import FakePages
 
+# The interpreter link and the hard kill below are POSIX-only and untested on Windows (no machine to verify them).
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only: interpreter symlink and SIGKILL")
+
 _FIXTURE = Path(__file__).parent / "fixtures" / "variable_plugin"
 _PLUGIN = "com.decker.vartest"
 _BUMP = "com.decker.vartest.bump"
@@ -39,7 +42,7 @@ def _wait(predicate: Callable[[], bool], timeout: float = _DEADLINE) -> bool:
 class _Env:
     """A real PluginManager running the fixture plugin in a real child process."""
 
-    def __init__(self, tmp_path: Path, slow: bool = False) -> None:
+    def __init__(self, tmp_path: Path, slow: bool = False, timeout: float | None = None) -> None:
         plugins_dir = tmp_path / "plugins"
         self.plugin_dir = plugins_dir / _PLUGIN
         shutil.copytree(_FIXTURE, self.plugin_dir, ignore=shutil.ignore_patterns("__pycache__"))
@@ -48,7 +51,9 @@ class _Env:
         python.symlink_to(sys.executable)
         if slow:
             (self.plugin_dir / "slow").write_text("")
-        self.manager = PluginManager(plugins_dir, _POLICY, PluginSettingsStore(tmp_path / "plugins.db"))
+        self.manager = PluginManager(
+            plugins_dir, _POLICY, PluginSettingsStore(tmp_path / "plugins.db"), variable_timeout=timeout
+        )
         self.pages = FakePages()
         context = SimpleNamespace(
             device_manager=MagicMock(),
@@ -57,7 +62,11 @@ class _Env:
             page_store=self.pages,
             key_assignment_store=MagicMock(),
         )
-        self.manager.create(context)  # type: ignore[arg-type]
+        try:
+            self.manager.create(context)  # type: ignore[arg-type]
+        except BaseException:
+            self.manager.destroy()
+            raise
 
     def value(self, name: str) -> str:
         return str(self.manager.variables.lookup(name, "<undeclared>"))
@@ -120,8 +129,13 @@ def test_killing_the_process_clears_then_restores_values(env: _Env) -> None:
 
     os.kill(first, signal.SIGKILL)
 
-    assert_that(_wait(lambda: env.value("test_counter") == "" and env.value("test_alpha_value") == "")).is_true()
-    assert_that(env.expand("[{test_counter}]")).is_equal_to("[]")
+    assert_that(
+        _wait(
+            lambda: env.value("test_counter") == ""
+            and env.value("test_alpha_value") == ""
+            and env.expand("[{test_counter}]") == "[]"
+        )
+    ).is_true()
     assert_that(_wait(lambda: env.pid() not in (None, first))).is_true()
     assert_that(_wait(lambda: env.counter() > 0 and env.value("test_alpha_value") == "value-of-alpha")).is_true()
     assert_that(env.counter()).is_less_than(1000)  # a fresh process: the bump did not survive
@@ -129,45 +143,50 @@ def test_killing_the_process_clears_then_restores_values(env: _Env) -> None:
 
 def test_slow_getter_does_not_block_other_variables(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.WARNING)
-    env = _Env(tmp_path, slow=True)
-    pids: list[int] = []
+    env = _Env(tmp_path, slow=True, timeout=0.5)
+    pid: int | None = None
     try:
-        env.manager._variable_runner._timeout = 0.5  # pylint: disable=protected-access
         assert_that(_wait(lambda: env.pid() is not None)).is_true()
         pid = env.pid()
-        assert pid is not None
-        pids.append(pid)
-
         assert_that(_wait(lambda: env.counter() > 0 and env.value("test_alpha_value") != "")).is_true()
-        seen = env.counter()
-        timed_out = lambda: [
-            r for r in caplog.records if "test_slow" in r.getMessage() and "timed out" in r.getMessage()
-        ]
+
+        def timed_out() -> list[logging.LogRecord]:
+            return [r for r in caplog.records if "test_slow" in r.getMessage() and "timed out" in r.getMessage()]
+
         assert_that(_wait(lambda: len(timed_out()) > 0)).is_true()
-        assert_that(_wait(lambda: env.counter() > seen + 3)).is_true()  # still ticking while the getter sleeps
+        seen = env.counter()  # the getter (60 s) is still asleep: ticks must keep arriving within seconds
+        assert_that(_wait(lambda: env.counter() > seen + 3, timeout=3.0)).is_true()
 
         assert_that(env.value("test_slow")).is_equal_to("")
         assert_that(timed_out()).is_length(1)
     finally:
         env.manager.destroy()
-        for pid in pids:
-            if psutil.pid_exists(pid):
-                psutil.Process(pid).kill()
+        if pid is not None and psutil.pid_exists(pid):
+            psutil.Process(pid).kill()
+
+
+def _ticks(env: _Env) -> int:
+    ticks = env.plugin_dir / "ticks"
+    return ticks.stat().st_size if ticks.exists() else 0
 
 
 def test_shutdown_stops_main(tmp_path: Path) -> None:
     env = _Env(tmp_path)
     pid: int | None = None
     try:
-        assert_that(_wait(lambda: env.counter() > 0)).is_true()
+        assert_that(_wait(lambda: _ticks(env) > 3)).is_true()
         pid = env.pid()
-        assert pid is not None
+        entry = env.manager._supervisor._entries[_PLUGIN]  # pylint: disable=protected-access
+        popen = entry.process._proc  # type: ignore[union-attr]  # pylint: disable=protected-access
+        assert popen is not None
+
         env.manager.destroy()
 
-        assert_that(_wait(lambda: not psutil.pid_exists(pid) or psutil.Process(pid).status() == "zombie")).is_true()
-        frozen = env.counter()
-        time.sleep(0.4)
-        assert_that(env.counter()).is_equal_to(frozen)
+        assert_that(_wait(lambda: popen.poll() is not None)).is_true()
+        assert_that(popen.returncode).is_equal_to(0)  # it exited on its own after "shutdown": not terminated or killed
+        final = _ticks(env)
+        time.sleep(0.3)  # three main intervals: a still-running main would have ticked
+        assert_that(_ticks(env)).is_equal_to(final)
     finally:
         env.manager.destroy()
         if pid is not None and psutil.pid_exists(pid):
