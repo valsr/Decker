@@ -112,7 +112,7 @@ def test_background_layer_frames_are_square_and_sharp() -> None:
     assert pixels is not None
     row = [pixels[x, 70][0] for x in range(40, 100)]  # type: ignore[index]
     assert_that(max(row) - min(row)).is_greater_than(200)  # stripes survive instead of blurring to grey
-    foreground = factory_module._decode(
+    foreground = factory_module._decode(  # pylint: disable=protected-access
         AnimationSpec(spec.gif, _appearance(), "", 1.0)
-    )  # pylint: disable=protected-access
+    )
     assert_that(foreground[0].image.size).is_equal_to((MAX_FRAME_SIZE, 72))
