@@ -5,7 +5,7 @@ import binascii
 import json
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -17,6 +17,7 @@ from decker.asset.tint import tint_svg
 from decker.common import config
 from decker.common.manager import Manager
 from decker.common.platforms import detect_platform, platform_supports
+from decker.common.slots import SLOT_NAMES
 from decker.common.template import expand_template
 from decker.common.text_style import is_color
 from decker.common.version import decker_version
@@ -58,6 +59,7 @@ from decker.server.page_vars import (
     stored_page_ids,
     stored_profile_ids,
 )
+from decker.server.switch import SwitchController
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
@@ -117,6 +119,7 @@ class _Live:  # pylint: disable=too-many-instance-attributes
     plugin_title: str = ""
     state: int = 0
     delivered: dict[str, Any] = field(default_factory=dict)
+    parent: str | None = None  # the Switch's context id, for the card a Switch shows
 
 
 def _uses_pack_icon(live: _Live) -> bool:
@@ -151,6 +154,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._builtin_ids: set[str] = set()
         self._live: dict[str, _Live] = {}
         self._lock = threading.RLock()
+        self._switch_lock = threading.RLock()  # serialises child swaps; taken before self._lock, never inside it
+        self._switches = SwitchController()
         self._sdk_path: Path | None = None
         self._device_manager: Any = None
         self._event_bus: Any = None
@@ -227,6 +232,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             logging.exception("Registering plugin %s failed", manifest.id)
             self._record_failure(manifest.id, str(exc))
         self._recompose_icon_users()
+        self._reshow_switches()
 
     def register_cards(self, plugin: InstalledPlugin) -> None:
         """Register a plugin's cards with the supervisor (the "cards" contribution handler)."""
@@ -293,6 +299,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._icon_cache.clear()
             self._drop_failure(plugin_id)
         self._recompose_icon_users()
+        self._reshow_switches()
 
     def _recompose_icon_users(self) -> None:
         """Redraw the keys showing a pack icon, since the set of installed packs just changed."""
@@ -306,8 +313,11 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         with self._lock:
             dropped = [c for c, live in self._live.items() if live.target.plugin_uuid == plugin_id]
             recognizers = [self._live.pop(c).recognizer for c in dropped]
+            orphans = [live.target for live in self._live.values() if live.parent in dropped]
         for recognizer in recognizers:
             recognizer.cancel()
+        for target in orphans:
+            self.deactivate_card(target)
         self._supervisor.unregister(plugin_id)
         with self._lock:
             self._hellos.pop(plugin_id, None)
@@ -427,7 +437,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             live = self._live.get(target.context_id)
             if live is None:
                 return None
-            draft = replace(live, appearance=dict(stored))
+            child = self._child_of(live)
+            # A shown card replaces the Switch's face entirely, so the Switch's draft appearance does not show.
+            draft = child if child is not None else replace(live, appearance=dict(stored))
         try:
             return self._compose(draft).png
         except Exception:  # pylint: disable=broad-except
@@ -467,13 +479,20 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         )
         with self._lock:
             self._live[target.context_id] = live
+        if spec.switch:
+            self._show_child(live, draw)
+        else:
+            self._start_live(live, draw)
+
+    def _start_live(self, live: _Live, draw: bool) -> None:
         self._recompose(live, poster=draw)
-        if spec.headless:
+        plugin_id = live.target.plugin_uuid
+        if live.card.headless:
             return
-        self._supervisor.acquire(target.plugin_uuid)
-        if self._supervisor.is_failed(target.plugin_uuid):
+        self._supervisor.acquire(plugin_id)
+        if self._supervisor.is_failed(plugin_id):
             self._mark_failed(live)
-        elif self._supervisor.is_ready(target.plugin_uuid):
+        elif self._supervisor.is_ready(plugin_id):
             self._send_will_appear(live)
 
     def deactivate_card(self, target: CardTarget) -> None:
@@ -483,6 +502,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if live is None:
             return
         live.recognizer.cancel()
+        if live.card.switch:
+            self._hide_child(live)
         if live.card.headless:
             return
         plugin_id = target.plugin_uuid
@@ -493,7 +514,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def dispatch_key_down(self, target: CardTarget) -> None:
         """Forward the raw key down, then feed the press to the instance's gesture recognizer."""
         live = self._live.get(target.context_id)
-        if live is None or live.card.static:
+        if live is None or live.card.static or live.parent is not None:
             return
         self._send_context(live, "key_down")
         live.recognizer.key_down(live.gestures)
@@ -501,7 +522,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def dispatch_key_up(self, target: CardTarget) -> None:
         """Forward the raw key up, then feed the release to the instance's gesture recognizer."""
         live = self._live.get(target.context_id)
-        if live is None or live.card.static:
+        if live is None or live.card.static or live.parent is not None:
             return
         self._send_context(live, "key_up")
         live.recognizer.key_up()
@@ -510,6 +531,11 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Send the instance its new settings; re-saving settings retries a failed plugin."""
         plugin_id = target.plugin_uuid
         existing = self._live.get(target.context_id)
+        if existing is not None and existing.card.switch:
+            stored = self._settings_store.get_settings(target.plugin_uuid, target.card_uuid, target.context_id)
+            existing.settings = apply_schema(existing.card.settings, stored)
+            self._show_child(existing)
+            return
         if existing is not None and existing.card.headless:
             return
         if self._supervisor.is_failed(plugin_id):
@@ -522,6 +548,122 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         stored = self._settings_store.get_settings(target.plugin_uuid, target.card_uuid, target.context_id)
         live.settings = apply_schema(live.card.settings, stored)
         self._send_context(live, "settings_changed", {"settings": self._delivery(live)})
+
+    # ------------------------------------------------------------------
+    # Switch cards: the shown child card and slot gestures
+    # ------------------------------------------------------------------
+
+    def _child_of(self, live: _Live) -> _Live | None:
+        if not live.card.switch:
+            return None
+        context_id = live.target.context_id
+        with self._lock:
+            return next((self._live[c] for c in (f"{context_id}:{s}" for s in SLOT_NAMES) if c in self._live), None)
+
+    def _child_spec(self, slot: Mapping[str, Any]) -> CardSpec | None:
+        with self._lock:
+            plugin = self._plugins.get(str(slot.get("plugin")))
+        spec = self._card_spec(str(slot.get("plugin")), str(slot.get("card")))
+        if plugin is None or spec is None or spec.switch or (plugin.manifest.runtime is None and not spec.headless):
+            return None
+        return spec
+
+    def _slot_installed(self, slot: Any) -> bool:
+        if not isinstance(slot, Mapping):
+            return False
+        if slot.get("kind") == "action":
+            return self._action_runner.spec(str(slot.get("action"))) is not None
+        return self._child_spec(slot) is not None
+
+    def _effective_slots(self, settings: Mapping[str, Any]) -> dict[str, Any]:
+        # Uninstalled cards and actions read as empty here, but the stored value keeps them for a reinstall.
+        slots = settings.get("slots")
+        if not isinstance(slots, Mapping):
+            return {}
+        return {name: slot if self._slot_installed(slot) else None for name, slot in slots.items()}
+
+    def _show_child(self, live: _Live, draw: bool = True) -> None:
+        context_id = live.target.context_id
+        with self._switch_lock:
+            with self._lock:
+                if self._live.get(context_id) is not live:
+                    return
+                current = self._child_of(live)
+            if current is not None:
+                self.deactivate_card(current.target)
+            self._clear_placeholder(live.target.device_id, live.target.key_index)
+            slots = self._effective_slots(live.settings)
+            live.gestures = self._switches.gestures(slots)
+            shown = self._switches.shown_slot(context_id, slots)
+            if shown is None or not self._activate_child(live, shown, slots[shown], draw):
+                self._recompose(live, poster=draw)
+
+    def _activate_child(self, parent: _Live, name: str, slot: Mapping[str, Any], draw: bool) -> bool:
+        spec = self._child_spec(slot)
+        if spec is None:
+            return False
+        where = parent.target
+        target = CardTarget(
+            slot["plugin"], slot["card"], f"{where.context_id}:{name}", where.device_id, where.key_index
+        )
+        child = _Live(
+            target=target,
+            card=spec,
+            recognizer=GestureRecognizer(self._gesture_emitter(target.context_id)),
+            gestures=frozenset(),
+            settings=apply_schema(spec.settings, dict(slot["settings"])),
+            appearance=dict(slot["appearance"]),
+            parent=where.context_id,
+        )
+        with self._lock:
+            if self._live.get(where.context_id) is not parent:
+                return True  # the Switch went away meanwhile: nothing to show
+            self._live[target.context_id] = child
+        self._start_live(child, draw)
+        return True
+
+    def _hide_child(self, parent: _Live) -> None:
+        with self._switch_lock:
+            child = self._child_of(parent)
+            if child is not None:
+                self.deactivate_card(child.target)
+
+    def _on_switch_gesture(self, live: _Live, gesture: Gesture) -> None:
+        outcome = self._switches.handle(live.target.context_id, self._effective_slots(live.settings), gesture)
+        if outcome.action is not None:
+            self.run_action(*outcome.action)
+        if outcome.show is not None:
+            self._show_child(live)
+
+    def _reshow_switches(self) -> None:
+        with self._lock:
+            switches = [live for live in self._live.values() if live.card.switch]
+        for live in switches:
+            try:
+                slots = self._effective_slots(live.settings)
+                live.gestures = self._switches.gestures(slots)
+                child = self._child_of(live)
+                wanted = self._switches.shown_slot(live.target.context_id, slots)
+                if child is None or child.target.context_id != f"{live.target.context_id}:{wanted}":
+                    self._show_child(live)
+            except Exception:  # pylint: disable=broad-except
+                logging.warning("Refreshing Switch %s failed", live.target.context_id, exc_info=True)
+
+    def _write_back_slot(self, child: _Live, settings: dict[str, Any]) -> None:
+        name = child.target.context_id.rsplit(":", 1)[1]
+        with self._lock:
+            parent = self._live.get(child.parent or "")
+            slots = dict(parent.settings.get("slots") or {}) if parent is not None else {}
+            slot = slots.get(name)
+            if parent is None or not isinstance(slot, Mapping):
+                return
+            if (slot.get("plugin"), slot.get("card")) != (child.target.plugin_uuid, child.target.card_uuid):
+                return
+            slots[name] = {**slot, "settings": settings}
+            parent.settings = stored = {**parent.settings, "slots": slots}
+        self.store_settings(parent.target, stored)
+        if self.settings_persister is not None:
+            self.settings_persister(parent.target, stored)
 
     # ------------------------------------------------------------------
     # Server -> plugin helpers
@@ -537,8 +679,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         try:
             composed = self._compose(live, poster)
             with self._lock:
-                if self._live.get(target.context_id) is not live:
-                    return
+                if self._live.get(target.context_id) is not live or self._child_of(live) is not None:
+                    return  # gone, or a Switch whose shown card draws the key
                 written = write_face(self._sink, target, composed, poster)
         except Exception:  # pylint: disable=broad-except
             logging.warning("Could not compose key image for context %s", target.context_id, exc_info=True)
@@ -694,6 +836,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             live = self._live.get(context_id)
             if live is None:
                 return
+            if live.card.switch:
+                self._on_switch_gesture(live, gesture)
+                return
             if live.card.bound:  # a press runs the card's action; the card has no process to tell
                 if gesture == Gesture.PRESS:
                     self._run_bound(live)
@@ -840,6 +985,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         settings = apply_schema(live.card.settings, merged)
         live.settings = settings
         live.delivered = self.delivered_settings(live)
+        if live.parent is not None:
+            self._write_back_slot(live, settings)
+            return
         self.store_settings(live.target, settings)
         if self.settings_persister is not None:
             self.settings_persister(live.target, settings)
@@ -996,7 +1144,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                 (
                     item
                     for item in self._live.values()
-                    if item.target.device_id == device_id and item.target.key_index == key_index
+                    if item.target.device_id == device_id and item.target.key_index == key_index and item.parent is None
                 ),
                 None,
             )
