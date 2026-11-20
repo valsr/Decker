@@ -5,6 +5,8 @@ import json
 from assertpy import assert_that
 from PIL import Image
 
+from decker.animation import factory as factory_module
+from decker.animation.gif import MAX_FRAME_SIZE
 from decker.animation.model import AnimationSpec
 from decker.server.appearance import compose_key_frames, resolve_appearance
 
@@ -87,3 +89,30 @@ def test_compose_key_frames_foreground_layer_unchanged() -> None:
     assert_that(explicit[0].tobytes()).is_equal_to(default[0].tobytes())
     assert_that(default[0].getpixel((SIZE // 2, SIZE // 2))).is_equal_to(RED)
     assert_that(default[0].getpixel((2, 2))).is_equal_to((0x11, 0x22, 0x33))
+
+
+def _striped_gif() -> bytes:
+    """Two 288x144 frames with 1 px black/white vertical stripes in the centre square."""
+    frames = []
+    for shade in (255, 200):
+        img = Image.new("RGB", (288, 144), (0, 0, 0))
+        for x in range(0, 288, 2):
+            img.paste((shade, shade, shade), (x, 0, x + 1, 144))
+        frames.append(img)
+    buf = io.BytesIO()
+    frames[0].save(buf, format="GIF", save_all=True, append_images=frames[1:], duration=100, loop=0)
+    return buf.getvalue()
+
+
+def test_background_layer_frames_are_square_and_sharp() -> None:
+    spec = AnimationSpec(_striped_gif(), _appearance(), "", 1.0, layer="background")
+    frames = factory_module._decode(spec)  # pylint: disable=protected-access
+    assert_that(frames[0].image.size).is_equal_to((MAX_FRAME_SIZE, MAX_FRAME_SIZE))
+    pixels = frames[0].image.load()
+    assert pixels is not None
+    row = [pixels[x, 70][0] for x in range(40, 100)]  # type: ignore[index]
+    assert_that(max(row) - min(row)).is_greater_than(200)  # stripes survive instead of blurring to grey
+    foreground = factory_module._decode(
+        AnimationSpec(spec.gif, _appearance(), "", 1.0)
+    )  # pylint: disable=protected-access
+    assert_that(foreground[0].image.size).is_equal_to((MAX_FRAME_SIZE, 72))

@@ -1,10 +1,12 @@
 import io
 import logging
+import tracemalloc
 
 import pytest
 from assertpy import assert_that
 from PIL import Image
 
+from decker.server import appearance as appearance_module
 from decker.server.appearance import (
     compose_key_face,
     compose_key_image,
@@ -148,3 +150,42 @@ def test_animated_foreground_wins_over_animated_background() -> None:
     assert_that(face.animation.gif).is_equal_to(fg)
     poster = Image.open(io.BytesIO(face.png)).convert("RGB")
     assert_that(poster.getpixel((0, 0))).is_equal_to(RED)
+
+
+@pytest.fixture(autouse=True)
+def _clear_reported() -> None:
+    appearance_module._REPORTED_BAD_BACKGROUNDS.clear()  # pylint: disable=protected-access
+
+
+def _peak_bytes(data: bytes) -> int:
+    tracemalloc.start()
+    try:
+        _render(_appearance("image"), background_image=data)
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+
+def test_extreme_aspect_ratio_images_stay_within_a_small_memory_bound() -> None:
+    wide = _png(Image.new("RGB", (20000, 1), RED))
+    tall = _png(Image.new("RGB", (1, 20000), RED))
+    gif = io.BytesIO()
+    Image.new("RGB", (65535, 1), RED).save(gif, format="GIF")
+    for data in (wide, tall, gif.getvalue()):
+        assert_that(_peak_bytes(data)).is_less_than(30 * 1024 * 1024)
+    assert_that(_render(_appearance("image"), background_image=wide).getpixel((5, 5))).is_equal_to(RED)
+
+
+def test_unparseable_svg_logs_once_and_falls_back_to_black(caplog: pytest.LogCaptureFixture) -> None:
+    bad = b"<svg xmlns='http://www.w3.org/2000/svg'><unclosed"
+    with caplog.at_level(logging.DEBUG):
+        for _ in range(3):
+            got = _render(_appearance("image"), background_image=bad)
+    assert_that(got.getpixel((3, 3))).is_equal_to((0, 0, 0))
+    assert_that([r for r in caplog.records if "background image" in r.getMessage()]).is_length(1)
+
+
+def test_reported_backgrounds_are_bounded() -> None:
+    for index in range(300):
+        appearance_module._report_bad_background(str(index).encode(), "x")  # pylint: disable=protected-access
+    assert_that(len(appearance_module._REPORTED_BAD_BACKGROUNDS)).is_equal_to(256)  # pylint: disable=protected-access
