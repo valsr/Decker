@@ -91,6 +91,9 @@ class PageStore(Manager):
             _SCHEMA_ACTIVE_PROFILES,
         ):
             self._db.execute(schema)
+        profile_columns = [row[1] for row in self._db.execute("PRAGMA table_info(profiles)").fetchall()]
+        if "icon_color" not in profile_columns:
+            self._db.execute("ALTER TABLE profiles ADD COLUMN icon_color TEXT NOT NULL DEFAULT ''")
         columns = [row[1] for row in self._db.execute("PRAGMA table_info(pages)").fetchall()]
         if "profile_id" not in columns:
             self._db.execute("ALTER TABLE pages ADD COLUMN profile_id INTEGER NOT NULL DEFAULT 0")
@@ -139,10 +142,12 @@ class PageStore(Manager):
         with self._lock:
             return self._update_profile(device_id, profile_id, "name", name)
 
-    def set_profile_icon(self, device_id: str, profile_id: int, icon: str) -> bool:
-        """Set a profile's icon ref ("" = the Decker icon). Returns False for an unknown profile."""
+    def set_profile_icon(self, device_id: str, profile_id: int, icon: str, color: str = "") -> bool:
+        """Set a profile's icon ref ("" = the Decker icon) and SVG fill colour. False for an unknown profile."""
         with self._lock:
-            return self._update_profile(device_id, profile_id, "icon", icon)
+            if not self._update_profile(device_id, profile_id, "icon", icon):
+                return False
+            return self._update_profile(device_id, profile_id, "icon_color", color)
 
     def delete_profile(self, device_id: str, profile_id: int) -> list[str]:
         """Delete a profile with its pages; returns the deleted page ids ([] when unknown or the last profile)."""
@@ -173,6 +178,7 @@ class PageStore(Manager):
                 _lowest_unused(p.profile_id for p in profiles),
                 _unique_name(f"{source.name} copy", {p.name for p in profiles}),
                 source.icon,
+                source.icon_color,
             )
             self._insert_profile(device_id, clone, position=self._next_profile_position(device_id))
             mapping: dict[str, str] = {}
@@ -301,10 +307,11 @@ class PageStore(Manager):
 
     def _profiles(self, device_id: str) -> list[ProfileInfo]:
         rows = self._db.execute(
-            "SELECT profile_id, name, icon FROM profiles WHERE device_id = ? ORDER BY position", (device_id,)
+            "SELECT profile_id, name, icon, icon_color FROM profiles WHERE device_id = ? ORDER BY position",
+            (device_id,),
         ).fetchall()
         if rows:
-            return [ProfileInfo(row[0], row[1], row[2]) for row in rows]
+            return [ProfileInfo(row[0], row[1], row[2], row[3]) for row in rows]
         profile = ProfileInfo(0, DEFAULT_PROFILE_NAME, "")
         self._insert_profile(device_id, profile, position=0)
         if self._db.execute("SELECT 1 FROM pages WHERE device_id = ? LIMIT 1", (device_id,)).fetchone() is None:
@@ -344,8 +351,8 @@ class PageStore(Manager):
 
     def _insert_profile(self, device_id: str, profile: ProfileInfo, position: int) -> None:
         self._db.execute(
-            "INSERT INTO profiles (device_id, profile_id, name, icon, position) VALUES (?, ?, ?, ?, ?)",
-            (device_id, profile.profile_id, profile.name, profile.icon, position),
+            "INSERT INTO profiles (device_id, profile_id, name, icon, icon_color, position) VALUES (?, ?, ?, ?, ?, ?)",
+            (device_id, profile.profile_id, profile.name, profile.icon, profile.icon_color, position),
         )
         self._db.commit()
 

@@ -21,7 +21,7 @@ from decker.client.widgets.rename_edit import RenameEdit
 from decker.common.icon_ref import DECKER_ICON_REF
 from decker.common.model import ProfileInfo
 
-IconProvider = Callable[[str], QIcon | None]
+IconProvider = Callable[[str, str], QIcon | None]  # (icon ref, fill colour or "")
 _ICON_SIZE = 18
 _ROW_ID = Qt.ItemDataRole.UserRole
 
@@ -113,7 +113,7 @@ class ProfileSelector(QToolButton):  # pylint: disable=too-many-instance-attribu
         for profile in profiles:
             item = QListWidgetItem(profile.name)
             item.setData(_ROW_ID, profile.profile_id)
-            item.setIcon(profile_qicon(profile.icon, icon_for, fallback))
+            item.setIcon(profile_qicon(profile.icon, icon_for, fallback, profile.icon_color))
             self.popup_list.addItem(item)
             if profile.profile_id == active_profile_id:
                 self.popup_list.setCurrentItem(item)
@@ -191,10 +191,10 @@ def decker_fallback_icon() -> QIcon:
     return QIcon(str(ICON_PATH))
 
 
-def profile_qicon(ref: str, provider: IconProvider | None, fallback: QIcon | None = None) -> QIcon:
+def profile_qicon(ref: str, provider: IconProvider | None, fallback: QIcon | None = None, color: str = "") -> QIcon:
     """The icon for a profile's icon ref: the provider's, else the Decker icon."""
     fallback = fallback if fallback is not None else decker_fallback_icon()
     if ref in ("", DECKER_ICON_REF) or provider is None:
         return fallback
-    icon = provider(ref)
+    icon = provider(ref, color)
     return icon if icon is not None and not icon.isNull() else fallback

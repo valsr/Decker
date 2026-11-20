@@ -231,3 +231,20 @@ class TestAddPageValidation:
 
         assert_that(store.list_pages("d", 42)).is_empty()
         assert_that([p.name for p in store.list_pages("d")]).is_equal_to(["Page 1"])
+
+
+class TestProfileIconColour:
+    def test_colour_is_stored_listed_and_cloned(self, tmp_path):
+        store = PageStore(db_path=tmp_path / "decker.db")
+        store.create(MagicMock())
+        try:
+            assert_that(store.set_profile_icon("d", 0, "pack:a/b.svg", "#112233")).is_true()
+            assert_that(store.list_profiles("d")[0].icon_color).is_equal_to("#112233")
+            cloned = store.clone_profile("d", 0)
+            assert cloned is not None
+            clone = cloned[0]
+            assert_that(clone.icon_color).is_equal_to("#112233")
+            assert_that(store.set_profile_icon("d", 0, "", "")).is_true()
+            assert_that(store.list_profiles("d")[0].icon_color).is_equal_to("")
+        finally:
+            store.destroy()

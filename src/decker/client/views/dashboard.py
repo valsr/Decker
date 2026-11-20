@@ -752,10 +752,10 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             window.open_settings()
 
 
-def _profile_icon(ref: str) -> QIcon | None:
-    """The dropdown icon for a profile's icon ref, or None to fall back to the Decker icon."""
+def _profile_icon(ref: str, color: str = "") -> QIcon | None:
+    """The dropdown icon for a profile's icon ref and fill colour, or None to fall back to the Decker icon."""
     edit = IconEdit()
-    edit.set_value({"ref": ref})
+    edit.set_value({"ref": ref, "color": color or "#ffffff"})
     pixmap = edit.thumbnail()
     return None if pixmap.isNull() else QIcon(pixmap)
 

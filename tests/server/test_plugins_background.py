@@ -262,12 +262,14 @@ def test_pack_removal_redraws_a_manifest_default_background(env, tmp_path):
 
 
 def test_background_svg_is_tinted_with_its_fill_colour_and_other_images_are_not(tmp_path):
-    from decker.server.plugins import PluginManager  # pylint: disable=import-outside-toplevel
+    from decker.server.plugins import (
+        PluginManager,  # pylint: disable=import-outside-toplevel
+    )
 
     svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="M0 0h10v10z"/></svg>'
     reads = {"pack:p/a.svg": svg, "pack:p/b.png": _png("#0000ff")}
     manager = PluginManager.__new__(PluginManager)
-    manager.icon_packs = type("Packs", (), {"read_ref": staticmethod(lambda ref: reads.get(ref))})()  # type: ignore[attr-defined]
+    manager.icon_packs = type("Packs", (), {"read_ref": staticmethod(lambda ref: reads.get(ref))})()
 
     def background(ref: str, **extra: Any) -> dict[str, Any]:
         return {"background": {"type": "image", "image": {"ref": ref, **extra}}}

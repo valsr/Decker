@@ -741,12 +741,12 @@ class TestProfileRpcs:
         assert_that(json.loads(service.profiles_list("dev1"))).is_equal_to(
             {
                 "device_id": "dev1",
-                "profiles": [{"profile_id": 0, "name": "Default", "icon": ""}],
+                "profiles": [{"profile_id": 0, "name": "Default", "icon": "", "icon_color": ""}],
                 "active_profile_id": 0,
             }
         )
         added = json.loads(service.profile_add("dev1", "Media"))
-        assert_that(added).is_equal_to({"profile_id": 1, "name": "Media", "icon": ""})
+        assert_that(added).is_equal_to({"profile_id": 1, "name": "Media", "icon": "", "icon_color": ""})
 
         assert_that(service.profile_rename("dev1", 1, "Audio")).is_true()
         assert_that(service.profile_set_icon("dev1", 1, "decker:logo")).is_true()

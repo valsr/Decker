@@ -338,5 +338,5 @@ def fill_profile_combo(combo: QComboBox, profiles: list[ProfileInfo], icon_for: 
     combo.clear()
     fallback = QIcon()
     for profile in profiles:
-        icon = profile_qicon(profile.icon, icon_for, fallback if icon_for is None else None)
+        icon = profile_qicon(profile.icon, icon_for, fallback if icon_for is None else None, profile.icon_color)
         combo.addItem(icon, profile.name, profile.profile_id)
