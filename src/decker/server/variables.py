@@ -18,7 +18,7 @@ class VariableConflict(Exception):
 
 
 class _View(Mapping[str, str]):
-    """Live read-only mapping of the set values; ``get`` also answers declared-but-unset names."""
+    """Read-only mapping: ``in``/``[]`` show set values; ``get`` also answers ``""`` for declared-unset names."""
 
     def __init__(self, store: "VariableStore") -> None:
         self._store = store
@@ -75,11 +75,9 @@ class VariableStore:
         with self._lock:
             if self._exact.get(name, ("",))[0] == plugin_id or self._concrete.get(name) == plugin_id:
                 return True
-            if not is_valid_name(name) or name in self._exact or name in CORE_VARIABLE_NAMES:
+            if not is_valid_name(name) or name in self._exact or name in self._concrete or name in CORE_VARIABLE_NAMES:
                 return False
-            if any(
-                owner == plugin_id and match_pattern(p, name) is not None for p, (owner, _) in self._patterns.items()
-            ):
+            if self._pattern_owners(name) == {plugin_id}:
                 self._concrete[name] = plugin_id
                 return True
             return False
@@ -175,6 +173,10 @@ class VariableStore:
 
     def _check_pattern(self, plugin_id: str, pattern: str, seen: set[str]) -> None:
         shape = pattern_shape(pattern)
+        if any(match_pattern(pattern, n) is not None for n in CORE_VARIABLE_NAMES) or any(
+            owner != plugin_id and match_pattern(pattern, n) is not None for n, (owner, _) in self._exact.items()
+        ):
+            raise VariableConflict(f"variable pattern {pattern!r} shadows an existing variable")
         if shape in seen or any(
             owner != plugin_id and pattern_shape(other) == shape for other, (owner, _) in self._patterns.items()
         ):
@@ -191,6 +193,9 @@ class VariableStore:
             if match_pattern(pattern, name) is not None:
                 return owner
         return None
+
+    def _pattern_owners(self, name: str) -> set[str]:
+        return {owner for pattern, (owner, _) in self._patterns.items() if match_pattern(pattern, name) is not None}
 
     def _pattern_of(self, plugin_id: str, name: str) -> tuple[str, str]:
         for pattern, (owner, desc) in self._patterns.items():
