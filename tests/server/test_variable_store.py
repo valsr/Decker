@@ -1,3 +1,4 @@
+import pytest
 from assertpy import assert_that
 
 from decker.common.template import expand_template
@@ -18,12 +19,10 @@ def _declared(store: VariableStore, plugin_id: str, *specs: VariableSpec) -> Non
 
 
 def test_spec_requires_exactly_one_of_name_and_pattern() -> None:
-    for kwargs in ({"name": None, "pattern": None}, {"name": "a", "pattern": "b_{x}"}):
-        try:
-            VariableSpec(**kwargs)
-        except ValueError:
-            continue
-        raise AssertionError("expected ValueError")
+    with pytest.raises(ValueError):
+        VariableSpec(name=None, pattern=None)
+    with pytest.raises(ValueError):
+        VariableSpec(name="a", pattern="b_{x}")
 
 
 def test_declare_exact_and_owner() -> None:
@@ -37,58 +36,38 @@ def test_declare_exact_and_owner() -> None:
 
 def test_declare_rejects_core_name() -> None:
     store = VariableStore()
-    try:
+    with pytest.raises(VariableConflict):
         _declared(store, "p1", _name("page_name"))
-    except VariableConflict:
-        pass
-    else:
-        raise AssertionError("expected conflict")
     assert_that(store.owner_of("page_name")).is_none()
 
 
 def test_declare_rejects_name_owned_by_another_plugin() -> None:
     store = VariableStore()
     _declared(store, "p1", _name("weather"))
-    try:
+    with pytest.raises(VariableConflict):
         _declared(store, "p2", _name("weather"))
-    except VariableConflict:
-        pass
-    else:
-        raise AssertionError("expected conflict")
     assert_that(store.owner_of("weather")).is_equal_to("p1")
 
 
 def test_declare_rejects_name_matching_other_pattern() -> None:
     store = VariableStore()
     _declared(store, "p1", _pattern("sensor_{id}"))
-    try:
+    with pytest.raises(VariableConflict):
         _declared(store, "p2", _name("sensor_a"))
-    except VariableConflict:
-        pass
-    else:
-        raise AssertionError("expected conflict")
 
 
 def test_declare_rejects_identical_pattern_shape() -> None:
     store = VariableStore()
     _declared(store, "p1", _pattern("sensor_{id}"))
-    try:
+    with pytest.raises(VariableConflict):
         _declared(store, "p2", _pattern("sensor_{other}"))
-    except VariableConflict:
-        pass
-    else:
-        raise AssertionError("expected conflict")
 
 
 def test_declare_is_atomic() -> None:
     store = VariableStore()
     _declared(store, "p1", _name("taken"))
-    try:
+    with pytest.raises(VariableConflict):
         _declared(store, "p2", _name("fresh"), _name("taken"))
-    except VariableConflict:
-        pass
-    else:
-        raise AssertionError("expected conflict")
     assert_that(store.owner_of("fresh")).is_none()
     assert_that(store.registered_names("p2")).is_empty()
 
@@ -221,3 +200,52 @@ def test_value_text_expansion_is_not_recursive() -> None:
     _declared(store, "p1", _name("weather"))
     store.set_value("p1", "weather", "{page_name}")
     assert_that(expand_template("now {weather}", store.view())).is_equal_to("now {page_name}")
+
+
+def test_declare_rejects_pattern_matching_core_name() -> None:
+    store = VariableStore()
+    with pytest.raises(VariableConflict):
+        _declared(store, "p1", _pattern("page_{x}"))
+    assert_that(store.owner_of("page_name")).is_none()
+
+
+def test_declare_rejects_pattern_matching_other_plugins_exact_name() -> None:
+    store = VariableStore()
+    _declared(store, "p1", _name("sensor_a"))
+    with pytest.raises(VariableConflict):
+        _declared(store, "p2", _pattern("sensor_{id}"))
+    assert_that(store.owner_of("sensor_a")).is_equal_to("p1")
+
+
+def test_register_refuses_name_registered_by_overlapping_pattern_of_another_plugin() -> None:
+    store = VariableStore()
+    _declared(store, "p1", _pattern("a_{x}"))
+    assert_that(store.register("p1", "a_q_b")).is_true()
+    _declared(store, "p2", _pattern("a_{x}_b"))
+    assert_that(store.register("p2", "a_q_b")).is_false()
+    assert_that(store.set_value("p2", "a_q_b", "x")).is_false()
+    assert_that(store.registered_names("p1")).is_equal_to(["a_q_b"])
+
+
+def test_register_refuses_name_matching_other_plugins_pattern_or_exact() -> None:
+    store = VariableStore()
+    _declared(store, "p1", _pattern("a_{x}"), _name("a_fixed"))
+    _declared(store, "p2", _pattern("a_{x}_b"))
+    assert_that(store.register("p2", "a_q_b")).is_false()
+    assert_that(store.register("p2", "a_fixed")).is_false()
+
+
+def test_redeclare_same_plugin_overlapping_does_not_conflict_and_drops_values() -> None:
+    changes: list[frozenset[str]] = []
+    store = VariableStore(on_change=changes.append)
+    _declared(store, "p1", _name("weather"), _pattern("sensor_{id}"))
+    store.set_value("p1", "weather", "sunny")
+    changes.clear()
+    _declared(store, "p1", _name("weather"), _pattern("sensor_{id}"), _name("extra"))
+    assert_that(store.owner_of("extra")).is_equal_to("p1")
+    assert_that(store.snapshot()).is_empty()
+    assert_that(changes).is_equal_to([frozenset({"weather"})])
+
+
+def test_owner_of_core_name_is_none() -> None:
+    assert_that(VariableStore().owner_of("page_name")).is_none()
