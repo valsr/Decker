@@ -20,7 +20,9 @@ from decker.client.card_icons import asset_pixmap, card_pixmap, placeholder_pixm
 from decker.client.context import AppContext
 from decker.client.icon_picker import RpcCaller
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
+from decker.common.background import normalize_background
 from decker.common.slots import SLOT_NAMES, SWITCH_CARD_ID, normalize_slots
+from decker.common.text_style import fold_legacy_title
 
 CARD_MIME_TYPE = "application/x-decker-card"
 _TITLES = {"display": "Display", "press": "Press", "double_press": "Double Press", "long_press": "Long Press"}
@@ -152,6 +154,31 @@ class _SlotButton(QFrame):
         a0.acceptProposedAction()
 
 
+def _with_defaults(stored: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    """The appearance the form shows: ``stored`` over the card's ``defaults``, title and background field-wise."""
+    folded = fold_legacy_title(stored)
+    merged = {**defaults, **folded}
+    if "title" in merged:
+        merged["title"] = {**defaults.get("title", {}), **folded.get("title", {})}
+    if "background" in merged:
+        base = normalize_background(defaults["background"]) if "background" in defaults else None
+        merged["background"] = normalize_background(merged["background"], base)
+    return merged
+
+
+def _without_defaults(values: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    """Only what ``values`` changes from ``defaults`` (field-wise inside dict entries), so defaults stay inherited."""
+    changed: dict[str, Any] = {}
+    for key, value in values.items():
+        default = defaults.get(key)
+        if value is None or value == default:
+            continue
+        if isinstance(value, dict) and isinstance(default, dict):
+            value = {k: v for k, v in value.items() if v != default.get(k)}
+        changed[key] = value
+    return changed
+
+
 class _SlotConfig(QWidget):
     """The settings (and, for a card, appearance) forms of the selected slot; hidden when there is nothing to edit."""
 
@@ -172,10 +199,15 @@ class _SlotConfig(QWidget):
         layout.addWidget(self.settings_form)
         self.appearance_form.changed.connect(self.edited.emit)
         self.settings_form.changed.connect(self.edited.emit)
+        self._defaults: dict[str, Any] = {}
+        self._baseline: dict[str, Any] = {}
         self.setVisible(False)
 
-    def show_forms(self, schema: list[dict[str, Any]] | None, value: dict[str, Any] | None) -> None:
-        """Fill the forms from slot ``value`` (``schema`` None or no value hides them). Emits nothing."""
+    def show_forms(
+        self, schema: list[dict[str, Any]] | None, value: dict[str, Any] | None, defaults: dict[str, Any]
+    ) -> None:
+        """Fill the forms from slot ``value`` and the card's appearance ``defaults`` (no schema or value hides them)."""
+        self._defaults = fold_legacy_title(defaults)
         for form in (self.settings_form, self.appearance_form):
             form.blockSignals(True)
         if schema is None or value is None:
@@ -183,18 +215,27 @@ class _SlotConfig(QWidget):
             self.appearance_form.set_schema([], {})
         else:
             is_card = value["kind"] == "card"
-            self.appearance_form.set_schema(APPEARANCE_SCHEMA if is_card else [], value.get("appearance", {}))
+            self._baseline = self._form_baseline(is_card)
+            shown = _with_defaults(value.get("appearance", {}), self._defaults) if is_card else {}
+            self.appearance_form.set_schema(APPEARANCE_SCHEMA if is_card else [], shown)
             self.settings_form.set_schema(schema, value["settings"])
         for form in (self.settings_form, self.appearance_form):
             form.blockSignals(False)
         self.appearance_form.setVisible(value is not None and value["kind"] == "card")
         self.setVisible(schema is not None and value is not None)
 
+    def _form_baseline(self, is_card: bool) -> dict[str, Any]:
+        """What the appearance form holds for a slot that sets nothing itself (schema filled in)."""
+        if not is_card:
+            return {}
+        self.appearance_form.set_schema(APPEARANCE_SCHEMA, _with_defaults({}, self._defaults))
+        return self.appearance_form.values()
+
     def edited_value(self, value: dict[str, Any]) -> dict[str, Any]:
         """``value`` with the forms' current entries."""
         edited = {**value, "settings": self.settings_form.values()}
         if value["kind"] == "card":
-            edited["appearance"] = self.appearance_form.values()
+            edited["appearance"] = _without_defaults(self.appearance_form.values(), self._baseline)
         return edited
 
 
@@ -230,6 +271,7 @@ class SlotsEdit(QWidget):
     def reload(self) -> None:
         """Re-read the card and action names from the server."""
         self._cards, self._actions = self._catalog()
+        self._shown = (None, None)  # the schemas may have changed under the shown form
         self._refresh()
 
     def value(self) -> dict[str, Any]:
@@ -282,23 +324,20 @@ class SlotsEdit(QWidget):
         if (self._selected, value) == self._shown:
             return  # the form already shows it (e.g. it is the source of this very change)
         self._shown = (self._selected, value)
-        self._config.show_forms(self._config_schema(value), value)
+        entry = self._config_entry(value)
+        schema = None if entry is None else list(entry.get("settings_schema") or [])
+        defaults = dict(entry.get("appearance") or {}) if entry is not None and value is not None else {}
+        self._config.show_forms(schema, value, defaults if value and value["kind"] == "card" else {})
 
-    def _config_schema(self, value: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    def _config_entry(self, value: dict[str, Any] | None) -> dict[str, Any] | None:
         if value is None:
             return None
         if value["kind"] == "action":
-            found = next((a for a in self._actions if a.get("action_uuid") == value["action"]), None)
-        else:
-            found = next(
-                (
-                    c
-                    for c in self._cards
-                    if c.get("plugin_uuid") == value["plugin"] and c.get("card_uuid") == value["card"]
-                ),
-                None,
-            )
-        return None if found is None else list(found.get("settings_schema") or [])
+            return next((a for a in self._actions if a.get("action_uuid") == value["action"]), None)
+        return next(
+            (c for c in self._cards if c.get("plugin_uuid") == value["plugin"] and c.get("card_uuid") == value["card"]),
+            None,
+        )
 
     def _on_config_edited(self) -> None:
         name = self._selected

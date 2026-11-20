@@ -396,6 +396,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
                     "icon_b64": self._icon_b64(plugin.plugin_dir, spec.icon or manifest.icon),
                     "tooltip": spec.tooltip,
                     "settings_schema": schema_to_json(spec.settings),
+                    "appearance": dict(spec.appearance),
                 }
                 for spec in manifest.cards
             )

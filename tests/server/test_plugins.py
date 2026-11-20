@@ -1354,6 +1354,13 @@ class TestStaticActions:
         assert_that(actions).contains_key(_STATIC_ACTION)
         assert_that(actions[_STATIC_ACTION]["settings_schema"]).is_equal_to([])
 
+    def test_card_listing_carries_the_manifest_appearance(self, env):
+        actions = {a["card_uuid"]: a for a in env.manager.list_cards()}
+
+        assert_that(actions[_STATIC_ACTION]["appearance"]).is_equal_to(
+            _STATIC_MANIFEST["contributes"]["actions"][0]["appearance"]
+        )
+
 
 _STATIC_MANIFEST_DEFAULTS = _STATIC_MANIFEST["contributes"]["actions"][0]["appearance"]
 
