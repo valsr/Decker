@@ -586,14 +586,26 @@ class TestPageRefresh:  # pylint: disable=protected-access
     def test_pages_changed_for_active_device_requests_refresh(self):
         self.manager._on_server_event("pages_changed", json.dumps({"device_id": "dev1"}))
 
-        assert_that(self.manager._device_refresh_requested.is_set()).is_true()
+        assert_that(self.manager._layout_refresh_requested.is_set()).is_true()
+        assert_that(self.manager._device_refresh_requested.is_set()).is_false()
         assert_that(self.manager._wake_event.is_set()).is_true()
         self.conn.root.pages_list.assert_not_called()  # fetched later on the worker thread
+
+    def test_worker_layout_refresh_skips_rules_and_screensaver(self):
+        self.manager.request_layout_refresh()
+        with patch("decker.client.connection_manager._HEARTBEAT_INTERVAL_S", 3600):
+            self.manager._run_once(last_heartbeat=time.monotonic())
+
+        self.conn.root.pages_list.assert_called_once_with("dev1")
+        self.conn.root.key_get_states.assert_called_once_with("dev1")
+        self.conn.root.app_rules_list.assert_not_called()
+        self.conn.root.screensaver_get.assert_not_called()
 
     def test_pages_changed_for_other_device_is_ignored(self):
         self.manager._on_server_event("pages_changed", json.dumps({"device_id": "other"}))
 
         assert_that(self.manager._device_refresh_requested.is_set()).is_false()
+        assert_that(self.manager._layout_refresh_requested.is_set()).is_false()
 
     def test_worker_handles_refresh_request(self):
         self.manager.request_device_refresh()
@@ -714,7 +726,7 @@ class TestProfileRefresh:  # pylint: disable=protected-access
     def test_profiles_changed_for_active_device_requests_refresh(self):
         self.manager._on_server_event("profiles_changed", json.dumps({"device_id": "dev1"}))
 
-        assert_that(self.manager._device_refresh_requested.is_set()).is_true()
+        assert_that(self.manager._layout_refresh_requested.is_set()).is_true()
 
     def test_profiles_changed_for_other_device_is_ignored(self):
         self.manager._on_server_event("profiles_changed", json.dumps({"device_id": "other"}))

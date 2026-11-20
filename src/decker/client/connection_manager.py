@@ -103,6 +103,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._wake_event = threading.Event()
         self._reconnect_requested = threading.Event()
         self._device_refresh_requested = threading.Event()
+        self._layout_refresh_requested = threading.Event()
         self._actions_refresh_requested = threading.Event()
         self._devices_refresh_requested = threading.Event()
         self._rules_refresh_requested = threading.Event()
@@ -153,6 +154,11 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._device_refresh_requested.set()
         self._wake_event.set()
 
+    def request_layout_refresh(self) -> None:
+        """Re-fetch only the active device's profiles, pages and key faces (what a page or profile switch changes)."""
+        self._layout_refresh_requested.set()
+        self._wake_event.set()
+
     def request_devices_refresh(self) -> None:
         """Re-fetch the device list (and so notice a device that went away or came back) on the worker thread."""
         self._devices_refresh_requested.set()
@@ -193,7 +199,11 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             return last_heartbeat
         if self._device_refresh_requested.is_set():
             self._device_refresh_requested.clear()
+            self._layout_refresh_requested.clear()
             self._refresh_active_device()
+        elif self._layout_refresh_requested.is_set():
+            self._layout_refresh_requested.clear()
+            self._refresh_layout()
         if self._devices_refresh_requested.is_set():
             self._devices_refresh_requested.clear()
             self._refresh_devices()
@@ -366,6 +376,11 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         device_id = _active_device_id()
         if device_id is not None:
             self.refresh_screensaver(device_id)
+        self._refresh_key_display_states()
+
+    def _refresh_layout(self) -> None:
+        self._refresh_profiles()
+        self._refresh_pages()
         self._refresh_key_display_states()
 
     def _refresh_pages(self) -> None:
@@ -614,10 +629,13 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
             EventManager.get().push(WindowPickedEvent(window=_parse_window(data.get("window"))))
 
     def _on_layout_changed(self, event_type: str, data: dict[str, Any]) -> None:
+        active = data.get("device_id") == _active_device_id()
         if event_type == "devices_changed":
             self.request_devices_refresh()  # a device went away or came back, whichever device it was
-        if data.get("device_id") == _active_device_id():
-            self.request_device_refresh()
+            if active:
+                self.request_device_refresh()
+        elif active:
+            self.request_layout_refresh()
 
     def _close_connection(self) -> None:
         self.state = ServerState.DISCONNECTED

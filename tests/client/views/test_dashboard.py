@@ -680,6 +680,7 @@ class TestPages:  # pylint: disable=protected-access
         view, cm = self._view(tmp_path)
 
         view._page_tabs.tab_bar.setCurrentIndex(1)
+        view._bridge.join()
 
         cm.call.assert_called_once_with("page_activate", "dev1", "p2")
 
@@ -688,6 +689,8 @@ class TestPages:  # pylint: disable=protected-access
         cm.call.return_value = False
 
         view._page_tabs.tab_bar.setCurrentIndex(1)
+        view._bridge.join()
+        qapp.processEvents()
 
         assert_that(view._page_tabs.current_page_id).is_equal_to("p1")
 
