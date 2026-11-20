@@ -305,17 +305,29 @@ def test_preview_only_when_visible_and_not_on_own_echo(qapp, rpc):
     panel.hide()
 
 
+def _content_button(panel, index):
+    button = panel._content_buttons.button(index)
+    assert button is not None
+    return button
 
 
 def _device(device_id, serial="SER1"):
     return DeviceHardwareInfo(
-        id=device_id, type="Stream Deck XL", vendor_id=0x0FD9, product_id=0x006C, num_keys=32, serial=serial, firmware="1.2.3"
+        id=device_id,
+        type="Stream Deck XL",
+        vendor_id=0x0FD9,
+        product_id=0x006C,
+        num_keys=32,
+        serial=serial,
+        firmware="1.2.3",
     )
 
 
 def test_device_picker_lists_devices_and_edits_the_picked_one(qapp, rpc):
     devices = [_device(DEVICE), _device("other", "SER2")]
-    panel = ScreensaverPanel(device_id=lambda: DEVICE, rpc=lambda: rpc, host=lambda: "127.0.0.1", devices=lambda: devices)
+    panel = ScreensaverPanel(
+        device_id=lambda: DEVICE, rpc=lambda: rpc, host=lambda: "127.0.0.1", devices=lambda: devices
+    )
     panel.refresh_device()
 
     assert_that([panel._device_combo.itemData(i) for i in range(panel._device_combo.count())]).is_equal_to(
@@ -342,10 +354,10 @@ def test_content_selector_shows_only_the_rows_it_needs(qapp, rpc):
     panel = _make(qapp, rpc)
     visible = lambda name: not panel._row_widget(name).isHidden()  # noqa: E731
 
-    panel._content_buttons.button(0).click()
+    _content_button(panel, 0).click()
     assert_that([visible(n) for n in ("image_path", "folder_path", "scaling")]).is_equal_to([False, False, False])
-    panel._content_buttons.button(1).click()
+    _content_button(panel, 1).click()
     assert_that([visible(n) for n in ("image_path", "folder_path", "scaling")]).is_equal_to([True, False, True])
-    panel._content_buttons.button(2).click()
+    _content_button(panel, 2).click()
     assert_that([visible(n) for n in ("image_path", "folder_path", "gallery_mode")]).is_equal_to([False, True, True])
     assert_that(panel._fields["content"].currentData()).is_equal_to("gallery")

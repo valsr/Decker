@@ -14,11 +14,11 @@ from decker.animation.factory import AnimationFactory
 from decker.common.error import DeckNotOpenedError
 from decker.server.devices import Device
 from tests.server.animation_fixture import (
-    opened_deck_manager,
     WRITER_THREAD,
     WriteLog,
     lifecycle,
     make_spec,
+    opened_deck_manager,
     stateful_deck,
     wait_until,
 )

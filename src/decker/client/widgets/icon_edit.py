@@ -39,7 +39,11 @@ class _ClickLabel(QLabel):
 
     def mouseReleaseEvent(self, ev: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
         """Emit ``clicked`` for a left click inside the label."""
-        if ev is not None and ev.button() == Qt.MouseButton.LeftButton and self.rect().contains(ev.position().toPoint()):
+        if (
+            ev is not None
+            and ev.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(ev.position().toPoint())
+        ):
             self.clicked.emit()
         super().mouseReleaseEvent(ev)
 

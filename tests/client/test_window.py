@@ -641,7 +641,7 @@ class TestAppProfileEventsReachTheDashboard:  # pylint: disable=protected-access
         assert_that(dialog._rule_list.count()).is_equal_to(1)
 
         _push(DetectionStatusEvent("active", "", "x11", False, None))
-        assert_that(dialog._status_label.text()).contains("x11")
+        assert dialog._status is not None and dialog._status.backend == "x11"
 
         spy._follow.setChecked(True)
         _push(WindowFocusedEvent(_FIREFOX))

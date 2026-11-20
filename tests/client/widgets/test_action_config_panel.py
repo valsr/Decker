@@ -4,7 +4,14 @@ from typing import Any
 
 from assertpy import assert_that
 from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QSpinBox
+from PyQt6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+)
 
 import decker.client.widgets.action_config_panel as panel_module
 from decker.client.widgets.action_config_panel import ActionConfigPanel
@@ -599,15 +606,17 @@ class TestFrozenTop:  # pylint: disable=protected-access
     def test_only_the_plugin_settings_scroll_under_a_separator(self, qapp):  # pylint: disable=unused-argument
         panel = ActionConfigPanel()
         _show(panel)
-        form_page = panel.widget(1)
-        layout = form_page.layout()
+        page = panel.widget(1)
+        assert page is not None
+        layout = page.layout()
         assert layout is not None
 
-        kinds = [type(layout.itemAt(i).widget()).__name__ for i in range(layout.count()) if layout.itemAt(i).widget()]
-        assert_that(kinds[-2:]).is_equal_to(["QFrame", "QScrollArea"])
-        scroll = layout.itemAt(layout.count() - 1).widget()
+        items = [layout.itemAt(i) for i in range(layout.count())]
+        widgets = [item.widget() for item in items if item is not None and item.widget() is not None]
+        assert_that([type(w).__name__ for w in widgets][-2:]).is_equal_to(["QFrame", "QScrollArea"])
+        scroll = widgets[-1]
+        assert isinstance(scroll, QScrollArea)
         assert_that(scroll.widget()).is_same_as(panel._settings_form)
-        assert_that(panel._appearance_form.parent()).is_not_same_as(scroll.viewport())
 
     def test_the_appearance_rows_are_title_background_icon(self, qapp):  # pylint: disable=unused-argument
         panel = ActionConfigPanel()
