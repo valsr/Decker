@@ -35,6 +35,7 @@ _PREVIEW_DEBOUNCE_MS = 400
 _DEVICE_POLL_MS = 1000
 _REMOTE_HINT = "Only available when the client runs on the server's machine"
 _NO_DEVICE_HINT = "Connect a device to configure its brightness and screensaver"
+_FETCH_FAILED_HINT = "Could not load this device's settings from the server; retrying"
 _LIVE_HINT = "Changes on this tab are applied immediately; the Apply button does not affect them."
 _CONTENT = ("none", "image", "gallery")
 _SCALING = ("center", "stretch")
@@ -173,11 +174,13 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         self._base: ScreensaverSettings = _DEFAULTS
         self._active = False
         self._loading = False
+        self._fetch_failed = False
+        self._loopback_cache: dict[str, bool] = {}
         self._dirty: set[str] = set()
         self._fields: dict[str, Any] = {}
         self._build_controls()
         self._build_layout()
-        self._apply_timer = self._single_shot(self.flush)
+        self._apply_timer = self._single_shot(self._flush_quietly)
         self._preview_timer = self._single_shot(self.refresh_preview)
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self.refresh_device)
@@ -191,6 +194,7 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         self._device = device
         self._dirty.clear()
         self._apply_timer.stop()
+        self._fetch_failed = False
         event = self._rpc_call("screensaver_get", None) if device else None
         if isinstance(event, ScreensaverSettingsEvent):
             self._load(event.settings, force=True)
@@ -198,8 +202,12 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         else:
             self._load(_DEFAULTS, force=True)
             self._set_state(False, "")
+            if device:
+                # Leave the device unset so the next poll retries; editing defaults would overwrite real settings.
+                self._device = None
+                self._fetch_failed = True
         self._apply_enabled_states()
-        self._preview_timer.start(_PREVIEW_DEBOUNCE_MS)
+        self._schedule_preview()
 
     def handle_event(self, event: ScreensaverSettingsEvent | ScreensaverStateEvent) -> None:
         """Resync from a screensaver event for the active device."""
@@ -207,9 +215,11 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         if self._device is None or getattr(event, "device_id", None) != self._device:
             return
         if isinstance(event, ScreensaverSettingsEvent):
+            changed = sanitize_settings(event.settings) != self._base
             self._load(event.settings, force=False)
             self._set_state(bool(event.active), str(event.last_error or ""))
-            self._preview_timer.start(_PREVIEW_DEBOUNCE_MS)
+            if changed:
+                self._schedule_preview()
         elif isinstance(event, ScreensaverStateEvent):
             self._set_state(bool(event.active), self._last_error_label.text())
 
@@ -217,12 +227,12 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         """The full settings as the controls currently show them."""
         return build_settings(self._control_values(), self._base)
 
-    def flush(self) -> None:
-        """Send the current settings to the server now."""
+    def flush(self) -> bool:
+        """Send the current settings to the server now; False when the server rejected them."""
         self._apply_timer.stop()
         rpc = self._rpc_fn()
         if self._device is None or rpc is None:
-            return
+            return True
         settings = self.current_settings()
         ok, error = rpc.screensaver_set(self._device, settings)
         self._dirty.clear()
@@ -232,6 +242,7 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         else:
             self._set_error_label.setText(error or "The server rejected these settings")
         self._set_error_label.setVisible(bool(self._set_error_label.text()))
+        return ok
 
     def refresh_preview(self) -> None:
         """Render the draft settings into the preview pane."""
@@ -253,11 +264,25 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         super().showEvent(a0)
         self.refresh_device()
         self._poll_timer.start(_DEVICE_POLL_MS)
+        self._preview_timer.start(_PREVIEW_DEBOUNCE_MS)
 
     def hideEvent(self, a0: Any) -> None:  # pylint: disable=invalid-name
         """Stop tracking the active device while hidden."""
         self._poll_timer.stop()
         super().hideEvent(a0)
+
+    def _flush_quietly(self) -> None:
+        self.flush()
+
+    def _schedule_preview(self) -> None:
+        if self.isVisible() and not self._preview_timer.isActive():
+            self._preview_timer.start(_PREVIEW_DEBOUNCE_MS)
+
+    def _is_remote(self) -> bool:
+        host = self._host_fn()
+        if host not in self._loopback_cache:
+            self._loopback_cache[host] = is_loopback_host(host)
+        return not self._loopback_cache[host]
 
     def _single_shot(self, slot: Callable[[], None]) -> QTimer:
         timer = QTimer(self)
@@ -288,12 +313,18 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         rpc = self._rpc_fn()
         if self._device is None or rpc is None:
             return
+        if not self._active and (self._apply_timer.isActive() or self._dirty) and not self.flush():
+            return
         if self._active:
             ok = rpc.screensaver_deactivate(self._device)
         else:
             ok = rpc.screensaver_activate(self._device)
         if ok:
             self._set_state(not self._active, "")
+        else:
+            verb = "wake" if self._active else "activate"
+            self._set_error_label.setText(f"The server could not {verb} the screensaver")
+            self._set_error_label.setVisible(True)
 
     def _build_controls(self) -> None:
         f = self._fields
@@ -451,12 +482,19 @@ class ScreensaverPanel(QWidget):  # pylint: disable=too-many-instance-attributes
         elif isinstance(widget, QLineEdit):
             widget.setText(str(value))
 
+    def _hint_text(self, has_device: bool, remote: bool) -> str:
+        if self._fetch_failed:
+            return _FETCH_FAILED_HINT
+        if not has_device:
+            return _NO_DEVICE_HINT
+        return _REMOTE_HINT if remote else ""
+
     def _apply_enabled_states(self) -> None:
         has_device = self._device is not None and self._rpc_fn() is not None
-        remote = not is_loopback_host(self._host_fn())
+        remote = self._is_remote()
         self._form_host.setEnabled(has_device)
         self._activate_btn.setEnabled(has_device)
-        self._hint_label.setText(_NO_DEVICE_HINT if not has_device else (_REMOTE_HINT if remote else ""))
+        self._hint_label.setText(self._hint_text(has_device, remote))
         self._hint_label.setVisible(bool(self._hint_label.text()))
         paths_ok = not remote
         for name, button in (("image_path", self._image_browse), ("folder_path", self._folder_browse)):

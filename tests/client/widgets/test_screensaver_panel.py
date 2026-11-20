@@ -27,28 +27,34 @@ def _png() -> bytes:
 
 class FakeRpc:
     def __init__(self) -> None:
-        self.initial: ScreensaverSettingsEvent | None = None
+        self.initial: ScreensaverSettingsEvent | None = ScreensaverSettingsEvent(
+            DEVICE, ScreensaverSettings(), False, ""
+        )
         self.set_calls: list[ScreensaverSettings] = []
         self.set_result: tuple[bool, str] = (True, "")
         self.preview_result: tuple[bytes | None, str] = (None, "no preview")
         self.calls: list[str] = []
+        self.preview_calls = 0
+        self.activate_result = True
 
     def screensaver_get(self, device_id: str) -> ScreensaverSettingsEvent | None:
         return self.initial
 
     def screensaver_set(self, device_id: str, settings: ScreensaverSettings) -> tuple[bool, str]:
         self.set_calls.append(settings)
+        self.calls.append("set")
         return self.set_result
 
     def screensaver_activate(self, device_id: str) -> bool:
         self.calls.append("activate")
-        return True
+        return self.activate_result
 
     def screensaver_deactivate(self, device_id: str) -> bool:
         self.calls.append("deactivate")
         return True
 
     def screensaver_preview(self, device_id: str, settings: ScreensaverSettings) -> tuple[bytes | None, str]:
+        self.preview_calls += 1
         return self.preview_result
 
 
@@ -256,3 +262,87 @@ def test_preview_shows_image_or_error(qapp, rpc):
     panel.refresh_preview()
 
     assert_that(panel._preview.pixmap().isNull()).is_false()
+
+
+def test_failed_fetch_keeps_panel_disabled_then_retries(qapp, rpc):
+    rpc.initial = None
+    panel = ScreensaverPanel(device_id=lambda: DEVICE, rpc=lambda: rpc, host=lambda: "127.0.0.1")
+    panel.refresh_device()
+
+    assert_that(panel._form_host.isEnabled()).is_false()
+    assert_that(panel._hint_label.text()).contains("Could not load")
+    panel._fields["brightness"].setValue(5)
+    panel.flush()
+    assert_that(rpc.set_calls).is_empty()
+
+    rpc.initial = _event(ScreensaverSettings(brightness=77))
+    panel.refresh_device()
+
+    assert_that(panel._form_host.isEnabled()).is_true()
+    assert_that(panel._fields["brightness"].value()).is_equal_to(77)
+    assert_that(panel._hint_label.text()).is_empty()
+
+
+def test_loopback_result_cached_per_host(qapp, rpc, monkeypatch):
+    lookups: list[str] = []
+    from decker.client.widgets import screensaver_panel as module  # pylint: disable=import-outside-toplevel
+
+    def fake(host: str) -> bool:
+        lookups.append(host)
+        return True
+
+    monkeypatch.setattr(module, "is_loopback_host", fake)
+    panel = _make(qapp, rpc, host="server.example")
+    for value in range(5):
+        panel._fields["brightness"].setValue(10 + value)
+
+    assert_that(lookups).is_equal_to(["server.example"])
+
+
+def test_preview_only_when_visible_and_not_on_own_echo(qapp, rpc):
+    panel = _make(qapp, rpc)
+    panel.handle_event(_event(ScreensaverSettings(brightness=20)))
+    assert_that(panel._preview_timer.isActive()).is_false()
+
+    panel.show()
+    assert_that(panel._preview_timer.isActive()).is_true()
+    panel.refresh_preview()
+    assert_that(rpc.preview_calls).is_equal_to(1)
+
+    panel._fields["brightness"].setValue(30)
+    panel.flush()
+    panel._preview_timer.stop()
+    panel.handle_event(_event(ScreensaverSettings(brightness=30)))
+    assert_that(panel._preview_timer.isActive()).is_false()
+
+    panel.handle_event(_event(ScreensaverSettings(brightness=55)))
+    assert_that(panel._preview_timer.isActive()).is_true()
+    panel.hide()
+
+
+def test_activate_flushes_pending_edit_first(qapp, rpc):
+    panel = _make(qapp, rpc)
+    panel._fields["brightness"].setValue(33)
+
+    panel._activate_btn.click()
+
+    assert_that(rpc.calls).is_equal_to(["set", "activate"])
+    assert_that(rpc.set_calls[0].brightness).is_equal_to(33)
+
+    other = _make(qapp, rpc)
+    rpc.calls.clear()
+    rpc.set_result = (False, "bad value")
+    other._fields["brightness"].setValue(34)
+    other._activate_btn.click()
+    assert_that(rpc.calls).is_equal_to(["set"])
+    assert_that(other._set_error_label.text()).is_equal_to("bad value")
+
+
+def test_refused_activate_shows_message(qapp, rpc):
+    panel = _make(qapp, rpc)
+    rpc.activate_result = False
+
+    panel._activate_btn.click()
+
+    assert_that(panel._set_error_label.text()).contains("could not activate")
+    assert_that(panel._activate_btn.text()).is_equal_to("Activate now")
