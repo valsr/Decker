@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "id": "com.decker.blank",
   "name": "Blank",
   "version": "0.6.0",
@@ -8,7 +8,7 @@
   "icon": "icons/blank",
   "category": "Utilities",
   "contributes": {
-    "actions": [
+    "cards": [
       {
         "id": "com.decker.blank.blank",
         "name": "Blank",

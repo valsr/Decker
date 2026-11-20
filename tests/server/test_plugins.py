@@ -27,7 +27,7 @@ from decker.plugin.protocol import Message
 from decker.plugin.runtime.supervisor import SupervisorPolicy
 from decker.plugin.settings_schema import parse_settings_schema
 from decker.plugin.settings_store import PluginSettingsStore
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.appearance import (
     PACK_ICON_SCALE,
     compose_key_image,
@@ -134,8 +134,8 @@ _FAST = SupervisorPolicy(idle_grace_s=30.0, backoff_s=(0.05,), max_crashes=1, pi
 _RESTARTING = SupervisorPolicy(idle_grace_s=30.0, backoff_s=(0.05,), max_crashes=5, ping_interval_s=30.0)
 
 
-def _target(plugin: str, action: str, context: str = "ctx-1", key: int = 0) -> ActionTarget:
-    return ActionTarget(plugin, action, context, "dev-1", key)
+def _target(plugin: str, action: str, context: str = "ctx-1", key: int = 0) -> CardTarget:
+    return CardTarget(plugin, action, context, "dev-1", key)
 
 
 COUNTER_TARGET = _target(_COUNTER, _COUNTER_ACTION)
@@ -285,7 +285,7 @@ class Env:
         self.pages = FakePages()
         self.dm = device_manager if device_manager is not None else FakeDeviceManager()
         self.bus = FakeBus()
-        self.persisted: list[tuple[ActionTarget, dict]] = []
+        self.persisted: list[tuple[CardTarget, dict]] = []
         self.manager = PluginManager(self.plugins_dir, policy, PluginSettingsStore(tmp_path / "plugins.db"))
         context = SimpleNamespace(
             device_manager=self.dm,
@@ -336,12 +336,12 @@ def restarting_env_fixture(tmp_path):
 
 class TestListing:
     def test_list_actions_includes_settings_schema_and_tooltip(self, env):
-        actions = {a["action_uuid"]: a for a in env.manager.list_actions()}
+        actions = {a["card_uuid"]: a for a in env.manager.list_cards()}
 
         rec = actions[_REC_ACTION]
         assert_that(rec["plugin_uuid"]).is_equal_to("com.decker.rec")
         assert_that(rec["plugin_name"]).is_equal_to("Recorder")
-        assert_that(rec["action_name"]).is_equal_to("Show")
+        assert_that(rec["card_name"]).is_equal_to("Show")
         assert_that(rec["tooltip"]).is_equal_to("Shows things")
         assert_that(rec["icon_b64"]).is_equal_to("")
         assert_that(rec["settings_schema"][0]).is_equal_to(
@@ -355,10 +355,10 @@ class TestListing:
         json.dumps(counter["settings_schema"])
 
     def test_action_icons_are_read_once(self, env, monkeypatch):
-        env.manager.list_actions()
+        env.manager.list_cards()
         monkeypatch.setattr("decker.server.plugins.read_icon", MagicMock(side_effect=AssertionError("re-read")))
 
-        assert_that(env.manager.list_actions()).is_not_empty()
+        assert_that(env.manager.list_cards()).is_not_empty()
 
     def test_installed_plugins_are_loaded(self, env):
         plugins = {p.manifest.id for p in env.manager.plugins()}
@@ -371,7 +371,7 @@ class TestListing:
     def test_key_for_missing_plugin_keeps_assignment_and_label(self, env):
         missing = _target("com.example.gone", "com.example.gone.act")
 
-        env.manager.activate_action(missing)
+        env.manager.activate_card(missing)
 
         assert_that(env.label()).is_equal_to("Plugin missing")
         assert_that(env.dm.cleared).contains(0)
@@ -380,11 +380,11 @@ class TestListing:
     def test_missing_label_is_cleared_when_the_plugin_is_installed(self, env):
         removed = next(p for p in env.manager.plugins() if p.manifest.id == "com.decker.rec")
         env.manager.remove_plugin("com.decker.rec")
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         assert_that(env.label()).is_equal_to("Plugin missing")
 
         env.manager.add_plugin(removed)
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
 
         assert_that(env.label()).is_equal_to("")
         assert _wait_for(lambda: env.received("will_appear"))
@@ -394,7 +394,7 @@ class TestListing:
             PluginLoadFailedEvent("com.example.broken", "bad manifest")
         )  # pylint: disable=protected-access
 
-        env.manager.activate_action(_target("com.example.broken", "com.example.broken.act"))
+        env.manager.activate_card(_target("com.example.broken", "com.example.broken.act"))
 
         assert_that(env.label()).is_equal_to("Plugin failed")
 
@@ -402,12 +402,12 @@ class TestListing:
         assert_that(env.manager.complete_settings(REC_TARGET, {"n": "3", "junk": 1})).is_equal_to({"n": 3, "t": "x"})
 
     def test_remove_plugin_forgets_it_and_its_live_instances(self, env):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
 
         env.manager.remove_plugin("com.decker.rec")
 
         assert_that(env.manager.live_targets("com.decker.rec")).is_empty()
-        assert_that(env.manager.list_actions()).extracting("action_uuid").does_not_contain(_REC_ACTION)
+        assert_that(env.manager.list_cards()).extracting("card_uuid").does_not_contain(_REC_ACTION)
 
     def test_add_plugin_makes_actions_available(self, env):
         removed = next(p for p in env.manager.plugins() if p.manifest.id == "com.decker.rec")
@@ -415,7 +415,7 @@ class TestListing:
 
         env.manager.add_plugin(removed)
 
-        assert_that(env.manager.list_actions()).extracting("action_uuid").contains(_REC_ACTION)
+        assert_that(env.manager.list_cards()).extracting("card_uuid").contains(_REC_ACTION)
 
     def test_registering_a_mismatching_plugin_logs_a_warning_but_loads_it(
         self, env, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
@@ -437,14 +437,14 @@ class TestWillAppear:
     def test_activate_sends_will_appear_with_complete_settings(self, env):
         env.manager.store_settings(REC_TARGET, {"n": "7", "junk": True})
 
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
 
         assert _wait_for(lambda: env.received("will_appear"))
         message = env.received("will_appear")[0]
         assert_that(message["context"]).is_equal_to("ctx-1")
         assert_that(message["payload"]).is_equal_to(
             {
-                "action": _REC_ACTION,
+                "card": _REC_ACTION,
                 "device": "dev-1",
                 "key": {"index": 0, "column": 0, "row": 0},
                 "settings": {"n": 7, "t": "x"},
@@ -454,28 +454,28 @@ class TestWillAppear:
         assert_that(env.received("hello")[0]["payload"]["plugin_id"]).is_equal_to("com.decker.rec")
 
     def test_key_column_and_row_come_from_the_device_layout(self, env):
-        env.manager.activate_action(_target("com.decker.rec", _REC_ACTION, "ctx-5", key=4))
+        env.manager.activate_card(_target("com.decker.rec", _REC_ACTION, "ctx-5", key=4))
 
         assert _wait_for(lambda: env.received("will_appear"))
         assert_that(env.received("will_appear")[0]["payload"]["key"]).is_equal_to({"index": 4, "column": 1, "row": 1})
 
     def test_only_one_will_appear_on_first_start(self, env):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         assert _wait_for(lambda: env.received("will_appear"))
         time.sleep(0.3)
 
         assert_that(env.received("will_appear")).is_length(1)
 
     def test_unknown_action_is_ignored(self, env):
-        env.manager.activate_action(_target("com.decker.rec", "com.decker.rec.nope"))
+        env.manager.activate_card(_target("com.decker.rec", "com.decker.rec.nope"))
 
         assert_that(env.manager.live_targets("com.decker.rec")).is_empty()
 
     def test_deactivate_sends_will_disappear_and_releases(self, env):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         assert _wait_for(lambda: env.received("will_appear"))
 
-        env.manager.deactivate_action(REC_TARGET)
+        env.manager.deactivate_card(REC_TARGET)
 
         assert _wait_for(lambda: env.received("will_disappear"))
         assert_that(env.received("will_disappear")[0]["context"]).is_equal_to("ctx-1")
@@ -484,7 +484,7 @@ class TestWillAppear:
         assert_that(entry.refs).is_equal_to(0)
 
     def test_ready_after_restart_replays_will_appear_for_live_contexts(self, restarting_env):
-        restarting_env.manager.activate_action(REC_TARGET)
+        restarting_env.manager.activate_card(REC_TARGET)
         assert _wait_for(lambda: restarting_env.received("will_appear"))
 
         psutil.Process(restarting_env.process_pid("com.decker.rec")).kill()
@@ -493,7 +493,7 @@ class TestWillAppear:
         assert_that(restarting_env.received("will_appear")[1]["context"]).is_equal_to("ctx-1")
 
     def test_device_connected_sent_after_ready(self, env):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
 
         assert _wait_for(lambda: env.received("device_connected"))
         assert_that(env.received("device_connected")[0]["payload"]).is_equal_to({"device": "dev-1"})
@@ -503,7 +503,7 @@ class TestWillAppear:
 
 class TestCounterEndToEnd:
     def test_press_reaches_plugin_and_image_reaches_sink(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         first = env.image()
 
@@ -516,7 +516,7 @@ class TestCounterEndToEnd:
 
     def test_set_gestures_changes_recognizer_registration(self, env):
         env.manager.store_settings(COUNTER_TARGET, {"double_step": 5})
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
         assert _wait_for(lambda: Gesture.DOUBLE_PRESS in live.gestures)
@@ -530,13 +530,13 @@ class TestCounterEndToEnd:
         assert _wait_for(lambda: env.image() != first)
 
     def test_press_is_immediate_without_double_step(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
         assert_that(live.gestures).does_not_contain(Gesture.DOUBLE_PRESS)
 
     def test_settings_changed_is_applied_and_redraws(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         first = env.image()
 
@@ -548,9 +548,9 @@ class TestCounterEndToEnd:
         assert _wait_for(lambda: env.image() != first)
 
     def test_set_image_for_disappeared_context_is_dropped(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
-        env.manager.deactivate_action(COUNTER_TARGET)
+        env.manager.deactivate_card(COUNTER_TARGET)
         sent_before = list(env.dm.hardware_images)
         image_before = env.image()
         stale = base64.b64encode(b"stale-image").decode()
@@ -563,7 +563,7 @@ class TestCounterEndToEnd:
         assert_that(env.image()).is_equal_to(image_before)
 
     def test_set_image_from_another_plugin_is_dropped(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         sent_before = list(env.dm.hardware_images)
 
@@ -574,7 +574,7 @@ class TestCounterEndToEnd:
         assert_that(env.dm.hardware_images).is_equal_to(sent_before)
 
     def test_null_image_falls_back_to_the_bare_composition(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
 
         env.manager._on_plugin_message(  # pylint: disable=protected-access
@@ -584,7 +584,7 @@ class TestCounterEndToEnd:
         assert_that(env.image()).is_equal_to(_BARE_COUNTER)
 
     def test_invalid_base64_image_is_dropped(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         sent_before = list(env.dm.hardware_images)
 
@@ -625,7 +625,7 @@ def _install_pack(env, tmp_path) -> InstalledPlugin:
 
 def _icon_env(env, tmp_path):
     _install_pack(env, tmp_path)
-    env.manager.activate_action(COUNTER_TARGET)
+    env.manager.activate_card(COUNTER_TARGET)
     assert _wait_for(env.counter_drawn)
     live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
     live.plugin_image = None
@@ -698,7 +698,7 @@ class TestIconOverride:
 class TestPackChangesRedrawOverrides:
     def test_uninstalling_the_pack_redraws_a_key_that_uses_it(self, env, tmp_path):
         plugin = _install_pack(env, tmp_path)
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         env.manager._live["ctx-1"].plugin_image = None  # pylint: disable=protected-access
         env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#ff0000"}})
@@ -711,7 +711,7 @@ class TestPackChangesRedrawOverrides:
     def test_installing_the_pack_redraws_a_key_waiting_for_it(self, env, tmp_path):
         plugin = _install_pack(env, tmp_path)
         env.manager.remove_plugin(plugin.manifest.id)
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         env.manager._live["ctx-1"].plugin_image = None  # pylint: disable=protected-access
         env.manager.set_appearance(COUNTER_TARGET, {"icon": {"ref": _DOT_REF, "color": "#ff0000"}})
@@ -860,13 +860,13 @@ class TestSetImageIcon:
 
 class TestAppearanceComposition:
     def test_counter_key_is_blue_by_default(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
 
         assert_that(_pixel(env.image(), 2, 2)).is_equal_to((31, 97, 141))
 
     def test_counter_no_longer_sets_title(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         env.manager.dispatch_key_down(COUNTER_TARGET)
         env.manager.dispatch_key_up(COUNTER_TARGET)
@@ -875,7 +875,7 @@ class TestAppearanceComposition:
         assert_that(env.label()).is_equal_to("")
 
     def test_appearance_change_recomposes_key_without_plugin_round_trip(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         sent = len(env.dm.hardware_images)
         received = len(env.received())
@@ -887,7 +887,7 @@ class TestAppearanceComposition:
         assert_that(len(env.received())).is_equal_to(received)
 
     def test_initial_appearance_is_applied_on_activation(self, env):
-        env.manager.activate_action(COUNTER_TARGET, {"background": "#00ff00"})
+        env.manager.activate_card(COUNTER_TARGET, {"background": "#00ff00"})
 
         assert_that(_pixel(env.dm.hardware_images[0][1], 2, 2)).is_equal_to((0, 255, 0))
 
@@ -897,7 +897,7 @@ class TestAppearanceComposition:
         assert_that(env.dm.hardware_images).is_empty()
 
     def test_plugin_title_is_composed_under_appearance_title(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         env.manager._on_plugin_message(  # pylint: disable=protected-access
             _COUNTER, Message("set_title", "ctx-1", {"title": "WWWW"})
@@ -907,10 +907,10 @@ class TestAppearanceComposition:
         assert_that(env.image()).is_not_equal_to(_BARE_COUNTER)
 
     def test_state_image_used_until_plugin_sets_image(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
-        live.action = replace(live.action, states=(StateSpec(image="icons/counter", title="S"),))
+        live.card = replace(live.card, states=(StateSpec(image="icons/counter", title="S"),))
         live.plugin_image = None
         env.manager.set_appearance(COUNTER_TARGET, {})
         with_state = env.image()
@@ -923,10 +923,10 @@ class TestAppearanceComposition:
         assert_that(env.image()).is_not_equal_to(with_state)
 
     def test_set_state_selects_the_state_image(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
-        live.action = replace(live.action, states=(StateSpec(), StateSpec(title="Two")))
+        live.card = replace(live.card, states=(StateSpec(), StateSpec(title="Two")))
         live.plugin_image = None
         env.manager.set_appearance(COUNTER_TARGET, {})
         before = env.image()
@@ -938,7 +938,7 @@ class TestAppearanceComposition:
         assert_that(env.image()).is_not_equal_to(before)
 
     def test_key_state_changed_event_carries_appearance(self, env):
-        env.manager.activate_action(COUNTER_TARGET, {"title": "Hi"})
+        env.manager.activate_card(COUNTER_TARGET, {"title": "Hi"})
 
         event = env.bus.of("key_state_changed")[-1]
 
@@ -970,15 +970,15 @@ class TestComposeFailureIsContained:
         self._failing_first_key(env)
         first, second = REC_TARGET, _target("com.decker.rec", _REC_ACTION, "ctx-2", key=1)
 
-        env.manager.activate_action(first)
-        env.manager.activate_action(second)
+        env.manager.activate_card(first)
+        env.manager.activate_card(second)
 
         assert_that(env.manager._live).contains_key("ctx-1", "ctx-2")  # pylint: disable=protected-access
         assert _wait_for(lambda: {m["context"] for m in env.received("will_appear")} == {"ctx-1", "ctx-2"})
         assert_that(env.image(1)).is_not_none()
 
     def test_set_appearance_with_raising_sink_does_not_raise(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         self._failing_first_key(env)
 
         env.manager.set_appearance(COUNTER_TARGET, {"background": "#ff0000"})
@@ -990,7 +990,7 @@ class TestFailure:
     def test_failed_plugin_keys_marked_and_failure_reported(self, env):
         (env.rec_dir / "crash").write_text("")
 
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
 
         assert _wait_for(lambda: env.label() == "Plugin failed")
         assert_that(env.dm.cleared).contains(0)
@@ -1000,16 +1000,16 @@ class TestFailure:
 
     def test_activating_while_failed_marks_the_key(self, env):
         (env.rec_dir / "crash").write_text("")
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         assert _wait_for(lambda: env.label() == "Plugin failed")
 
-        env.manager.activate_action(_target("com.decker.rec", _REC_ACTION, "ctx-2", key=2))
+        env.manager.activate_card(_target("com.decker.rec", _REC_ACTION, "ctx-2", key=2))
 
         assert _wait_for(lambda: env.label(2) == "Plugin failed")
 
     def test_resaving_settings_retries_failed_plugin(self, env):
         (env.rec_dir / "crash").write_text("")
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         assert _wait_for(lambda: env.label() == "Plugin failed")
         (env.rec_dir / "crash").unlink()
 
@@ -1045,7 +1045,7 @@ class TestPluginRequests:
         )
 
     def test_set_settings_from_plugin_is_validated_and_persisted(self, env):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         assert _wait_for(lambda: env.received("will_appear"))
 
         env.manager._on_plugin_message(  # pylint: disable=protected-access
@@ -1062,7 +1062,7 @@ class TestPluginRequests:
         assert_that(env.received("settings_changed")).is_empty()  # not echoed back
 
     def test_set_gestures_ignores_invalid_values(self, env):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         live = env.manager._live["ctx-1"]  # pylint: disable=protected-access
         assert_that(live.gestures).is_equal_to(frozenset({Gesture.PRESS}))
 
@@ -1077,7 +1077,7 @@ class TestPluginRequests:
         assert_that(live.gestures).is_equal_to(frozenset({Gesture.PRESS, Gesture.LONG_PRESS}))
 
     def test_raw_key_events_and_gestures_are_forwarded(self, env):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         assert _wait_for(lambda: env.received("will_appear"))
 
         env.manager.dispatch_key_down(REC_TARGET)
@@ -1110,7 +1110,7 @@ class TestThreadSafety:
         def read() -> None:
             try:
                 while not stop.is_set():
-                    env.manager.list_actions()
+                    env.manager.list_cards()
                     env.manager.plugins()
                     env.manager.load_failures()
             except BaseException as exc:  # pylint: disable=broad-except
@@ -1127,7 +1127,7 @@ class TestThreadSafety:
         assert_that(errors).is_empty()
 
     def test_no_sink_call_after_deactivate_returns(self, env):
-        env.manager.activate_action(COUNTER_TARGET)
+        env.manager.activate_card(COUNTER_TARGET)
         assert _wait_for(env.counter_drawn)
         calls: list[float] = []
         original = env.manager._sink.set_image  # pylint: disable=protected-access
@@ -1150,7 +1150,7 @@ class TestThreadSafety:
         for thread in threads:
             thread.start()
         time.sleep(0.1)
-        env.manager.deactivate_action(COUNTER_TARGET)
+        env.manager.deactivate_card(COUNTER_TARGET)
         returned = time.monotonic()
         time.sleep(0.1)
         done.set()
@@ -1260,7 +1260,7 @@ class TestLockDiscipline:
             original(device_id, key_index)
 
         env.manager._state_changed_cb = notified  # pylint: disable=protected-access
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         env.manager._on_plugin_message(  # pylint: disable=protected-access
             "com.decker.rec", Message("set_title", "ctx-1", {"title": "T"})
         )
@@ -1271,7 +1271,7 @@ class TestLockDiscipline:
         assert_that(any(pushes)).is_false()
 
     def test_will_appear_carries_the_live_state(self, env):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         assert _wait_for(lambda: env.received("will_appear"))
         env.manager._live["ctx-1"].state = 1  # pylint: disable=protected-access
         env.manager._send_will_appear(env.manager._live["ctx-1"])  # pylint: disable=protected-access
@@ -1280,7 +1280,7 @@ class TestLockDiscipline:
         assert_that(env.received("will_appear")[-1]["payload"]["state"]).is_equal_to(1)
 
     def test_global_settings_changed_uses_the_spec_key(self, env):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         assert _wait_for(lambda: env.received("will_appear"))
         env.manager.update_global_settings("com.decker.rec", {})
         assert _wait_for(lambda: env.received("global_settings_changed"))
@@ -1289,7 +1289,7 @@ class TestLockDiscipline:
 
 class TestStaticActions:
     def test_static_action_draws_its_appearance(self, env):
-        env.manager.activate_action(STATIC_TARGET)
+        env.manager.activate_card(STATIC_TARGET)
 
         image = env.image(1)
         assert_that(_pixel(image, 2, 2)).is_equal_to((0x33, 0x66, 0x99))
@@ -1298,7 +1298,7 @@ class TestStaticActions:
         )
 
     def test_static_action_starts_no_process_and_sends_nothing(self, env):
-        env.manager.activate_action(MIXED_STATIC_TARGET)
+        env.manager.activate_card(MIXED_STATIC_TARGET)
 
         entry = env.manager._supervisor._entries.get("com.t.mixed")  # pylint: disable=protected-access
         assert_that(entry is None or entry.process is None).is_true()
@@ -1306,7 +1306,7 @@ class TestStaticActions:
         assert_that(env.image(2)).is_not_none()
 
     def test_press_and_long_press_on_a_static_key_do_nothing(self, env):
-        env.manager.activate_action(MIXED_STATIC_TARGET)
+        env.manager.activate_card(MIXED_STATIC_TARGET)
 
         env.manager.dispatch_key_down(MIXED_STATIC_TARGET)
         env.manager.dispatch_key_up(MIXED_STATIC_TARGET)
@@ -1317,20 +1317,20 @@ class TestStaticActions:
         assert_that(env.mixed_dir.joinpath("received.log").exists()).is_false()
 
     def test_deactivating_a_static_key_does_not_touch_the_supervisor(self, env):
-        env.manager.activate_action(MIXED_STATIC_TARGET)
+        env.manager.activate_card(MIXED_STATIC_TARGET)
         env.manager._supervisor.release = MagicMock(side_effect=AssertionError("released"))
 
-        env.manager.deactivate_action(MIXED_STATIC_TARGET)
+        env.manager.deactivate_card(MIXED_STATIC_TARGET)
 
         assert_that(env.manager._live).does_not_contain_key("ctx-mixed")  # pylint: disable=protected-access
 
     def test_user_appearance_overrides_the_static_defaults(self, env):
-        env.manager.activate_action(STATIC_TARGET, {"background": "#ff0000"})
+        env.manager.activate_card(STATIC_TARGET, {"background": "#ff0000"})
 
         assert_that(_pixel(env.image(1), 2, 2)).is_equal_to((255, 0, 0))
 
     def test_static_action_in_a_runtime_plugin_does_not_start_the_process(self, env):
-        env.manager.activate_action(MIXED_STATIC_TARGET)
+        env.manager.activate_card(MIXED_STATIC_TARGET)
         env.manager.dispatch_settings_changed(MIXED_STATIC_TARGET)
         time.sleep(0.3)
 
@@ -1338,8 +1338,8 @@ class TestStaticActions:
 
     def test_ready_plugin_does_not_send_will_appear_for_its_static_key(self, env):
         mixed_live = _target("com.t.mixed", "com.t.mixed.live", "ctx-live", 3)
-        env.manager.activate_action(MIXED_STATIC_TARGET)
-        env.manager.activate_action(mixed_live)
+        env.manager.activate_card(MIXED_STATIC_TARGET)
+        env.manager.activate_card(mixed_live)
 
         assert_that(_wait_for(lambda: env.mixed_dir.joinpath("received.log").exists())).is_true()
         time.sleep(0.3)
@@ -1348,7 +1348,7 @@ class TestStaticActions:
         assert_that(contexts).is_equal_to(["ctx-live"])
 
     def test_static_action_listed_in_list_actions(self, env):
-        actions = {a["action_uuid"]: a for a in env.manager.list_actions()}
+        actions = {a["card_uuid"]: a for a in env.manager.list_cards()}
 
         assert_that(actions).contains_key(_STATIC_ACTION)
         assert_that(actions[_STATIC_ACTION]["settings_schema"]).is_equal_to([])
@@ -1359,14 +1359,14 @@ _STATIC_MANIFEST_DEFAULTS = _STATIC_MANIFEST["contributes"]["actions"][0]["appea
 
 class TestTemplates:
     def test_title_template_is_expanded_when_drawn(self, env):
-        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_index}/{page_count}"}})
+        env.manager.activate_card(STATIC_TARGET, {"title": {"text": "{page_index}/{page_count}"}})
 
         assert_that(env.image(1)).is_equal_to(
             compose_key_image(resolve_appearance(_STATIC_MANIFEST_DEFAULTS, {"title": {"text": "2/3"}}), None, "")
         )
 
     def test_unknown_and_escaped_braces_in_the_title(self, env):
-        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{{x}} {nope}"}})
+        env.manager.activate_card(STATIC_TARGET, {"title": {"text": "{{x}} {nope}"}})
 
         assert_that(env.image(1)).is_equal_to(
             compose_key_image(
@@ -1376,7 +1376,7 @@ class TestTemplates:
 
     def test_title_without_pages_keeps_text_literal(self, env):
         env.pages.pages["dev-1"] = []
-        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
+        env.manager.activate_card(STATIC_TARGET, {"title": {"text": "{page_name}"}})
 
         assert_that(env.image(1)).is_equal_to(
             compose_key_image(
@@ -1386,7 +1386,7 @@ class TestTemplates:
 
     def test_plugin_fallback_title_is_not_expanded(self, env):
         live_target = _target("com.decker.rec", _REC_ACTION)
-        env.manager.activate_action(live_target)
+        env.manager.activate_card(live_target)
         assert _wait_for(lambda: env.received("will_appear"))
 
         env.manager._route_context_message(  # pylint: disable=protected-access
@@ -1398,7 +1398,7 @@ class TestTemplates:
 
     def _tpl_settings(self, env, **values):
         env.manager.store_settings(TPL_TARGET, values)
-        env.manager.activate_action(TPL_TARGET)
+        env.manager.activate_card(TPL_TARGET)
         assert _wait_for(lambda: env.received("will_appear"))
         return env.received("will_appear")[-1]["payload"]["settings"]
 
@@ -1498,9 +1498,9 @@ class TestTemplates:
 
 class TestPageRefresh:
     def test_rename_refreshes_title_and_settings(self, env):
-        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
+        env.manager.activate_card(STATIC_TARGET, {"title": {"text": "{page_name}"}})
         env.manager.store_settings(TPL_TARGET, {"label": "{page_name}", "where": "p2"})
-        env.manager.activate_action(TPL_TARGET)
+        env.manager.activate_card(TPL_TARGET)
         assert _wait_for(lambda: env.received("will_appear"))
         before = env.image(1)
 
@@ -1515,7 +1515,7 @@ class TestPageRefresh:
 
     def test_no_duplicate_settings_changed_when_nothing_changed(self, env):
         env.manager.store_settings(TPL_TARGET, {"label": "{page_name}"})
-        env.manager.activate_action(TPL_TARGET)
+        env.manager.activate_card(TPL_TARGET)
         assert _wait_for(lambda: env.received("will_appear"))
 
         env.manager.refresh_page_dependent("dev-1")
@@ -1525,7 +1525,7 @@ class TestPageRefresh:
         assert_that(env.received("settings_changed")).is_empty()
 
     def test_other_devices_are_untouched(self, env):
-        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
+        env.manager.activate_card(STATIC_TARGET, {"title": {"text": "{page_name}"}})
         before = env.image(1)
         env.pages.rename("p2", "Renamed")
 
@@ -1534,7 +1534,7 @@ class TestPageRefresh:
         assert_that(env.image(1)).is_equal_to(before)
 
     def test_keys_without_templates_are_not_recomposed(self, env, monkeypatch):
-        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "plain"}})
+        env.manager.activate_card(STATIC_TARGET, {"title": {"text": "plain"}})
         calls = MagicMock()
         monkeypatch.setattr("decker.server.plugins.compose_key_face", calls)
 
@@ -1543,11 +1543,11 @@ class TestPageRefresh:
         assert_that(calls.call_count).is_equal_to(0)
 
     def test_page_switch_redraws_keys_with_the_new_variables(self, env):
-        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
+        env.manager.activate_card(STATIC_TARGET, {"title": {"text": "{page_name}"}})
         before = env.image(1)
         env.pages.active["dev-1"] = "p3"
 
-        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "{page_name}"}})
+        env.manager.activate_card(STATIC_TARGET, {"title": {"text": "{page_name}"}})
 
         assert_that(env.image(1)).is_not_equal_to(before)
 
@@ -1555,7 +1555,7 @@ class TestPageRefresh:
 class TestSwitchPage:
     def _switch(self, env, payload, active="p2"):
         env.pages.active["dev-1"] = active
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         env.manager._route_context_message(  # pylint: disable=protected-access
             "com.decker.rec", Message("switch_page", "ctx-1", payload)
         )
@@ -1617,7 +1617,7 @@ class TestSwitchPage:
         assert_that(env.pages.activations).is_empty()
 
     def test_message_from_another_plugin_is_dropped(self, env):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
 
         env.manager._route_context_message(  # pylint: disable=protected-access
             "com.t.mixed", Message("switch_page", "ctx-1", {"to": "next"})
@@ -1648,7 +1648,7 @@ class TestSwitchPage:
 
     def test_a_key_can_switch_away_from_its_own_page(self, env):
         def _activate(device_id: str, page_id: str) -> bool:
-            env.manager.deactivate_action(REC_TARGET)  # the page switch hides the sender's page
+            env.manager.deactivate_card(REC_TARGET)  # the page switch hides the sender's page
             env.pages.active[device_id] = page_id
             return True
 
@@ -1669,9 +1669,7 @@ class TestProfileSettings:
     @staticmethod
     def _live(env, settings):
         action = SimpleNamespace(settings=parse_settings_schema(TestProfileSettings._SCHEMA, "t"))
-        return SimpleNamespace(
-            action=action, settings=settings, target=SimpleNamespace(device_id="dev-1"), delivered={}
-        )
+        return SimpleNamespace(card=action, settings=settings, target=SimpleNamespace(device_id="dev-1"), delivered={})
 
     def test_profile_field_is_resolved_and_page_carries_its_profile(self, env):
         env.pages.profiles["dev-1"] = [ProfileInfo(0, "Default", ""), ProfileInfo(3, "Work", "")]
@@ -1697,7 +1695,7 @@ class TestProfileSettings:
 
 class TestSwitchProfile:
     def _send(self, env, event, payload):
-        env.manager.activate_action(REC_TARGET)
+        env.manager.activate_card(REC_TARGET)
         env.manager._route_context_message(  # pylint: disable=protected-access
             "com.decker.rec", Message(event, "ctx-1", payload)
         )
@@ -1751,12 +1749,12 @@ class TestSwitchProfile:
 
 class TestActivationWithoutRedraw:
     def test_draw_false_leaves_the_key_untouched_until_the_plugin_draws(self, env):
-        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "x"}}, draw=False)
+        env.manager.activate_card(STATIC_TARGET, {"title": {"text": "x"}}, draw=False)
 
         assert_that(env.dm.hardware_images).is_empty()
 
     def test_draw_false_still_starts_the_action_and_later_changes_draw(self, env):
-        env.manager.activate_action(REC_TARGET, draw=False)
+        env.manager.activate_card(REC_TARGET, draw=False)
         assert _wait_for(lambda: env.received("will_appear"))
         assert_that(env.dm.hardware_images).is_empty()
 
@@ -1765,7 +1763,7 @@ class TestActivationWithoutRedraw:
         assert_that(env.dm.hardware_images).is_not_empty()
 
     def test_the_default_still_draws_at_once(self, env):
-        env.manager.activate_action(STATIC_TARGET, {"title": {"text": "x"}})
+        env.manager.activate_card(STATIC_TARGET, {"title": {"text": "x"}})
 
         assert_that(env.dm.hardware_images).is_not_empty()
 
@@ -1833,11 +1831,11 @@ def disabled_deck_env_fixture(tmp_path, monkeypatch):
             environment.manager.destroy()
 
 
-def _static_on(device_id: str, key: int) -> ActionTarget:
-    return ActionTarget("com.t.static", _STATIC_ACTION, f"ctx-static-{key}", device_id, key)
+def _static_on(device_id: str, key: int) -> CardTarget:
+    return CardTarget("com.t.static", _STATIC_ACTION, f"ctx-static-{key}", device_id, key)
 
 
-def _page_controller(env: Env, target: ActionTarget, appearance: dict[str, Any]) -> PageController:
+def _page_controller(env: Env, target: CardTarget, appearance: dict[str, Any]) -> PageController:
     """A real PageController over the deck_env device manager and plugin host, with one key assigned on page p1."""
     controller = PageController()
     store = MagicMock()
@@ -1896,7 +1894,7 @@ class TestAnimatedKeyFaces:
     def test_animated_gif_icon_ref_writes_poster_then_starts_animation(self, deck_env):
         env, device_id, log = deck_env
 
-        env.manager.activate_action(_static_on(device_id, 2), _gif_ref("anim.gif"))
+        env.manager.activate_card(_static_on(device_id, 2), _gif_ref("anim.gif"))
 
         spec = _animation(env, device_id, 2)  # recorded only if the poster went first: a static write forgets it
         assert spec is not None
@@ -1910,7 +1908,7 @@ class TestAnimatedKeyFaces:
     def test_preview_of_an_animated_key_is_the_poster_png(self, deck_env):
         env, device_id, _log = deck_env
         target = _static_on(device_id, 2)
-        env.manager.activate_action(target, {})
+        env.manager.activate_card(target, {})
 
         preview = env.manager.preview_image(target, _gif_ref("anim.gif"))
 
@@ -1922,7 +1920,7 @@ class TestAnimatedKeyFaces:
     def test_single_frame_gif_is_written_as_a_plain_static_image(self, deck_env):
         env, device_id, log = deck_env
 
-        env.manager.activate_action(_static_on(device_id, 2), _gif_ref("still.gif"))
+        env.manager.activate_card(_static_on(device_id, 2), _gif_ref("still.gif"))
 
         assert_that(_animation(env, device_id, 2)).is_none()
         assert_that(_last_event(env, 2)["animation_id"]).is_none()
@@ -1931,8 +1929,8 @@ class TestAnimatedKeyFaces:
 
     def test_plugin_set_image_with_gif_bytes_starts_animation(self, deck_env):
         env, device_id, log = deck_env
-        target = ActionTarget("com.decker.rec", _REC_ACTION, "ctx-rec", device_id, 3)
-        env.manager.activate_action(target)
+        target = CardTarget("com.decker.rec", _REC_ACTION, "ctx-rec", device_id, 3)
+        env.manager.activate_card(target)
         assert _wait_for(lambda: env.received("will_appear"))
 
         env.manager._on_plugin_message(  # pylint: disable=protected-access
@@ -1949,9 +1947,9 @@ class TestAnimatedKeyFaces:
     @pytest.mark.parametrize("name", ["corrupt.gif", "truncated.gif"])
     def test_corrupt_gif_bytes_keep_a_static_image_and_do_not_raise(self, deck_env, caplog, name):
         env, device_id, log = deck_env
-        env.manager.activate_action(_static_on(device_id, 4), _gif_ref("anim.gif"))
+        env.manager.activate_card(_static_on(device_id, 4), _gif_ref("anim.gif"))
 
-        env.manager.activate_action(_static_on(device_id, 2), _gif_ref(name))
+        env.manager.activate_card(_static_on(device_id, 2), _gif_ref(name))
         assert_that(env.dm.animation_factory.wait_idle(5.0)).is_true()
 
         state = env.dm.get_device_state(device_id)
@@ -1966,7 +1964,7 @@ class TestAnimatedKeyFaces:
     def test_truncated_gif_shows_its_first_frame(self, deck_env):
         env, device_id, _log = deck_env
         target = _static_on(device_id, 2)
-        env.manager.activate_action(target, {})
+        env.manager.activate_card(target, {})
 
         preview = env.manager.preview_image(target, _gif_ref("truncated.gif"))
 
@@ -1975,7 +1973,7 @@ class TestAnimatedKeyFaces:
     def test_replacing_a_gif_with_a_png_stops_the_animation_and_clears_animation_id(self, deck_env):
         env, device_id, log = deck_env
         target = _static_on(device_id, 2)
-        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        env.manager.activate_card(target, _gif_ref("anim.gif"))
         assert_that(_frames_written(log, 2)).is_true()
 
         env.manager.set_appearance(target, _gif_ref("red.png"))
@@ -1987,8 +1985,8 @@ class TestAnimatedKeyFaces:
     def test_key_state_changed_event_includes_animation_id_for_animated_keys_and_null_otherwise(self, deck_env):
         env, device_id, _log = deck_env
 
-        env.manager.activate_action(_static_on(device_id, 2), _gif_ref("anim.gif"))
-        env.manager.activate_action(_static_on(device_id, 3), _gif_ref("red.png"))
+        env.manager.activate_card(_static_on(device_id, 2), _gif_ref("anim.gif"))
+        env.manager.activate_card(_static_on(device_id, 3), _gif_ref("red.png"))
 
         spec = _animation(env, device_id, 2)
         assert spec is not None
@@ -1998,7 +1996,7 @@ class TestAnimatedKeyFaces:
     def test_recomposing_an_unchanged_animated_key_keeps_it_playing_without_a_poster_write(self, deck_env, monkeypatch):
         env, device_id, log = deck_env
         target = _static_on(device_id, 2)
-        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        env.manager.activate_card(target, _gif_ref("anim.gif"))
         assert_that(_frames_written(log, 2)).is_true()
         writes = _spy_device_writes(env, monkeypatch)
         events = len(env.bus.of("key_state_changed"))
@@ -2013,8 +2011,8 @@ class TestAnimatedKeyFaces:
 
     def test_plugin_images_under_an_animated_override_do_not_restart_it(self, deck_env, monkeypatch):
         env, device_id, log = deck_env
-        target = ActionTarget("com.decker.rec", _REC_ACTION, "ctx-rec", device_id, 3)
-        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        target = CardTarget("com.decker.rec", _REC_ACTION, "ctx-rec", device_id, 3)
+        env.manager.activate_card(target, _gif_ref("anim.gif"))
         assert _wait_for(lambda: env.received("will_appear"))
         assert_that(_frames_written(log, 3)).is_true()
         writes = _spy_device_writes(env, monkeypatch)
@@ -2029,7 +2027,7 @@ class TestAnimatedKeyFaces:
     def test_a_recompose_after_a_page_switch_restarts_the_animation(self, deck_env):
         env, device_id, log = deck_env
         target = _static_on(device_id, 2)
-        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        env.manager.activate_card(target, _gif_ref("anim.gif"))
         env.dm.show_page(device_id, "p2")  # stops p1's animations; p2 has none recorded
 
         env.manager.set_appearance(target, _gif_ref("anim.gif"))
@@ -2089,10 +2087,10 @@ class TestAnimatedKeyFaces:
     def test_a_key_cleared_while_its_page_is_hidden_does_not_replay_a_ghost_animation(self, deck_env):
         env, device_id, log = deck_env
         target = _static_on(device_id, 2)
-        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        env.manager.activate_card(target, _gif_ref("anim.gif"))
         assert_that(_frames_written(log, 2)).is_true()
         page_id = env.dm.get_device_state(device_id).page_id
-        env.manager.deactivate_action(target)
+        env.manager.deactivate_card(target)
         env.dm.show_page(device_id, "p2")
         # What key_unassign does for a page that is not shown: delete the stored state only.
         env.dm._state_store.delete_key_state(device_id, page_id, 2)  # pylint: disable=protected-access
@@ -2107,7 +2105,7 @@ class TestAnimatedKeyFaces:
         env, device_id, log = disabled_deck_env
         target = _static_on(device_id, 2)
 
-        env.manager.activate_action(target, _gif_ref("anim.gif"))
+        env.manager.activate_card(target, _gif_ref("anim.gif"))
         time.sleep(0.3)
 
         assert_that(len(log.for_key(2))).is_equal_to(1)  # the poster only
@@ -2118,7 +2116,7 @@ class TestAnimatedKeyFaces:
 
     def test_key_display_states_carry_animation_id(self, deck_env):
         env, device_id, _log = deck_env
-        env.manager.activate_action(_static_on(device_id, 2), _gif_ref("anim.gif"))
+        env.manager.activate_card(_static_on(device_id, 2), _gif_ref("anim.gif"))
         state = env.dm.get_device_state(device_id)
         state.update_key_label(3, "plain")
 

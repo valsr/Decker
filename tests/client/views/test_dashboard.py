@@ -13,8 +13,8 @@ from PyQt6.QtWidgets import QMenu, QMessageBox
 from decker.client.call_bridge import CallBridge
 from decker.client.context import AppContext
 from decker.client.events import (
-    ActionListUpdatedEvent,
     AppRulesUpdatedEvent,
+    CardListUpdatedEvent,
     DetectionStatusEvent,
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
@@ -118,11 +118,11 @@ class TestActionListHandling:
 
     def test_populates_sidebar_actions(self, qapp, tmp_path):  # pylint: disable=unused-argument
         view = _make_view(tmp_path)
-        actions = [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
+        actions = [{"plugin_uuid": "p", "plugin_name": "P", "card_uuid": "p.a", "card_name": "A"}]
 
-        view.handle_event(ActionListUpdatedEvent(actions=actions))
+        view.handle_event(CardListUpdatedEvent(cards=actions))
 
-        assert_that(view._sidebar._actions).is_equal_to(actions)  # pylint: disable=protected-access
+        assert_that(view._sidebar._cards).is_equal_to(actions)  # pylint: disable=protected-access
 
 
 class TestSidebarToggle:
@@ -312,7 +312,7 @@ class TestKeyDisplayStates:
                         "key_index": 2,
                         "label": "42",
                         "plugin_uuid": "p",
-                        "action_uuid": "a",
+                        "card_uuid": "a",
                         "context_id": "c",
                         "settings": {"step": 1},
                     }
@@ -336,7 +336,7 @@ class TestKeyDisplayStates:
                         "key_index": 0,
                         "label": "99",
                         "plugin_uuid": "p",
-                        "action_uuid": "a",
+                        "card_uuid": "a",
                         "context_id": "c",
                         "settings": {},
                     }
@@ -359,7 +359,7 @@ class TestKeyDisplayStates:
                         "key_index": 5,
                         "label": "7",
                         "plugin_uuid": "com.p",
-                        "action_uuid": "com.p.a",
+                        "card_uuid": "com.p.a",
                         "context_id": "ctx1",
                         "settings": {"step": 2},
                     }
@@ -387,7 +387,7 @@ class TestKeyInteractions:
         AppContext.get().connection_manager = mock_cm
         view._key_slots[3] = {  # pylint: disable=protected-access
             "plugin_uuid": "p",
-            "action_uuid": "a",
+            "card_uuid": "a",
             "context_id": "c",
             "settings": {},
         }
@@ -401,7 +401,7 @@ class TestKeyInteractions:
         AppContext.get().connection_manager = mock_cm
         view._key_slots[3] = {  # pylint: disable=protected-access
             "plugin_uuid": "p",
-            "action_uuid": "a",
+            "card_uuid": "a",
             "context_id": "c",
             "settings": {},
         }
@@ -416,8 +416,8 @@ class TestKeyInteractions:
         view = _make_view(tmp_path)
         _active_dev1(view)
         AppContext.get().connection_manager = MagicMock()
-        view._key_slots[3] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": "c", "settings": {}}
-        view._key_slots[4] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": "d", "settings": {}}
+        view._key_slots[3] = {"plugin_uuid": "p", "card_uuid": "a", "context_id": "c", "settings": {}}
+        view._key_slots[4] = {"plugin_uuid": "p", "card_uuid": "a", "context_id": "d", "settings": {}}
         view._on_key_edit_requested(4)  # pylint: disable=protected-access
 
         view._on_key_pressed(3)  # pylint: disable=protected-access
@@ -440,7 +440,7 @@ class TestKeyInteractions:
         AppContext.get().connection_manager = None
         view._key_slots[3] = {
             "plugin_uuid": "p",
-            "action_uuid": "a",
+            "card_uuid": "a",
             "context_id": "c",
             "settings": {},
         }  # pylint: disable=protected-access
@@ -456,7 +456,7 @@ class TestKeyInteractions:
         AppContext.get().connection_manager = mock_cm
         view._key_slots[3] = {
             "plugin_uuid": "p",
-            "action_uuid": "a",
+            "card_uuid": "a",
             "context_id": "c",
             "settings": {},
         }  # pylint: disable=protected-access
@@ -475,7 +475,7 @@ class TestKeyInteractions:
         AppContext.get().connection_manager = mock_cm
         view._key_slots[3] = {
             "plugin_uuid": "p",
-            "action_uuid": "a",
+            "card_uuid": "a",
             "context_id": "c",
             "settings": {},
         }  # pylint: disable=protected-access
@@ -497,7 +497,7 @@ class TestKeyInteractions:
         AppContext.get().connection_manager = mock_cm
         view._key_slots[1] = {
             "plugin_uuid": "p",
-            "action_uuid": "a",
+            "card_uuid": "a",
             "context_id": "c",
             "settings": {},
         }  # pylint: disable=protected-access
@@ -510,9 +510,7 @@ class TestKeyInteractions:
         mock_cm = MagicMock()
         mock_cm.call.return_value = True
         AppContext.get().connection_manager = mock_cm
-        view._on_action_dropped(
-            4, {"plugin_uuid": "com.p", "action_uuid": "com.p.a"}
-        )  # pylint: disable=protected-access
+        view._on_card_dropped(4, {"plugin_uuid": "com.p", "card_uuid": "com.p.a"})  # pylint: disable=protected-access
         assert_that(mock_cm.call.call_args[0][:4]).is_equal_to(("key_assign", "dev1", "p1", 4))
         assert_that(view._key_slots).contains_key(4)  # pylint: disable=protected-access
 
@@ -523,7 +521,7 @@ class TestKeyInteractions:
         AppContext.get().connection_manager = mock_cm
         view._key_slots[2] = {
             "plugin_uuid": "p",
-            "action_uuid": "a",
+            "card_uuid": "a",
             "context_id": "c",
             "settings": {},
         }  # pylint: disable=protected-access
@@ -538,15 +536,13 @@ class TestKeyInteractions:
             {"key": "step", "type": "int", "label": "Step", "default": 1, "min": 1, "max": 9}
         ]
         view.handle_event(
-            ActionListUpdatedEvent(
-                actions=[
-                    {"plugin_uuid": "com.p", "action_uuid": "com.p.a", "action_name": "A", "settings_schema": schema}
-                ]
+            CardListUpdatedEvent(
+                cards=[{"plugin_uuid": "com.p", "card_uuid": "com.p.a", "card_name": "A", "settings_schema": schema}]
             )
         )
         view._key_slots[3] = {  # pylint: disable=protected-access
             "plugin_uuid": "com.p",
-            "action_uuid": "com.p.a",
+            "card_uuid": "com.p.a",
             "context_id": "c",
             "settings": {"step": 4},
         }
@@ -567,16 +563,14 @@ class TestKeyInteractions:
             {"key": "step", "type": "int", "label": "Step", "default": 1, "min": 1, "max": 9}
         ]
         view.handle_event(
-            ActionListUpdatedEvent(
-                actions=[
-                    {"plugin_uuid": "com.p", "action_uuid": "com.p.a", "action_name": "A", "settings_schema": schema}
-                ]
+            CardListUpdatedEvent(
+                cards=[{"plugin_uuid": "com.p", "card_uuid": "com.p.a", "card_name": "A", "settings_schema": schema}]
             )
         )
         for key in (3, 4):
             view._key_slots[key] = {  # pylint: disable=protected-access
                 "plugin_uuid": "com.p",
-                "action_uuid": "com.p.a",
+                "card_uuid": "com.p.a",
                 "context_id": f"c{key}",
                 "settings": {"step": 2},
             }
@@ -597,7 +591,7 @@ class TestKeyInteractions:
         AppContext.get().connection_manager = mock_cm
         view._key_slots[2] = {  # pylint: disable=protected-access
             "plugin_uuid": "p",
-            "action_uuid": "a",
+            "card_uuid": "a",
             "context_id": "c",
             "settings": {},
             "appearance": {"background": "#000000"},
@@ -667,7 +661,7 @@ class TestPages:  # pylint: disable=protected-access
     ):  # pylint: disable=unused-argument
         view, _cm = self._view(tmp_path)
         view._grid.build(_KEYS_15)  # pylint: disable=protected-access
-        view._key_slots[3] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": "c", "settings": {}}
+        view._key_slots[3] = {"plugin_uuid": "p", "card_uuid": "a", "context_id": "c", "settings": {}}
 
         view._on_key_edit_requested(3)  # pylint: disable=protected-access
         assert_that(view._grid._buttons[3].property("selected")).is_true()  # pylint: disable=protected-access
@@ -776,7 +770,7 @@ class TestPages:  # pylint: disable=protected-access
         view, cm = self._view(tmp_path)
         view._pages = None
 
-        view._on_action_dropped(0, {"plugin_uuid": "com.p", "action_uuid": "com.p.a"})
+        view._on_card_dropped(0, {"plugin_uuid": "com.p", "card_uuid": "com.p.a"})
         view._save_key_settings(0, {})
 
         cm.call.assert_not_called()
@@ -795,7 +789,7 @@ class TestSlotSync:  # pylint: disable=protected-access
             KeyDisplayStatesUpdatedEvent(
                 device_id="dev1",
                 states=[
-                    {"key_index": 0, "plugin_uuid": "com.p", "action_uuid": "a", "context_id": "c", "settings": {}},
+                    {"key_index": 0, "plugin_uuid": "com.p", "card_uuid": "a", "context_id": "c", "settings": {}},
                     {"key_index": 1, "plugin_uuid": None, "settings": {}},
                 ],
             )
@@ -826,12 +820,12 @@ class TestKeyEditorWiring:  # pylint: disable=protected-access
         cm.call.return_value = "preview-b64"
         AppContext.get().connection_manager = cm
         view.handle_event(
-            ActionListUpdatedEvent(
-                actions=[
+            CardListUpdatedEvent(
+                cards=[
                     {
                         "plugin_uuid": "com.p",
-                        "action_uuid": "com.p.a",
-                        "action_name": "Counter",
+                        "card_uuid": "com.p.a",
+                        "card_name": "Counter",
                         "settings_schema": [],
                     }
                 ]
@@ -839,7 +833,7 @@ class TestKeyEditorWiring:  # pylint: disable=protected-access
         )
         view._key_slots[3] = {  # pylint: disable=protected-access
             "plugin_uuid": "com.p",
-            "action_uuid": "com.p.a",
+            "card_uuid": "com.p.a",
             "context_id": "c",
             "settings": {},
         }
@@ -902,8 +896,8 @@ class TestFinalReviewFixes:  # pylint: disable=protected-access
         cm.call.return_value = ""
         AppContext.get().connection_manager = cm
         view.handle_event(
-            ActionListUpdatedEvent(
-                actions=[{"plugin_uuid": "com.p", "action_uuid": "com.p.a", "action_name": "A", "settings_schema": []}]
+            CardListUpdatedEvent(
+                cards=[{"plugin_uuid": "com.p", "card_uuid": "com.p.a", "card_name": "A", "settings_schema": []}]
             )
         )
         return view
@@ -911,7 +905,7 @@ class TestFinalReviewFixes:  # pylint: disable=protected-access
     def _assign(self, view, key):
         view._key_slots[key] = {
             "plugin_uuid": "com.p",
-            "action_uuid": "com.p.a",
+            "card_uuid": "com.p.a",
             "context_id": f"c{key}",
             "settings": {},
         }
@@ -1000,7 +994,7 @@ class TestSaveResult:  # pylint: disable=protected-access
         cm = MagicMock()
         cm.call.return_value = result
         AppContext.get().connection_manager = cm
-        view._key_slots[2] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": "c", "settings": {}}
+        view._key_slots[2] = {"plugin_uuid": "p", "card_uuid": "a", "context_id": "c", "settings": {}}
         return view
 
     def test_save_callback_reports_success(self, qapp, tmp_path):  # pylint: disable=unused-argument
@@ -1272,7 +1266,7 @@ class TestKeyMoveAndCopy:  # pylint: disable=protected-access
         AppContext.get().connection_manager = cm
         view._grid.build(_KEYS_15)
         for index in (1, 4):
-            view._key_slots[index] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": f"c{index}", "settings": {}}
+            view._key_slots[index] = {"plugin_uuid": "p", "card_uuid": "a", "context_id": f"c{index}", "settings": {}}
         return view, cm
 
     def test_a_drop_moves_through_the_server_and_selects_the_target(
@@ -1342,7 +1336,7 @@ def _assigned_state(key_index: int) -> dict[str, Any]:
     return {
         "key_index": key_index,
         "plugin_uuid": "p",
-        "action_uuid": "a",
+        "card_uuid": "a",
         "context_id": f"c{key_index}",
         "settings": {},
     }
@@ -1360,7 +1354,7 @@ class TestKeyMoveSelection:  # pylint: disable=protected-access
         cm.call.return_value = True
         AppContext.get().connection_manager = cm
         view._grid.build(_KEYS_15)
-        view._key_slots[1] = {"plugin_uuid": "p", "action_uuid": "a", "context_id": "c1", "settings": {}}
+        view._key_slots[1] = {"plugin_uuid": "p", "card_uuid": "a", "context_id": "c1", "settings": {}}
         return view, cm
 
     def test_the_selection_waits_for_the_target_to_come_back_from_the_server(

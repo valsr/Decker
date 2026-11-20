@@ -1,10 +1,10 @@
-"""Gestures an action can register for."""
+"""Gestures a card can register for."""
 
 from enum import StrEnum
 
 
 class Gesture(StrEnum):
-    """A gesture an action can register for; dispatched to the matching on_<gesture> handler."""
+    """A gesture a card can register for; dispatched to the matching on_<gesture> handler."""
 
     PRESS = "press"
     DOUBLE_PRESS = "double_press"

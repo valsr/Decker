@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "id": "{{plugin_id}}",
   "name": "{{name}}",
   "version": "0.1.0",
@@ -11,14 +11,14 @@
     "entry": "plugin.py"
   },
   "contributes": {
-    "actions": [
+    "cards": [
       {
-        "id": "{{action_id}}",
+        "id": "{{card_id}}",
         "name": "{{name}}",
         "tooltip": "Press to say hello",
-        "icon": "icons/action",
+        "icon": "icons/card",
         "gestures": ["press"],
-        "states": [{ "image": "icons/action" }]
+        "states": [{ "image": "icons/card" }]
       }
     ]
   }

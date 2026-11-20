@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from decker.client.action_icons import decode_icon, placeholder_pixmap
+from decker.client.card_icons import decode_icon, placeholder_pixmap
 from decker.client.connection_manager import to_plain
 from decker.client.context import AppContext
 from decker.client.events import (
@@ -475,7 +475,7 @@ def _details_html(plugin: dict[str, Any]) -> str:
     homepage = _text(plugin, "homepage")
     if homepage.startswith(("http://", "https://")):
         lines.append(f'<p>Homepage: <a href="{escape(homepage, quote=True)}">{escape(homepage)}</a></p>')
-    for kind, label in (("actions", "Actions"), ("icon_packs", "Icon packs")):
+    for kind, label in (("cards", "Cards"), ("actions", "Actions"), ("icon_packs", "Icon packs")):
         names = [str(item) for item in contributes.get(kind) or []]
         if names:
             lines.append(f"<p>{label}: {escape(_SEP.join(names))}</p>")

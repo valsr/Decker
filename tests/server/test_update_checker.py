@@ -11,7 +11,7 @@ import pytest
 from assertpy import assert_that
 
 from decker.common import config, paths
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.plugins import PluginManager
 from decker.server.repositories import FetchError, RepositoryStore
@@ -143,8 +143,8 @@ def test_incompatible_version_ignored(env: Env) -> None:
 def test_missing_plugin_reported_with_key_count(env: Env) -> None:
     env.publish({"com.t.m": [_version("1.2.0")]})
     for index in range(2):
-        target = ActionTarget(
-            plugin_uuid="com.t.m", action_uuid="a", context_id=f"c{index}", device_id="d", key_index=index
+        target = CardTarget(
+            plugin_uuid="com.t.m", card_uuid="a", context_id=f"c{index}", device_id="d", key_index=index
         )
         env.keys.assign("d", "p", index, target, {})
     report = env.checker.check_now()

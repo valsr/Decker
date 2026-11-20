@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from decker.animation.model import AnimationSpec
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.appearance import Composed
 
 
@@ -71,7 +71,7 @@ class StreamDeckHardwareSink:
         logging.debug("show_ok(%s, %d): not implemented", device_id, key_index)
 
 
-def write_face(sink: StreamDeckHardwareSink, target: ActionTarget, composed: Composed, poster: bool) -> bool:
+def write_face(sink: StreamDeckHardwareSink, target: CardTarget, composed: Composed, poster: bool) -> bool:
     """Write a composed key face and start its animation; return whether the key was touched.
 
     The animation id covers the whole PNG, so a key already playing it needs neither a poster nor a restart.

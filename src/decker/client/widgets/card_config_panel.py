@@ -46,7 +46,7 @@ def _run_in_thread(job: Callable[[], str | None], done: Callable[[str | None], N
     threading.Thread(target=lambda: done(_run_job(job)), name="key-preview", daemon=True).start()
 
 
-class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-attributes
+class CardConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-attributes
     """Stacked config panel: page 0 = placeholder, page 1 = preview, appearance rows, Save and action settings."""
 
     _preview_ready = pyqtSignal(int, object)
@@ -117,7 +117,7 @@ class ActionConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-at
         self._preview.set_image(None)
         self._refresh_state()
 
-    def show_action_config(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def show_card_config(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         settings_schema: list[dict[str, Any]],
         settings: dict[str, Any],

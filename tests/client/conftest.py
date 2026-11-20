@@ -33,9 +33,7 @@ def _isolated_icon_cache(tmp_path_factory, monkeypatch):
 def _inline_preview_jobs(monkeypatch):
     """Run key-preview requests inline so tests need no event loop; threaded behaviour has its own tests."""
     from decker.client.widgets import (
-        action_config_panel,  # pylint: disable=import-outside-toplevel
+        card_config_panel,  # pylint: disable=import-outside-toplevel
     )
 
-    monkeypatch.setattr(
-        action_config_panel, "_run_in_thread", lambda job, done: done(action_config_panel._run_job(job))
-    )
+    monkeypatch.setattr(card_config_panel, "_run_in_thread", lambda job, done: done(card_config_panel._run_job(job)))

@@ -16,7 +16,7 @@ from decker.common import config
 from decker.plugin.environment import EnvironmentBuildError
 from decker.plugin.repository_index import IndexVersion
 from decker.plugin.settings_store import PluginSettingsStore
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server import plugin_installer as installer_module
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.page_controller import PageController
@@ -170,12 +170,12 @@ class Env:
         assert_that(finished["job_id"]).is_equal_to(job)
         return finished
 
-    def assign(self, key=0, page=PAGE_1, context="ctx-1", plugin="com.example.tool", settings=None) -> ActionTarget:
-        target = ActionTarget(plugin, f"{plugin}.show", context, DEVICE, key)
+    def assign(self, key=0, page=PAGE_1, context="ctx-1", plugin="com.example.tool", settings=None) -> CardTarget:
+        target = CardTarget(plugin, f"{plugin}.show", context, DEVICE, key)
         self.key_store.assign(DEVICE, page, key, target, settings or {})
         self.manager.store_settings(target, settings or {})
         if page == PAGE_1:
-            self.manager.activate_action(target, {})
+            self.manager.activate_card(target, {})
         return target
 
     def close(self) -> None:
@@ -348,7 +348,7 @@ def test_uninstall_clears_keys_on_all_pages_and_removes_folder(env, tmp_path):
     other_page = env.page_store.add_page(DEVICE, "Other").page_id
     env.assign(key=0, context="a")
     env.assign(key=1, page=other_page, context="b")
-    env.manager.store_settings(ActionTarget("com.example.tool", ACTION, "a", DEVICE, 0), {"n": 1})
+    env.manager.store_settings(CardTarget("com.example.tool", ACTION, "a", DEVICE, 0), {"n": 1})
     env.manager.update_global_settings("com.example.tool", {"token": "abc"})
     env.bus.events.clear()
 
@@ -466,7 +466,7 @@ class TestServiceRules:
         listed = {p["id"]: p for p in json.loads(service.plugins_list())}
 
         tool = listed["com.example.tool"]
-        assert_that(tool).contains_entry({"name": "Tool"}, {"version": "1.0.0"}, {"actions": 1})
+        assert_that(tool).contains_entry({"name": "Tool"}, {"version": "1.0.0"}, {"cards": 1})
         assert_that(tool).contains_entry({"icon_packs": 0}, {"icon_b64": ""}, {"global_settings": {"token": "none"}})
         assert_that(tool["global_settings_schema"][0]["key"]).is_equal_to("token")
 

@@ -52,7 +52,7 @@ class KeyState:
     image_b64: str | None = None  # base64 PNG of the last image sent to this key
     label: str = ""
     plugin_uuid: str | None = None
-    action_uuid: str | None = None
+    card_uuid: str | None = None
     context_id: str | None = None
     settings: dict[str, Any] = field(default_factory=dict)
     appearance: dict[str, Any] = field(default_factory=dict)

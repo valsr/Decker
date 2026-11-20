@@ -6,15 +6,13 @@ from unittest.mock import MagicMock
 import pytest
 from assertpy import assert_that
 
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.key_assignments import KeyAssignment, KeyAssignmentStore
 from decker.server.pages import initial_page_id
 
 
 def _target(device_id="dev1", key_index=0, plugin="com.p", action="com.p.a", ctx="ctx1"):
-    return ActionTarget(
-        plugin_uuid=plugin, action_uuid=action, context_id=ctx, device_id=device_id, key_index=key_index
-    )
+    return CardTarget(plugin_uuid=plugin, card_uuid=action, context_id=ctx, device_id=device_id, key_index=key_index)
 
 
 @pytest.fixture()
@@ -116,7 +114,7 @@ class TestPages:
         db = tmp_path / "legacy.db"
         legacy = sqlite3.connect(db)
         legacy.execute("""CREATE TABLE key_assignments (device_id TEXT NOT NULL, key_index INTEGER NOT NULL,
-            plugin_uuid TEXT NOT NULL, action_uuid TEXT NOT NULL, context_id TEXT NOT NULL,
+            plugin_uuid TEXT NOT NULL, card_uuid TEXT NOT NULL, context_id TEXT NOT NULL,
             settings TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (device_id, key_index))""")
         legacy.execute("INSERT INTO key_assignments VALUES ('dev1', 2, 'com.p', 'com.p.a', 'c1', '{\"step\": 3}')")
         legacy.execute("INSERT INTO key_assignments VALUES ('dev2', 0, 'com.p', 'com.p.a', 'c2', '{}')")
@@ -162,7 +160,7 @@ class TestAppearance:
         db = tmp_path / "old.db"
         conn = sqlite3.connect(db)
         conn.execute("""CREATE TABLE key_assignments (device_id TEXT NOT NULL, page_id TEXT NOT NULL,
-            key_index INTEGER NOT NULL, plugin_uuid TEXT NOT NULL, action_uuid TEXT NOT NULL,
+            key_index INTEGER NOT NULL, plugin_uuid TEXT NOT NULL, card_uuid TEXT NOT NULL,
             context_id TEXT NOT NULL, settings TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY (device_id, page_id, key_index))""")
         counter = '{"step": 2, "background": "#ff0000", "title": "A", "title_outline": ""}'
@@ -268,7 +266,7 @@ class TestCopyPage:
         _, second = copied[1]
         assert_that(second.settings).is_equal_to({"step": 2})
         assert_that(second.appearance).is_equal_to({"background": {"color": "#ff0000"}})
-        assert_that((second.target.plugin_uuid, second.target.action_uuid)).is_equal_to(("com.p", "com.p.a"))
+        assert_that((second.target.plugin_uuid, second.target.card_uuid)).is_equal_to(("com.p", "com.p.a"))
 
     def test_copy_of_empty_page_is_empty(self, store):
         assert_that(store.copy_page("dev1", "nothing", "p2")).is_empty()

@@ -5,11 +5,11 @@ import os
 import sys
 from typing import BinaryIO, cast
 
-from ._runtime import registered_actions, run
+from ._runtime import registered_cards, run
 
 
 def main(argv: list[str]) -> int:
-    """Import the plugin entry file and run its actions over the real stdio."""
+    """Import the plugin entry file and run its cards over the real stdio."""
     if len(argv) != 2:
         print("usage: python -m decker_plugin_sdk <entry.py>", file=sys.stderr)
         return 2
@@ -26,7 +26,7 @@ def main(argv: list[str]) -> int:
         return 2
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    code = run(registered_actions(), cast(BinaryIO, sys.stdin.buffer), stdout)
+    code = run(registered_cards(), cast(BinaryIO, sys.stdin.buffer), stdout)
     stdout.flush()
     sys.stderr.flush()
     os._exit(code)  # pylint: disable=protected-access  # do not wait for blocked handler threads

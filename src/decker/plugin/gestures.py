@@ -10,7 +10,7 @@ DOUBLE_PRESS_WINDOW_S = 0.35
 
 
 class Gesture(StrEnum):
-    """A gesture an action can register for; dispatched to the matching on_<gesture> handler."""
+    """A gesture a card can register for; dispatched to the matching on_<gesture> handler."""
 
     PRESS = "press"
     DOUBLE_PRESS = "double_press"
@@ -35,7 +35,7 @@ def _thread_timer(interval: float, callback: Callable[[], None]) -> _Timer:
 
 
 class GestureRecognizer:  # pylint: disable=too-many-instance-attributes
-    """Gesture state machine for one key, waiting only for the gestures the action registered for.
+    """Gesture state machine for one key, waiting only for the gestures the card registered for.
 
     - PRESS fires on release, immediately unless DOUBLE_PRESS is registered, in which case it fires
       once the double-press window passes without a second tap.
@@ -64,7 +64,7 @@ class GestureRecognizer:  # pylint: disable=too-many-instance-attributes
         self._tap_timer: _Timer | None = None
 
     def key_down(self, enabled: frozenset[Gesture]) -> None:
-        """Handle a key press; enabled is the set of gestures the action wants right now."""
+        """Handle a key press; enabled is the set of gestures the card wants right now."""
         with self._lock:
             self._enabled = enabled
             self._down = True
@@ -95,7 +95,7 @@ class GestureRecognizer:  # pylint: disable=too-many-instance-attributes
         self._fire(fired)
 
     def cancel(self) -> None:
-        """Drop any pending gesture (e.g. when the action is removed from the key)."""
+        """Drop any pending gesture (e.g. when the card is removed from the key)."""
         with self._lock:
             self._cancel_hold()
             self._cancel_tap()

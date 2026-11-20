@@ -12,7 +12,7 @@ from assertpy import assert_that
 from PIL import Image
 
 from decker.plugin.settings_store import PluginSettingsStore
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.plugins import PluginManager
 from tests.portable import entry_name, install_launcher
 from tests.server.test_plugins import _FAST, FakeBus, FakeDeviceManager
@@ -106,12 +106,12 @@ def test_non_sdk_executable_plugin_speaks_the_documented_protocol(tmp_path):
         return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     try:
-        manager.activate_action(ActionTarget(_PLUGIN_ID, _ACTION_ID, "ctx-1", "dev-1", 0))
+        manager.activate_card(CardTarget(_PLUGIN_ID, _ACTION_ID, "ctx-1", "dev-1", 0))
         assert _wait_for(lambda: any(r["event"] == "will_appear" for r in seen()))
         hello = next(r for r in seen() if r["event"] == "hello")
         assert_that(hello["keys"]).is_equal_to(["decker_version", "global_settings", "plugin_id", "protocol"])
         will_appear = next(r for r in seen() if r["event"] == "will_appear")
-        assert_that(will_appear["keys"]).is_equal_to(["action", "device", "key", "settings", "state"])
+        assert_that(will_appear["keys"]).is_equal_to(["card", "device", "key", "settings", "state"])
         assert_that(will_appear["key"]).is_equal_to(["column", "index", "row"])
 
         assert _wait_for(

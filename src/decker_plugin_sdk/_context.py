@@ -22,11 +22,11 @@ def encode_line(event: str, context: str | None = None, payload: dict[str, Any] 
 
 
 @dataclass
-class ActionContext:
-    """One key instance of an action: its identity, current settings and the calls that act on it."""
+class CardContext:
+    """One key instance of a card: its identity, current settings and the calls that act on it."""
 
     context: str
-    action: str
+    card: str
     device: str
     key_index: int
     column: int

@@ -8,7 +8,7 @@ from PIL import Image
 from decker.plugin.loader import BUILTIN_PLUGINS_DIR, PluginLoader
 from decker.plugin.manifest import PluginManifest
 from decker.plugin.repository_index import IndexVersion
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.appearance import compose_key_image, resolve_appearance
 from decker.server.plugin_installer import PluginInstallError
 from decker.server.service import DeckerService
@@ -30,14 +30,14 @@ def test_blank_manifest_ships_in_the_package():
 
     assert_that(manifest.id).is_equal_to(BLANK)
     assert_that(manifest.runtime).is_none()
-    assert_that([(a.id, a.static, a.name) for a in manifest.actions]).is_equal_to(
+    assert_that([(a.id, a.static, a.name) for a in manifest.cards]).is_equal_to(
         [
             (BLANK_ACTION, True, "Blank"),
             ("com.decker.blank.pagename", True, "Page Name"),
             ("com.decker.blank.pagecount", True, "Page Count"),
         ]
     )
-    assert_that(manifest.actions[0].tooltip).is_equal_to("Draws only the background and title")
+    assert_that(manifest.cards[0].tooltip).is_equal_to("Draws only the background and title")
 
 
 def test_blank_version_is_deckers():
@@ -51,7 +51,7 @@ def test_blank_icon_resolves():
     manifest = PluginManifest.load(BUILTIN_PLUGINS_DIR / BLANK / "manifest.json")
     from decker.plugin.icons import read_icon
 
-    assert_that(read_icon(BUILTIN_PLUGINS_DIR / BLANK, manifest.actions[0].icon or manifest.icon)).is_not_none()
+    assert_that(read_icon(BUILTIN_PLUGINS_DIR / BLANK, manifest.cards[0].icon or manifest.icon)).is_not_none()
 
 
 def test_scan_builtin_finds_blank(tmp_path):
@@ -62,7 +62,7 @@ def test_scan_builtin_finds_blank(tmp_path):
 
 
 def test_blank_is_loaded_and_listed(env):
-    assert_that([a["action_uuid"] for a in env.manager.list_actions()]).contains(BLANK_ACTION)
+    assert_that([a["card_uuid"] for a in env.manager.list_cards()]).contains(BLANK_ACTION)
     assert_that(env.manager.is_builtin(BLANK)).is_true()
     assert_that(env.manager.is_builtin("com.example.tool")).is_false()
 
@@ -72,7 +72,7 @@ def test_blank_key_draws_background_and_title_only(env):
     env.dm.set_image_bytes = lambda _d, _k, image: images.append(image)
     appearance = {"background": "#ff0000", "title": {"text": "Hi", "position": "middle"}}
 
-    env.manager.activate_action(ActionTarget(BLANK, BLANK_ACTION, "ctx-b", "dev-1", 0), appearance)
+    env.manager.activate_card(CardTarget(BLANK, BLANK_ACTION, "ctx-b", "dev-1", 0), appearance)
 
     assert_that(images[-1]).is_equal_to(compose_key_image(resolve_appearance({}, appearance), None, ""))
 
@@ -125,7 +125,7 @@ def test_blank_ships_page_name_and_page_count_presets() -> None:
     manifest = PluginManifest.from_dict(
         json.loads((BUILTIN_PLUGINS_DIR / "com.decker.blank" / "manifest.json").read_text())
     )
-    specs = {a.id: a for a in manifest.actions}
+    specs = {a.id: a for a in manifest.cards}
 
     assert_that(specs["com.decker.blank.pagename"].static).is_true()
     assert_that(specs["com.decker.blank.pagename"].appearance["title"]["text"]).is_equal_to("{page_name}")

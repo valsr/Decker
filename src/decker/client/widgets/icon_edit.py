@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from decker.client.action_icons import decode_icon, placeholder_pixmap
+from decker.client.card_icons import decode_icon, placeholder_pixmap
 from decker.client.context import AppContext
 from decker.client.icon_cache import IconThumbnailCache, icon_cache
 from decker.client.icon_picker import NO_TINT, IconBrowserDialog, RpcCaller

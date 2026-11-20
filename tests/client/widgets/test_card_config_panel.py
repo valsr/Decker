@@ -13,8 +13,8 @@ from PyQt6.QtWidgets import (
     QSpinBox,
 )
 
-import decker.client.widgets.action_config_panel as panel_module
-from decker.client.widgets.action_config_panel import ActionConfigPanel
+import decker.client.widgets.card_config_panel as panel_module
+from decker.client.widgets.card_config_panel import CardConfigPanel
 from decker.common.text_style import TEXT_STYLE_DEFAULTS
 
 _COUNTER_SCHEMA: list[dict[str, Any]] = [
@@ -34,8 +34,8 @@ def _bg(color: str, kind: str = "color", ref: str = "") -> dict[str, Any]:
     return {"type": kind, "color": color, "image": {"ref": ref}}
 
 
-def _show(panel: ActionConfigPanel, settings=None, appearance=None, save=None, title: str = "") -> None:
-    panel.show_action_config(
+def _show(panel: CardConfigPanel, settings=None, appearance=None, save=None, title: str = "") -> None:
+    panel.show_card_config(
         _COUNTER_SCHEMA,
         settings or {},
         appearance or dict(_DEFAULTS),
@@ -45,27 +45,27 @@ def _show(panel: ActionConfigPanel, settings=None, appearance=None, save=None, t
     )
 
 
-def _labels(panel: ActionConfigPanel) -> list[str]:
+def _labels(panel: CardConfigPanel) -> list[str]:
     return [lb.text() for lb in panel.findChildren(QLabel)]
 
 
 class TestActionConfigPanel:  # pylint: disable=protected-access
     def test_starts_on_placeholder(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         widget = panel.widget(0)
         assert isinstance(widget, QLabel)
         assert_that(widget.text()).is_equal_to("Hover a key and click ✎ (or focus it and press F2) to configure it")
         assert_that(panel.currentIndex()).is_equal_to(0)
 
     def test_show_placeholder_returns_to_page_zero(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel)
         assert_that(panel.currentIndex()).is_equal_to(1)
         panel.show_placeholder()
         assert_that(panel.currentIndex()).is_equal_to(0)
 
     def test_counter_schema_renders_step_double_step_max(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 5, "double_step": 10, "max": 20})
         assert_that(_labels(panel)).contains("Title:", "Background:", "Step:", "Double step:", "Max:", "Counting")
         assert_that(panel._settings_form.values()).is_equal_to({"step": 5, "double_step": 10, "max": 20})
@@ -73,7 +73,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         assert isinstance(panel._settings_form._fields["double_step"].widget, QLineEdit)
 
     def test_save_sends_settings_and_changed_appearance_only(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         captured: list[tuple[dict, dict]] = []
         _show(panel, {"step": 1}, save=lambda s, a: captured.append((s, a)))
         panel._settings_form._fields["step"].set(7)
@@ -86,10 +86,10 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         assert_that(appearance).is_equal_to({"background": _bg("#8a1c1c")})
 
     def test_save_without_callback_is_noop(self, qapp):  # pylint: disable=unused-argument
-        ActionConfigPanel()._on_save()  # pylint: disable=protected-access
+        CardConfigPanel()._on_save()  # pylint: disable=protected-access
 
     def test_resent_identical_values_keep_edits(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
         panel._appearance_form._fields["title"].set({"text": "typing…"})
 
@@ -98,7 +98,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         assert_that(panel._appearance_form.values()["title"]["text"]).is_equal_to("typing…")
 
     def test_new_values_repopulate(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
         panel._appearance_form._fields["title"].set({"text": "typing…"})
 
@@ -107,7 +107,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         assert_that(panel._appearance_form.values()["title"]["text"]).is_equal_to("Saved")
 
     def test_reopening_after_placeholder_repopulates(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
         panel._appearance_form._fields["title"].set({"text": "typing…"})
         panel.show_placeholder()
@@ -117,7 +117,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         assert_that(panel._appearance_form.values()["title"]["text"]).is_equal_to("")
 
     def test_echo_of_saved_state_keeps_later_edits(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
         panel._settings_form._fields["step"].set(7)
         panel._appearance_form._fields["background"].set("#8a1c1c")
@@ -130,7 +130,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         assert_that(panel._appearance_form.values()["title"]["text"]).is_equal_to("second edit")
 
     def test_legacy_stored_keys_populate_title_control(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
 
         _show(panel, {"step": 1}, {"title": "Old", "title_size": 20, "show_title": False})
 
@@ -138,7 +138,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         assert_that(title).contains_entry({"text": "Old"}, {"size": 20}, {"visible": False})
 
     def test_save_drops_legacy_keys(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         captured: list[tuple[dict, dict]] = []
         _show(panel, {"step": 1}, {"title": "Old", "title_size": 20}, save=lambda s, a: captured.append((s, a)))
 
@@ -150,7 +150,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         assert_that(appearance["title"]).contains_entry({"text": "Old"}, {"size": 20})
 
     def test_unchanged_title_is_not_saved(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         captured: list[tuple[dict, dict]] = []
         _show(panel, {"step": 1}, save=lambda s, a: captured.append((s, a)))
 
@@ -159,7 +159,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         assert_that(captured[0][1]).is_empty()
 
     def test_title_and_background_share_one_row_above_the_settings(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
 
         row = panel._appearance_form
@@ -172,7 +172,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
         assert_that(step_y).is_greater_than(title_y)
 
     def test_background_alpha_survives_save(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         captured: list[tuple[dict, dict]] = []
         _show(panel, {"step": 1}, save=lambda s, a: captured.append((s, a)))
         panel._appearance_form._fields["background"].set("#11223380")
@@ -184,7 +184,7 @@ class TestActionConfigPanel:  # pylint: disable=protected-access
 
 class TestKeyEditorLayout:  # pylint: disable=protected-access
     def test_header_shows_the_action_name_and_no_key_id(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, title="Counter")
 
         assert_that(panel._header.text()).is_equal_to("Counter")
@@ -193,7 +193,7 @@ class TestKeyEditorLayout:  # pylint: disable=protected-access
     def test_save_sits_between_the_appearance_rows_and_the_action_settings(
         self, qapp
     ):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel)
         panel.show()
         save = panel._save_btn
@@ -205,7 +205,7 @@ class TestKeyEditorLayout:  # pylint: disable=protected-access
         )
 
     def test_preview_context_menu_clears_the_icon_override(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         icon = {"ref": "pack:a.b/x.svg", "color": "#ffffff"}
         _show(panel, appearance={**_DEFAULTS, "icon": icon})
         assert_that(panel._appearance_form.values()["icon"]).is_equal_to(icon)
@@ -216,7 +216,7 @@ class TestKeyEditorLayout:  # pylint: disable=protected-access
         assert_that(panel.is_dirty).is_true()
 
     def test_preview_set_icon_opens_the_picker(self, qapp, monkeypatch):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel)
         opened: list[bool] = []
         monkeypatch.setattr(panel._appearance_form._fields["icon"].widget, "browse", lambda: opened.append(True))
@@ -226,7 +226,7 @@ class TestKeyEditorLayout:  # pylint: disable=protected-access
         assert_that(opened).is_equal_to([True])
 
     def test_clear_is_enabled_only_with_an_icon_override(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel)
         assert_that(panel._preview._has_icon).is_false()
 
@@ -237,14 +237,14 @@ class TestKeyEditorLayout:  # pylint: disable=protected-access
 
 class TestDirtySave:  # pylint: disable=protected-access
     def test_clean_after_load(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
 
         assert_that(panel.is_dirty).is_false()
         assert_that(panel._save_btn.property("dirty")).is_false()
 
     def test_any_edit_marks_it_dirty_and_editing_back_cleans_it(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
 
         panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
@@ -255,7 +255,7 @@ class TestDirtySave:  # pylint: disable=protected-access
         assert_that(panel.is_dirty).is_false()
 
     def test_appearance_edits_mark_it_dirty(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel)
 
         edit = panel._appearance_form._fields["background"].widget
@@ -264,7 +264,7 @@ class TestDirtySave:  # pylint: disable=protected-access
         assert_that(panel.is_dirty).is_true()
 
     def test_save_cleans_and_the_echo_does_not_retrigger(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
         panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
 
@@ -276,7 +276,7 @@ class TestDirtySave:  # pylint: disable=protected-access
         assert_that(panel._save_btn.property("dirty")).is_false()
 
     def test_loading_another_key_clears_it(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
         panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
         assert_that(panel.is_dirty).is_true()
@@ -289,7 +289,7 @@ class TestDirtySave:  # pylint: disable=protected-access
 
 class TestLivePreview:  # pylint: disable=protected-access
     def test_provider_is_asked_once_after_the_debounce(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         calls: list[dict] = []
         panel.set_preview_provider(lambda appearance: calls.append(appearance))
         _show(panel)
@@ -308,7 +308,7 @@ class TestLivePreview:  # pylint: disable=protected-access
         assert_that(calls[0]["title"]["text"]).is_equal_to("abc")
 
     def test_provider_image_reaches_the_preview_and_empty_keeps_the_last(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         answers = iter(["image-one", "", None])
         shown: list[str | None] = []
         setattr(panel._preview, "set_image", shown.append)
@@ -321,7 +321,7 @@ class TestLivePreview:  # pylint: disable=protected-access
         assert_that(shown).is_equal_to(["image-one"])
 
     def test_preview_is_requested_when_a_key_loads(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         calls: list[dict] = []
         panel.set_preview_provider(lambda appearance: calls.append(appearance) or None)  # type: ignore[func-returns-value]
 
@@ -330,7 +330,7 @@ class TestLivePreview:  # pylint: disable=protected-access
         assert_that(calls).is_length(1)
 
     def test_set_preview_image_updates_the_picture(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         shown: list[str | None] = []
         setattr(panel._preview, "set_image", shown.append)
 
@@ -339,7 +339,7 @@ class TestLivePreview:  # pylint: disable=protected-access
         assert_that(shown).is_equal_to(["abc"])
 
     def test_provider_failure_is_ignored(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
 
         def boom(_appearance: dict) -> str:
             raise RuntimeError("down")
@@ -352,7 +352,7 @@ class TestLivePreview:  # pylint: disable=protected-access
 
 class TestPanelStateReset:  # pylint: disable=protected-access
     def _dirty_panel(self):
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
         panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
         assert_that(panel.is_dirty).is_true()
@@ -389,7 +389,7 @@ class TestPanelStateReset:  # pylint: disable=protected-access
         assert_that(panel.is_dirty).is_false()
 
     def test_failed_save_stays_dirty_and_a_retry_sends_again(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         outcomes = iter([False, True])
         sent: list[dict] = []
 
@@ -409,7 +409,7 @@ class TestPanelStateReset:  # pylint: disable=protected-access
         assert_that(sent).is_length(2)
 
     def test_failed_save_does_not_swallow_the_server_echo_of_old_values(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1}, save=lambda s, a: False)
         panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
         panel._on_save()
@@ -417,7 +417,7 @@ class TestPanelStateReset:  # pylint: disable=protected-access
         assert_that(panel._loaded[1]).is_equal_to({"step": 1})  # type: ignore[index]
 
     def test_save_callback_returning_none_counts_as_saved(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
         panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
 
@@ -451,7 +451,7 @@ class TestThreadedPreview:  # pylint: disable=protected-access
         self, qapp, monkeypatch
     ):
         self._threaded(monkeypatch)
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         gate = threading.Event()
         ran_on: list[int] = []
         shown: list[str | None] = []
@@ -474,7 +474,7 @@ class TestThreadedPreview:  # pylint: disable=protected-access
 
     def test_a_late_reply_for_an_older_request_is_dropped(self, qapp, monkeypatch):  # pylint: disable=unused-argument
         self._threaded(monkeypatch)
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         first_gate, second_gate = threading.Event(), threading.Event()
         gates = iter([first_gate, second_gate])
         answers = iter(["old", "new"])
@@ -498,7 +498,7 @@ class TestThreadedPreview:  # pylint: disable=protected-access
 
     def test_a_reply_after_leaving_the_key_is_dropped(self, qapp, monkeypatch):  # pylint: disable=unused-argument
         self._threaded(monkeypatch)
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         gate = threading.Event()
         shown: list[str | None] = []
         setattr(panel._preview, "set_image", shown.append)
@@ -514,7 +514,7 @@ class TestThreadedPreview:  # pylint: disable=protected-access
 
     def test_a_failing_provider_in_the_thread_is_ignored(self, qapp, monkeypatch):  # pylint: disable=unused-argument
         self._threaded(monkeypatch)
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         called = threading.Event()
 
         def boom(_appearance: dict) -> str:
@@ -530,7 +530,7 @@ class TestThreadedPreview:  # pylint: disable=protected-access
 
 class TestPreviewRefreshes:  # pylint: disable=protected-access
     def test_a_successful_save_refreshes_the_preview(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel, {"step": 1})
         panel._settings_form._fields["step"].widget.setValue(7)  # type: ignore[attr-defined]
         panel._preview_timer.stop()
@@ -540,7 +540,7 @@ class TestPreviewRefreshes:  # pylint: disable=protected-access
         assert_that(panel._preview_timer.isActive()).is_true()
 
     def test_refresh_preview_soon_restarts_the_debounce(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel)
         panel._preview_timer.stop()
 
@@ -551,7 +551,7 @@ class TestPreviewRefreshes:  # pylint: disable=protected-access
 
 class TestBackgroundIntegration:  # pylint: disable=protected-access
     def test_legacy_string_background_is_clean_and_keeps_its_shape(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         captured: list[dict] = []
         _show(panel, {"step": 1}, {**_DEFAULTS, "background": "#336699"}, save=lambda s, a: captured.append(a))
 
@@ -564,7 +564,7 @@ class TestBackgroundIntegration:  # pylint: disable=protected-access
         assert_that(captured[0]["title"]["text"]).is_equal_to("hi")
 
     def test_stored_nested_background_survives_unrelated_edit(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         captured: list[dict] = []
         stored = _bg("#445566", "image", "pack:x/y.png")
         _show(panel, {"step": 1}, {**_DEFAULTS, "background": stored}, save=lambda s, a: captured.append(a))
@@ -574,7 +574,7 @@ class TestBackgroundIntegration:  # pylint: disable=protected-access
         assert_that(captured[0]["background"]).is_equal_to(stored)
 
     def test_editing_background_saves_nested_dict_and_previews_it(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         captured: list[dict] = []
         _show(panel, {"step": 1}, {**_DEFAULTS, "background": "#336699"}, save=lambda s, a: captured.append(a))
         panel._appearance_form._fields["background"].set(_bg("#000000", "none"))
@@ -586,14 +586,14 @@ class TestBackgroundIntegration:  # pylint: disable=protected-access
         assert_that(captured[0]["background"]["type"]).is_equal_to("none")
 
     def test_untouched_default_background_is_not_saved(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel)
 
         assert_that(panel._draft_appearance()).does_not_contain_key("background")
         assert_that(panel.is_dirty).is_false()
 
     def test_image_mode_with_empty_ref_is_dirty_and_keeps_type(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel)
         panel._appearance_form._fields["background"].set(_bg("#000000", "image", ""))
         panel._on_edited()
@@ -604,7 +604,7 @@ class TestBackgroundIntegration:  # pylint: disable=protected-access
 
 class TestFrozenTop:  # pylint: disable=protected-access
     def test_only_the_plugin_settings_scroll_under_a_separator(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel)
         page = panel.widget(1)
         assert page is not None
@@ -619,7 +619,7 @@ class TestFrozenTop:  # pylint: disable=protected-access
         assert_that(scroll.widget()).is_same_as(panel._settings_form)
 
     def test_the_appearance_rows_are_title_background_icon(self, qapp):  # pylint: disable=unused-argument
-        panel = ActionConfigPanel()
+        panel = CardConfigPanel()
         _show(panel)
 
         assert_that(list(panel._appearance_form._fields)).is_equal_to(["title", "background", "icon"])

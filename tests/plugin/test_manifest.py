@@ -7,7 +7,6 @@ from assertpy import assert_that
 
 from decker.common.platforms import PlatformSpec
 from decker.plugin.manifest import (
-    SUPPORTED_FORMAT,
     ManifestValidationError,
     PluginManifest,
 )
@@ -76,10 +75,10 @@ def _with_action(**action: Any) -> dict[str, Any]:
 
 def test_counter_manifest_parses() -> None:
     manifest = PluginManifest.from_dict(_counter())
-    assert_that(manifest.format).is_equal_to(SUPPORTED_FORMAT)
-    assert_that(manifest.actions[0].id).is_equal_to("com.decker.counter.counter")
-    assert_that(manifest.actions[0].gestures).is_equal_to({"press", "long_press"})
-    assert_that(manifest.actions[0].settings).is_length(4)
+    assert_that(manifest.format).is_equal_to(1)  # the fixture is a format 1 manifest, read through the legacy alias
+    assert_that(manifest.cards[0].id).is_equal_to("com.decker.counter.counter")
+    assert_that(manifest.cards[0].gestures).is_equal_to({"press", "long_press"})
+    assert_that(manifest.cards[0].settings).is_length(4)
     assert_that(manifest.runtime).is_not_none()
     assert manifest.runtime is not None
     assert_that(manifest.runtime.type).is_equal_to("python")
@@ -88,8 +87,8 @@ def test_counter_manifest_parses() -> None:
 
 
 def test_unknown_format_rejected() -> None:
-    with pytest.raises(ManifestValidationError, match="format 2"):
-        PluginManifest.from_dict(_counter(format=2))
+    with pytest.raises(ManifestValidationError, match="format 3"):
+        PluginManifest.from_dict(_counter(format=3))
 
 
 def test_missing_format_rejected() -> None:
@@ -128,7 +127,7 @@ def test_icon_pack_only_needs_no_runtime() -> None:
     del data["contributes"]["actions"]
     manifest = PluginManifest.from_dict(data)
     assert_that(manifest.runtime).is_none()
-    assert_that(manifest.actions).is_empty()
+    assert_that(manifest.cards).is_empty()
 
 
 def test_contribution_id_must_be_prefixed_by_plugin_id() -> None:
@@ -172,7 +171,7 @@ def test_runtime_type_must_be_python_or_executable() -> None:
 def test_action_gestures_default_to_press() -> None:
     data = _counter()
     del data["contributes"]["actions"][0]["gestures"]
-    assert_that(PluginManifest.from_dict(data).actions[0].gestures).is_equal_to({"press"})
+    assert_that(PluginManifest.from_dict(data).cards[0].gestures).is_equal_to({"press"})
 
 
 def test_invalid_settings_schema_becomes_manifest_error() -> None:
@@ -237,7 +236,7 @@ def test_page_in_action_settings_is_accepted() -> None:
     data = copy.deepcopy(_COUNTER)
     data["contributes"]["actions"][0]["settings"] = [{"key": "where", "type": "page", "label": "Where"}]
     manifest = PluginManifest.from_dict(data)
-    field = manifest.actions[0].settings[0]
+    field = manifest.cards[0].settings[0]
     assert isinstance(field, SettingField)
     assert_that(field.type).is_equal_to("page")
 
@@ -256,7 +255,7 @@ def _without_runtime(actions: list[dict[str, Any]]) -> dict[str, Any]:
 def test_static_action_without_runtime_is_valid() -> None:
     manifest = PluginManifest.from_dict(_without_runtime([_static_action()]))
     assert_that(manifest.runtime).is_none()
-    assert_that(manifest.actions[0].static).is_true()
+    assert_that(manifest.cards[0].static).is_true()
 
 
 def test_non_static_action_without_runtime_is_still_rejected() -> None:
@@ -269,7 +268,7 @@ def test_mixed_actions_with_runtime() -> None:
     data = _counter()
     data["contributes"]["actions"].append(_static_action())
     manifest = PluginManifest.from_dict(data)
-    assert_that([a.static for a in manifest.actions]).is_equal_to([False, True])
+    assert_that([a.static for a in manifest.cards]).is_equal_to([False, True])
 
 
 def test_static_must_be_boolean() -> None:
@@ -290,7 +289,7 @@ def test_static_action_with_gestures_rejected() -> None:
 
 def test_static_action_keeps_appearance_defaults_and_states() -> None:
     action = _static_action(appearance={"title": {"text": "{page_index}"}}, states=[{"title": "x"}])
-    spec = PluginManifest.from_dict(_without_runtime([action])).actions[0]
+    spec = PluginManifest.from_dict(_without_runtime([action])).cards[0]
     assert_that(spec.appearance).is_equal_to({"title": {"text": "{page_index}"}})
     assert_that(spec.states[0].title).is_equal_to("x")
 
@@ -298,7 +297,7 @@ def test_static_action_keeps_appearance_defaults_and_states() -> None:
 def test_action_appearance_may_declare_an_icon_default() -> None:
     icon = {"ref": "pack:com.decker.counter.icons/x.svg", "color": "#ff0000"}
     manifest = PluginManifest.from_dict(_with_action(appearance={"icon": icon}))
-    assert_that(manifest.actions[0].appearance).is_equal_to({"icon": icon})
+    assert_that(manifest.cards[0].appearance).is_equal_to({"icon": icon})
 
 
 def test_profile_in_global_settings_is_rejected() -> None:
@@ -338,3 +337,36 @@ def test_manifest_rejects_malformed_platform_values(overrides: dict[str, Any]) -
 def test_manifest_keeps_unknown_os_names() -> None:
     manifest = PluginManifest.from_dict(_counter(platforms=["Linux", "FreeBSD"]))
     assert_that(manifest.platforms).is_equal_to(PlatformSpec(("linux", "freebsd")))
+
+
+def _minimal(fmt: int, contributes: dict) -> dict:
+    return {
+        "format": fmt,
+        "id": "com.acme.demo",
+        "name": "Demo",
+        "version": "1.0.0",
+        "author": "Acme",
+        "contributes": contributes,
+    }
+
+
+def test_format_1_actions_are_read_as_cards() -> None:
+    manifest = PluginManifest.from_dict(
+        _minimal(1, {"actions": [{"id": "com.acme.demo.one", "name": "One", "static": True}]})
+    )
+
+    assert_that([c.id for c in manifest.cards]).is_equal_to(["com.acme.demo.one"])
+
+
+def test_format_2_has_cards_and_they_are_not_aliased_from_actions() -> None:
+    manifest = PluginManifest.from_dict(
+        _minimal(2, {"cards": [{"id": "com.acme.demo.one", "name": "One", "static": True}]})
+    )
+
+    assert_that([c.id for c in manifest.cards]).is_equal_to(["com.acme.demo.one"])
+    assert_that(manifest.format).is_equal_to(2)
+
+
+def test_format_2_rejects_the_old_actions_entries_as_cards() -> None:
+    with pytest.raises(ManifestValidationError):
+        PluginManifest.from_dict(_minimal(2, {"actions": [{"id": "com.acme.demo.one", "name": "One", "static": True}]}))
