@@ -132,3 +132,11 @@ def test_blank_ships_page_name_and_page_count_presets() -> None:
     assert_that(specs["com.decker.blank.pagecount"].appearance["title"]["text"]).is_equal_to(
         "{page_index} / {page_count}"
     )
+
+
+def test_core_ships_the_switch_card():
+    manifest = PluginManifest.load(BUILTIN_PLUGINS_DIR / "com.decker.core" / "manifest.json")
+
+    card = next(c for c in manifest.cards if c.id == "com.decker.core.switch")
+    assert_that(card.switch).is_true()
+    assert_that(card.name).is_equal_to("Switch")

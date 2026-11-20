@@ -20,6 +20,16 @@
           { "key": "action", "type": "action", "label": "Action" },
           { "key": "parameters", "type": "action_params", "label": "Parameters", "action_field": "action" }
         ]
+      },
+      {
+        "id": "com.decker.core.switch",
+        "name": "Switch",
+        "tooltip": "Runs actions or swaps the shown card on press, double press and long press",
+        "icon": "icons/blank",
+        "behavior": "switch",
+        "gestures": ["press"],
+        "appearance": { "background": "#000000" },
+        "settings": [{ "key": "slots", "type": "slots", "label": "Slots" }]
       }
     ],
     "actions": [

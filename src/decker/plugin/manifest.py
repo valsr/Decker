@@ -80,6 +80,7 @@ class CardSpec:
     settings: tuple[SettingEntry, ...] = ()
     appearance: dict[str, Any] = field(default_factory=dict, hash=False)
     static: bool = False
+    switch: bool = False  # a Switch card: its slots hold the cards and actions it shows and runs
     base: str | None = None  # the card this one is a preset of (only the Run Action card can be one)
     action: str | None = None  # the action a press runs, for a preset of Run Action
     action_settings: dict[str, Any] = field(default_factory=dict, hash=False)  # that action's preconfigured settings
@@ -91,8 +92,8 @@ class CardSpec:
 
     @property
     def headless(self) -> bool:
-        """Whether the card has no process of its own: a static preset or a card that runs an action."""
-        return self.static or self.bound
+        """Whether the card has no process of its own: a static preset, a card that runs an action or a Switch card."""
+        return self.static or self.bound or self.switch
 
 
 @dataclass(frozen=True)
@@ -167,7 +168,7 @@ class PluginManifest:
         cards = tuple(_parse_card(e, plugin_id) for e in _as_list(contributes.get("cards", []), "cards"))
         packs = tuple(_parse_icon_pack(e, plugin_id) for e in _as_list(contributes.get("icon_packs", []), "icon_packs"))
         actions = tuple(_parse_action(e, plugin_id) for e in _as_list(contributes.get("actions", []), "actions"))
-        needs_runtime = next((a for a in cards if not a.static and not a.bound), None)
+        needs_runtime = next((a for a in cards if not a.headless), None)
         if needs_runtime and runtime is None:
             raise ManifestValidationError(
                 f"manifest contributes cards but declares no runtime (card {needs_runtime.id} is not static)"
@@ -287,6 +288,7 @@ def _parse_card(entry: Any, plugin_id: str) -> CardSpec:
         raise ManifestValidationError(f"invalid card entry: {entry!r}")
     card_id = _parse_contribution_id(entry["id"], plugin_id, "card id")
     static = _parse_static(entry, card_id)
+    switch = _parse_behavior(entry, card_id)
     gestures = entry.get("gestures", ["press"])
     if (
         not isinstance(gestures, list)
@@ -312,6 +314,7 @@ def _parse_card(entry: Any, plugin_id: str) -> CardSpec:
         settings=_parse_settings(entry.get("settings", []), f"card {card_id} settings"),
         appearance=dict(appearance),
         static=static,
+        switch=switch,
         base=base,
         action=action,
         action_settings=action_settings,
@@ -352,6 +355,17 @@ def _parse_action(entry: Any, plugin_id: str) -> ActionSpec:
         icon=_optional_str(entry.get("icon")),
         settings=_parse_settings(entry.get("settings", []), f"action {action_id} settings"),
     )
+
+
+def _parse_behavior(entry: dict[str, Any], card_id: str) -> bool:
+    behavior = entry.get("behavior")
+    if behavior is None:
+        return False
+    if behavior != "switch":
+        raise ManifestValidationError(f"card {card_id} has unknown behavior {behavior!r}")
+    if entry.get("static") or "card" in entry:
+        raise ManifestValidationError(f"card {card_id} cannot be a switch and also static or a preset")
+    return True
 
 
 def _parse_static(entry: dict[str, Any], card_id: str) -> bool:
