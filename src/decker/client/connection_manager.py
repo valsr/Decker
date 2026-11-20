@@ -18,6 +18,7 @@ from rpyc.utils.helpers import BgServingThread, async_
 
 from decker.client import config as client_config
 from decker.client.events import (
+    ActionFailedEvent,
     AppRulesUpdatedEvent,
     CardListUpdatedEvent,
     DetectionStatusEvent,
@@ -582,6 +583,10 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         elif event_type == "plugin_failed":
             EventManager.get().push(
                 PluginLoadFailedEvent(plugin_uuid=str(data.get("plugin_id", "")), error=str(data.get("error", "")))
+            )
+        elif event_type == "action_failed":
+            EventManager.get().push(
+                ActionFailedEvent(action_id=str(data.get("action_id", "")), error=str(data.get("error", "")))
             )
         elif event_type == "open_url":
             EventManager.get().push(

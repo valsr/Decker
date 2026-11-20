@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from decker.client.context import AppContext
 from decker.client.events import (
+    ActionFailedEvent,
     AppRulesUpdatedEvent,
     DetectionStatusEvent,
     DeviceListUpdatedEvent,
@@ -144,6 +145,16 @@ class TestDispatch:
         window.dispatch(ServerConnectedEvent(host="localhost", port=18861))
 
         assert_that(window._active).is_equal_to(ViewName.DASHBOARD)  # pylint: disable=protected-access
+
+    def test_action_failed_shows_a_toast(self, window):  # pylint: disable=redefined-outer-name
+        window.switch_to(ViewName.DASHBOARD)
+
+        window.dispatch(ActionFailedEvent(action_id="com.t.http", error="HTTP 500"))
+
+        assert_that(window._toast.isHidden()).is_false()  # pylint: disable=protected-access
+        assert_that(window._toast.text()).contains("Action failed").contains(
+            "HTTP 500"
+        )  # pylint: disable=protected-access
 
     def test_plugin_load_failed_shows_toast_and_does_not_forward_to_view(
         self, window

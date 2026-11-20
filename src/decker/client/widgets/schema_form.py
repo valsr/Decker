@@ -22,6 +22,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from decker.client.context import AppContext
+from decker.client.widgets.action_edit import ActionEdit, fetch_actions
 from decker.client.widgets.background_edit import BackgroundEdit
 from decker.client.widgets.color_button import ColorButton
 from decker.client.widgets.icon_edit import IconEdit
@@ -160,6 +162,16 @@ def _profile_field(_entry: dict[str, Any]) -> _Field:
     return _Field(edit, edit.value, edit.set_value)
 
 
+def _action_field(_entry: dict[str, Any]) -> _Field:
+    edit = ActionEdit()
+    return _Field(edit, edit.value, edit.set_value)
+
+
+def _action_params_field(_entry: dict[str, Any]) -> _Field:
+    edit = ActionParamsEdit()
+    return _Field(edit, edit.value, edit.set_value)
+
+
 def _text_style_field(_entry: dict[str, Any]) -> _Field:
     edit = TextStyleEdit()
     return _Field(edit, edit.value, edit.set_value)
@@ -177,6 +189,8 @@ _BUILDERS: dict[str, Callable[[dict[str, Any]], _Field]] = {
     "background": _background_field,
     "page": _page_field,
     "profile": _profile_field,
+    "action": _action_field,
+    "action_params": _action_params_field,
     "text_style": _text_style_field,
 }
 
@@ -195,7 +209,9 @@ def _build_field(entry: dict[str, Any], values: dict[str, Any]) -> _Field | None
 
 def _watch(widget: QWidget, slot: Callable[[], None]) -> None:
     """Call ``slot`` once per user edit of ``widget``; controls inside a composite or spin box are not watched twice."""
-    if isinstance(widget, (BackgroundEdit, IconEdit, PageEdit, ProfileEdit, TextStyleEdit)):
+    if isinstance(
+        widget, (ActionEdit, ActionParamsEdit, BackgroundEdit, IconEdit, PageEdit, ProfileEdit, TextStyleEdit)
+    ):
         widget.value_changed.connect(slot)
     elif isinstance(widget, ColorButton):
         widget.color_changed.connect(lambda _color: slot())
@@ -242,6 +258,7 @@ class SchemaForm(QWidget):
             label = entry.get("label", entry["key"])
             self._layout.addRow(f"{label}:", field.widget)
         self._link_profile_fields(schema)
+        self._link_action_fields(schema)
         for field in self._fields.values():  # after linking, so a profile change clears the page before `changed`
             _watch(field.widget, self.changed.emit)
 
@@ -259,9 +276,73 @@ class SchemaForm(QWidget):
                     lambda pe=profile_edit, ge=page_edit: ge.set_profile(pe.value(), clear_missing=True)
                 )
 
+    def _link_action_fields(self, schema: list[dict[str, Any]]) -> None:
+        """Make each action_params field show the settings of the action chosen in its ``action_field``."""
+        for entry in schema:
+            chosen = self._fields.get(str(entry.get("action_field", "")))
+            params = self._fields.get(str(entry.get("key"))) if chosen is not None else None
+            if chosen is None or params is None:
+                continue
+            action_edit, params_edit = chosen.widget, params.widget
+            if isinstance(action_edit, ActionEdit) and isinstance(params_edit, ActionParamsEdit):
+                params_edit.set_action(action_edit.value(), params_edit.value())
+                action_edit.value_changed.connect(lambda ae=action_edit, pe=params_edit: pe.set_action(ae.value(), {}))
+
     def values(self) -> dict[str, Any]:
         """The values currently entered, keyed by schema key."""
         return {key: field.get() for key, field in self._fields.items()}
+
+
+class ActionParamsEdit(QWidget):
+    """The settings form of one action; the owner tells it which action with ``set_action``."""
+
+    value_changed = pyqtSignal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._form = SchemaForm()
+        self._hint = QLabel()
+        self._hint.setProperty("role", "muted")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._hint)
+        layout.addWidget(self._form)
+        self._action = ""
+        self._known = False
+        self._pending: dict[str, Any] = {}
+        self._form.changed.connect(self.value_changed.emit)
+
+    def value(self) -> dict[str, Any]:
+        """The action's settings as entered (the stored ones while its action cannot be shown)."""
+        return self._form.values() if self._action and self._known else dict(self._pending)
+
+    def set_value(self, value: Any) -> None:
+        """Remember stored settings; they show once ``set_action`` names their action. Emits nothing."""
+        self._pending = dict(value) if isinstance(value, dict) else {}
+        if self._action:
+            self.set_action(self._action, self._pending)
+
+    def set_action(self, action_id: str, values: dict[str, Any]) -> None:
+        """Show the settings form of ``action_id`` filled from ``values``; an empty id shows nothing. Emits nothing."""
+        self._action = action_id
+        self._pending = dict(values)
+        schema: list[dict[str, Any]] = []
+        known = False
+        for action in fetch_actions(AppContext.get().connection_manager) or []:
+            if str(action.get("action_uuid")) == action_id:
+                schema, known = list(action.get("settings_schema") or []), True
+        self._known = known
+        self._form.blockSignals(True)
+        self._form.set_schema(schema, self._pending)
+        self._form.blockSignals(False)
+        if not action_id:
+            self._hint.setText("Choose an action first")
+        elif not known:
+            self._hint.setText("This action is not available")
+        else:
+            self._hint.setText("" if schema else "This action has no settings")
+        self._hint.setVisible(bool(self._hint.text()))
+        self._form.setVisible(bool(schema))
 
 
 def _clear_layout(layout: QHBoxLayout | QVBoxLayout | QGridLayout) -> None:

@@ -21,6 +21,7 @@ from decker.client.call_bridge import CallBridge
 from decker.client.connection_manager import ConnectionManager
 from decker.client.context import AppContext
 from decker.client.events import (
+    ActionFailedEvent,
     AppEvent,
     CardListUpdatedEvent,
     DeviceListUpdatedEvent,
@@ -250,6 +251,7 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         em.subscribe(ServerDisconnectedEvent, self._on_server_disconnected)
         em.subscribe(ServerConnectedEvent, self._on_server_connected)
         em.subscribe(PluginLoadFailedEvent, self._on_plugin_load_failed)
+        em.subscribe(ActionFailedEvent, self._on_action_failed)
         em.subscribe(OpenUrlRequestedEvent, self._on_open_url_requested)
         em.subscribe(PluginInstallFinishedEvent, self._on_plugin_install_finished)
         em.subscribe(PluginUpdatesAvailableEvent, self._on_updates_available)
@@ -278,6 +280,10 @@ class MainWindow(QMainWindow):  # pylint: disable=too-many-instance-attributes
         refresh_install_allowed()
         self.switch_to(self._last_view or ViewName.DASHBOARD)
         self._last_view = None
+        return True
+
+    def _on_action_failed(self, event: ActionFailedEvent) -> bool:
+        self._show_toast(f"Action failed: {event.error}")
         return True
 
     def _on_plugin_load_failed(self, event: PluginLoadFailedEvent) -> bool:
