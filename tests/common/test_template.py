@@ -3,7 +3,7 @@ import time
 import pytest
 from assertpy import assert_that
 
-from decker.common.template import TEMPLATE_VARIABLES, expand_template
+from decker.common.template import TEMPLATE_VARIABLES, expand_template, template_names
 
 VARS = {"page_name": "Home", "page_index": "2", "page_count": "5"}
 
@@ -57,3 +57,7 @@ def test_variable_names_are_published():
     assert_that(TEMPLATE_VARIABLES).is_equal_to(
         ("page_name", "page_index", "page_count", "current_profile", "profile_id")
     )
+
+
+def test_template_names() -> None:
+    assert_that(template_names("a {x} {{y}} {z_1}")).is_equal_to(frozenset({"x", "z_1"}))
