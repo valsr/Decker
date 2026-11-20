@@ -67,15 +67,6 @@ def test_remembered_slot_cleared_falls_back_to_display() -> None:
     assert_that(controller.shown_slot("c", _slots(display=_card("d")))).is_equal_to("display")
 
 
-def test_forget_resets_to_display() -> None:
-    controller = SwitchController()
-    slots = _slots(display=_card("d"), press=_card("a"))
-    controller.handle("c", slots, Gesture.PRESS)
-    controller.forget("c")
-    controller.forget("missing")
-    assert_that(controller.shown_slot("c", slots)).is_equal_to("display")
-
-
 def test_all_empty_slots_do_nothing() -> None:
     controller = SwitchController()
     slots = _slots()

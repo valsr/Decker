@@ -57,11 +57,6 @@ class SwitchController:
             self._shown[context_id] = name
         return SwitchOutcome(show=name)
 
-    def forget(self, context_id: str) -> None:
-        """Drop the remembered slot of a context."""
-        with self._lock:
-            self._shown.pop(context_id, None)
-
     def _shown_locked(self, context_id: str, slots: Mapping[str, Any]) -> str | None:
         remembered = self._shown.get(context_id)
         for name in (remembered, "display", "press"):

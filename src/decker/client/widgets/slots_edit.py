@@ -19,12 +19,12 @@ from PyQt6.QtWidgets import (
 from decker.client.card_icons import asset_pixmap, card_pixmap, placeholder_pixmap
 from decker.client.context import AppContext
 from decker.client.icon_picker import RpcCaller
+from decker.client.widgets.sidebar import CARD_MIME_TYPE
 from decker.common.appearance_schema import APPEARANCE_SCHEMA
 from decker.common.background import normalize_background
 from decker.common.slots import SLOT_NAMES, SWITCH_CARD_ID, normalize_slots
 from decker.common.text_style import fold_legacy_title
 
-CARD_MIME_TYPE = "application/x-decker-card"
 _TITLES = {"display": "Display", "press": "Press", "double_press": "Double Press", "long_press": "Long Press"}
 _ICON_PX = 40
 _EMPTY = "Drop a card here"
