@@ -142,7 +142,7 @@ A card is what a key shows: it draws an image and a title, and may react to pres
 | `settings` | [Settings schema](settings-schema.md) for the per-key form. |
 | `static` | `true` makes a preset: no code handles it, no process is started, a press does nothing, and the key shows only its Decker-drawn `appearance` (and `states[0]`). A static card cannot declare `settings` or `gestures`. A plugin whose cards are all static needs no `runtime`. |
 | `card` | Makes this card a preset of another card. The only base is the built-in **Run Action** card, `com.decker.core.runaction`. Together with `action` it gives a ready-made key such as "Volume Up". Not valid together with `static`. |
-| `behavior` | `"switch"` makes a headless card the server hosts itself, with no process (the built-in Switch card, `com.decker.core.switch`, whose `slots` setting embeds other cards and actions). Any other value is a manifest error, and a switch cannot also be `static` or a preset. Built-in only in v1: the loader accepts it from any plugin, but it is not a supported extension point. |
+| `behavior` | `"switch"` makes a headless card the server hosts itself, with no process (the built-in Switch card, `com.decker.core.switch`, whose `slots` setting embeds other cards and actions). Any other value is a manifest error, and a switch cannot also be `static` or a preset. Only the built-in `com.decker.core.switch` may declare it; on any other card it is a manifest error. |
 | `action` | With `card`: the id of the [action](#actions) a press runs. It may belong to any plugin. |
 | `action_settings` | With `card`: the action's preconfigured settings. The card's own `settings` values, if it declares any, override them. |
 

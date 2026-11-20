@@ -10,6 +10,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 
 from decker.common.appearance_schema import APPEARANCE_KEYS
 from decker.common.platforms import PlatformSpec, parse_platform_spec
+from decker.common.slots import SWITCH_CARD_ID
 from decker.plugin.settings_schema import (
     SettingEntry,
     SettingField,
@@ -363,6 +364,10 @@ def _parse_behavior(entry: dict[str, Any], card_id: str) -> bool:
         return False
     if behavior != "switch":
         raise ManifestValidationError(f"card {card_id} has unknown behavior {behavior!r}")
+    if card_id != SWITCH_CARD_ID:
+        raise ManifestValidationError(
+            f"card {card_id}: behavior 'switch' is reserved for Decker's built-in Switch card"
+        )
     if entry.get("static") or "card" in entry:
         raise ManifestValidationError(f"card {card_id} cannot be a switch and also static or a preset")
     return True
