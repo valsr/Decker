@@ -338,7 +338,7 @@ QSplitter::handle {
     background-color: $window;
 }
 
-ActionConfigPanel {
+CardConfigPanel {
     border-top: 1px solid $border;
 }
 

@@ -19,8 +19,8 @@ _APP_RULES_CHANGED_EVENT = "app_rules_changed"
 class PageController(Manager):
     """Tracks which page and profile each device shows and performs page and profile lifecycle changes.
 
-    Only the active page's actions are live: switching pages deactivates the old page's actions,
-    redraws the hardware from the new page's cached images, then activates the new page's actions.
+    Only the active page's cards are live: switching pages deactivates the old page's cards,
+    redraws the hardware from the new page's cached images, then activates the new page's cards.
     Every change pushes a pages_changed event so clients refresh (profile changes also push profiles_changed). Active
     pages are held in memory and always belong to the device's active profile, which the page store persists; each
     device starts on its active profile's default page.
@@ -95,7 +95,7 @@ class PageController(Manager):
             )
 
     def restore(self, device_id: str) -> None:
-        """Show the device's active page and activate its actions (used at server start)."""
+        """Show the device's active page and activate its cards (used at server start)."""
         with self._lock:
             self._show(device_id, self.active_page_id(device_id))
 
@@ -168,7 +168,7 @@ class PageController(Manager):
         return True
 
     def clone_profile(self, device_id: str, profile_id: int) -> ProfileInfo | None:
-        """Copy a profile with its pages and keys (new action instances); the copy does not become active."""
+        """Copy a profile with its pages and keys (new card instances); the copy does not become active."""
         with self._lock:
             cloned = self._ctx.page_store.clone_profile(device_id, profile_id)
             if cloned is None:
@@ -249,7 +249,7 @@ class PageController(Manager):
     def _hide(self, device_id: str, page_id: str) -> None:
         plugins = self._ctx.plugin_manager
         for _key_index, assignment in self._ctx.key_assignment_store.all_for_page(device_id, page_id):
-            plugins.deactivate_action(assignment.target)
+            plugins.deactivate_card(assignment.target)
 
     def _show(self, device_id: str, page_id: str) -> None:
         drawn = self._ctx.device_manager.show_page(device_id, page_id)
@@ -262,7 +262,7 @@ class PageController(Manager):
             plugins.store_settings(target, assignment.settings)
             # a key whose last image is already on the hardware is not redrawn bare before its plugin answers
             cached = state is not None and state.has_image(key_index)
-            plugins.activate_action(target, assignment.appearance, draw=not cached)
+            plugins.activate_card(target, assignment.appearance, draw=not cached)
 
     def _notify(self, device_id: str, profiles: bool = False) -> None:
         payload = json.dumps({"device_id": device_id})

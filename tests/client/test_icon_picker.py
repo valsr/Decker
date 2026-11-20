@@ -10,7 +10,7 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from decker.client.action_icons import decode_icon
+from decker.client.card_icons import decode_icon
 from decker.client.icon_cache import IconThumbnailCache
 from decker.client.icon_picker import (
     MAX_IMPORT_BYTES,

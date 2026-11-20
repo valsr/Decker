@@ -1,4 +1,4 @@
-"""Pixmaps for plugin actions: the icon the server sent, or a generated letter tile."""
+"""Pixmaps for plugin cards: the icon the server sent, or a generated letter tile."""
 
 import base64
 import binascii
@@ -9,15 +9,15 @@ from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 
 from decker.client.widgets.color_tool_button import hex_to_qcolor
 
-# Muted tile colours that keep white text readable (WCAG AA); chosen per action so tiles stay stable.
+# Muted tile colours that keep white text readable (WCAG AA); chosen per card so tiles stay stable.
 _PLACEHOLDER_COLORS = ("#3b6ea8", "#7a4fa0", "#2f7d68", "#a8532f", "#8a6d1f", "#4f5b70")
 
 
-def action_pixmap(action: dict[str, str], size: int) -> QPixmap:
-    """Return the action's icon scaled to size×size, or a letter tile if it has no usable icon."""
-    pixmap = decode_icon(action.get("icon_b64", ""))
+def card_pixmap(card: dict[str, str], size: int) -> QPixmap:
+    """Return the card's icon scaled to size×size, or a letter tile if it has no usable icon."""
+    pixmap = decode_icon(card.get("icon_b64", ""))
     if pixmap is None:
-        return placeholder_pixmap(action.get("action_name", ""), size)
+        return placeholder_pixmap(card.get("card_name", ""), size)
     return pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
 

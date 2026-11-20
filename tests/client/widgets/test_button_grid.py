@@ -252,9 +252,9 @@ class TestKeyPlayButton:  # pylint: disable=protected-access,unused-argument
         button = _key(4)
         button.show()
         dropped: list[tuple[int, object]] = []
-        button.action_dropped.connect(lambda i, d: dropped.append((i, d)))
+        button.card_dropped.connect(lambda i, d: dropped.append((i, d)))
         mime = QMimeData()
-        mime.setData("application/x-decker-action", QByteArray(json.dumps({"plugin_uuid": "p"}).encode()))
+        mime.setData("application/x-decker-card", QByteArray(json.dumps({"plugin_uuid": "p"}).encode()))
         center = QPointF(button._run_button.geometry().center())
 
         event = QDropEvent(
@@ -638,9 +638,9 @@ class TestKeyDropTarget:  # pylint: disable=protected-access,unused-argument
     def test_action_drops_still_work(self, qapp):
         button = _key(4)
         dropped: list[tuple[int, object]] = []
-        button.action_dropped.connect(lambda i, d: dropped.append((i, d)))
+        button.card_dropped.connect(lambda i, d: dropped.append((i, d)))
         mime = QMimeData()
-        mime.setData("application/x-decker-action", QByteArray(json.dumps({"plugin_uuid": "p"}).encode()))
+        mime.setData("application/x-decker-card", QByteArray(json.dumps({"plugin_uuid": "p"}).encode()))
 
         button.dropEvent(
             QDropEvent(
@@ -710,7 +710,7 @@ class TestCopyBadge:  # pylint: disable=protected-access,unused-argument
         button = _key(7)
         button.show()
 
-        _drag_move(button, Qt.KeyboardModifier.ControlModifier, "application/x-decker-action")
+        _drag_move(button, Qt.KeyboardModifier.ControlModifier, "application/x-decker-card")
 
         assert_that(button._copy_badge.isVisible()).is_false()
 

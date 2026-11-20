@@ -23,15 +23,15 @@ poe cli plugin remove com.example.hello
 ## A minimal action
 
 ```python
-from decker_plugin_sdk import ActionContext, DeckerPlugin, action
+from decker_plugin_sdk import CardContext, DeckerPlugin, card
 
 
-@action("com.example.hello.greet")
+@card("com.example.hello.greet")
 class Greet(DeckerPlugin):
-    def on_will_appear(self, ctx: ActionContext) -> None:
+    def on_will_appear(self, ctx: CardContext) -> None:
         ctx.set_title(ctx.settings.get("name", "world"))
 
-    def on_press(self, ctx: ActionContext) -> None:
+    def on_press(self, ctx: CardContext) -> None:
         ctx.set_title("Hello!")
 ```
 
@@ -62,7 +62,7 @@ font = ImageFont.truetype(path, 24) if path else ImageFont.load_default(24)  # N
 
 Sized `ImageFont.load_default(size)` needs Pillow >= 10.1.
 
-## ActionContext
+## CardContext
 
 Attributes: `context`, `action`, `device`, `key_index`, `column`, `row`, `settings`, `global_settings`, `state`.
 

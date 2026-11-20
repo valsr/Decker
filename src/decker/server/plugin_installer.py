@@ -148,7 +148,7 @@ class PluginInstaller:
             shutil.rmtree(folder, ignore_errors=True)
             return set()
         for target in plugins.live_targets(plugin_id):
-            plugins.deactivate_action(target)
+            plugins.deactivate_card(target)
         plugins.remove_plugin(plugin_id)
         devices = self._clear_assignments(plugin_id)
         plugins.delete_plugin_settings(plugin_id)
@@ -163,7 +163,7 @@ class PluginInstaller:
         return folder if folder.is_dir() and not folder.is_symlink() else None
 
     def usage(self, plugin_id: str) -> int:
-        """Return how many keys, across all devices and pages, use the plugin's actions."""
+        """Return how many keys, across all devices and pages, use the plugin's cards."""
         return len(self._context.key_assignment_store.assignments_for_plugin(plugin_id))
 
     # ------------------------------------------------------------------
@@ -296,7 +296,7 @@ class PluginInstaller:
             preexisting=final.exists(),
         )
         for target in targets:
-            plugins.deactivate_action(target)
+            plugins.deactivate_card(target)
         if existing is not None:
             plugins.remove_plugin(manifest.id)
         try:
@@ -317,13 +317,13 @@ class PluginInstaller:
         for device_id, page_id, _key_index, assignment in ctx.key_assignment_store.assignments_for_plugin(plugin_id):
             if ctx.page_controller.active_page_id(device_id) == page_id:
                 ctx.plugin_manager.store_settings(assignment.target, assignment.settings)
-                ctx.plugin_manager.activate_action(assignment.target, assignment.appearance)
+                ctx.plugin_manager.activate_card(assignment.target, assignment.appearance)
 
     def _roll_back(self, swap: _Swap) -> None:
         plugins = self._context.plugin_manager
         try:
             for target in plugins.live_targets(swap.plugin_id):
-                plugins.deactivate_action(target)
+                plugins.deactivate_card(target)
             plugins.remove_plugin(swap.plugin_id)
             if swap.old.exists():
                 shutil.rmtree(swap.final, ignore_errors=True)

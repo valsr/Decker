@@ -11,7 +11,7 @@ from PIL import Image
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import PluginManifest
 from decker.plugin.protocol import Message
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from tests.server.animation_fixture import (
     WriteLog,
     make_gif,
@@ -86,8 +86,8 @@ def deck_env_fixture(tmp_path):
             environment.manager.destroy()
 
 
-def _target(device_id: str = "dev", key: int = 2) -> ActionTarget:
-    return ActionTarget("com.t.static", _STATIC_ACTION, f"ctx-bg-{key}", device_id, key)
+def _target(device_id: str = "dev", key: int = 2) -> CardTarget:
+    return CardTarget("com.t.static", _STATIC_ACTION, f"ctx-bg-{key}", device_id, key)
 
 
 def _animation(env: Env, device_id: str, key: int) -> Any:
@@ -98,7 +98,7 @@ def _animation(env: Env, device_id: str, key: int) -> Any:
 
 def test_image_background_from_a_library_ref_appears_in_the_composed_png(env):
     target = _target(key=0)
-    env.manager.activate_action(target, _bg("blue.png"))
+    env.manager.activate_card(target, _bg("blue.png"))
 
     assert_that(_pixel(env.image(), 5, 5)).is_equal_to((0, 0, 255))
     assert_that(_pixel(env.image(), 138, 138)).is_equal_to((0, 0, 255))
@@ -106,7 +106,7 @@ def test_image_background_from_a_library_ref_appears_in_the_composed_png(env):
 
 def test_ref_to_uninstalled_pack_falls_back_to_black(env):
     target = _target(key=0)
-    env.manager.activate_action(target, _bg("blue.png"))
+    env.manager.activate_card(target, _bg("blue.png"))
 
     env.manager.remove_plugin("com.t.bg")
 
@@ -116,7 +116,7 @@ def test_ref_to_uninstalled_pack_falls_back_to_black(env):
 
 def test_empty_or_bad_ref_falls_back_to_black(env):
     target = _target(key=0)
-    env.manager.activate_action(target, {"background": {"type": "image", "image": {"ref": ""}}})
+    env.manager.activate_card(target, {"background": {"type": "image", "image": {"ref": ""}}})
     assert_that(_pixel(env.image(), 5, 5)).is_equal_to((0, 0, 0))
 
     env.manager.set_appearance(target, {"background": {"type": "image", "image": {"ref": _ref("missing.png")}}})
@@ -125,7 +125,7 @@ def test_empty_or_bad_ref_falls_back_to_black(env):
 
 def test_background_image_is_read_only_in_image_mode(env, monkeypatch):
     target = _target(key=0)
-    env.manager.activate_action(target, {})
+    env.manager.activate_card(target, {})
     reads: list[Any] = []
     real = env.manager.icon_packs.read_ref
 
@@ -149,7 +149,7 @@ def test_background_image_is_read_only_in_image_mode(env, monkeypatch):
 
 def test_preview_image_with_draft_background_matches_the_applied_result(env):
     target = _target(key=0)
-    env.manager.activate_action(target, {})
+    env.manager.activate_card(target, {})
     draft = _bg("blue.png")
 
     preview = env.manager.preview_image(target, draft)
@@ -161,7 +161,7 @@ def test_preview_image_with_draft_background_matches_the_applied_result(env):
 
 def test_changed_library_image_is_picked_up_on_the_next_recompose(env, tmp_path):
     target = _target(key=0)
-    env.manager.activate_action(target, _bg("blue.png"))
+    env.manager.activate_card(target, _bg("blue.png"))
     (tmp_path / "bg" / "pack" / "blue.png").write_bytes(_png("#ff00ff"))
 
     env.manager.set_appearance(target, _bg("blue.png"))
@@ -170,7 +170,7 @@ def test_changed_library_image_is_picked_up_on_the_next_recompose(env, tmp_path)
 
 
 def test_legacy_string_background_in_stored_appearance_still_renders(env):
-    env.manager.activate_action(_target(key=0), {"background": "#ff0000"})
+    env.manager.activate_card(_target(key=0), {"background": "#ff0000"})
 
     assert_that(_pixel(env.image(), 5, 5)).is_equal_to((255, 0, 0))
 
@@ -178,7 +178,7 @@ def test_legacy_string_background_in_stored_appearance_still_renders(env):
 def test_gif_background_with_static_icon_registers_an_animation(deck_env):
     env, device_id, _plugin = deck_env
 
-    env.manager.activate_action(_target(device_id), _bg("bg.gif"))
+    env.manager.activate_card(_target(device_id), _bg("bg.gif"))
 
     spec = _animation(env, device_id, 2)
     assert spec is not None
@@ -190,7 +190,7 @@ def test_animated_icon_override_wins_over_gif_background(deck_env):
     env, device_id, _plugin = deck_env
     appearance = {**_bg("bg.gif"), "icon": {"ref": _ref("icon.gif")}}
 
-    env.manager.activate_action(_target(device_id), appearance)
+    env.manager.activate_card(_target(device_id), appearance)
 
     spec = _animation(env, device_id, 2)
     assert spec is not None
@@ -219,7 +219,7 @@ def test_animated_background_resumes_when_the_device_reopens(deck_env):
 def test_repeated_set_image_over_an_animated_background_shares_one_gif_copy(deck_env):
     env, device_id, _plugin = deck_env
     target = _target(device_id)
-    env.manager.activate_action(target, _bg("bg.gif"))
+    env.manager.activate_card(target, _bg("bg.gif"))
 
     for index in range(50):
         image = base64.b64encode(_png(f"#{index:02x}ff00", 8)).decode()
@@ -253,7 +253,7 @@ def test_pack_removal_redraws_a_manifest_default_background(env, tmp_path):
         }
     )
     env.manager.add_plugin(InstalledPlugin(manifest, root))
-    env.manager.activate_action(ActionTarget("com.t.bgpreset", "com.t.bgpreset.key", "ctx-preset", "dev", 0), {})
+    env.manager.activate_card(CardTarget("com.t.bgpreset", "com.t.bgpreset.key", "ctx-preset", "dev", 0), {})
     assert_that(_pixel(env.image(), 5, 5)).is_equal_to((0, 0, 255))
 
     env.manager.remove_plugin("com.t.bg")

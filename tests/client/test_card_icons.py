@@ -1,4 +1,4 @@
-"""Tests for decker.client.action_icons."""
+"""Tests for decker.client.card_icons."""
 
 import base64
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 from assertpy import assert_that
 from PyQt6.QtCore import Qt
 
-from decker.client.action_icons import action_pixmap, decode_icon, placeholder_pixmap
+from decker.client.card_icons import card_pixmap, decode_icon, placeholder_pixmap
 
 _COUNTER_PNG = Path(__file__).parents[1] / "fixtures" / "plugins" / "com.decker.testfixture" / "icons" / "counter.png"
 
@@ -35,12 +35,12 @@ class TestDecodeIcon:
 
 class TestActionPixmap:
     def test_scales_icon_to_size(self, qapp):  # pylint: disable=unused-argument
-        pixmap = action_pixmap({"action_name": "Counter", "icon_b64": _b64(_COUNTER_PNG.read_bytes())}, 32)
+        pixmap = card_pixmap({"card_name": "Counter", "icon_b64": _b64(_COUNTER_PNG.read_bytes())}, 32)
 
         assert_that((pixmap.width(), pixmap.height())).is_equal_to((32, 32))
 
     def test_falls_back_to_letter_tile(self, qapp):  # pylint: disable=unused-argument
-        pixmap = action_pixmap({"action_name": "Open URL", "icon_b64": ""}, 40)
+        pixmap = card_pixmap({"card_name": "Open URL", "icon_b64": ""}, 40)
 
         assert_that(pixmap.toImage()).is_equal_to(placeholder_pixmap("Open URL", 40).toImage())
 

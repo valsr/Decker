@@ -29,14 +29,14 @@ from decker.plugin.loader import (
     PluginLoader,
     recover_interrupted_installs,
 )
-from decker.plugin.manifest import ActionSpec
+from decker.plugin.manifest import CardSpec
 from decker.plugin.protocol import Message
 from decker.plugin.runtime.launcher import launch_command, launch_env
 from decker.plugin.runtime.process import PluginProcess
 from decker.plugin.runtime.supervisor import PluginSupervisor, SupervisorPolicy
 from decker.plugin.settings_schema import apply_schema, schema_to_json
 from decker.plugin.settings_store import PluginSettingsStore
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.appearance import (
     PACK_ICON_SCALE,
     Composed,
@@ -70,27 +70,27 @@ _OPEN_URL_SCHEMES = ("http", "https")
 _StateChangedCallback = Callable[[str, int], None]
 
 
-class _ActionsHandler:
-    """The "actions" contribution handler: delegates to the PluginManager's process and action logic."""
+class _CardsHandler:
+    """The "cards" contribution handler: delegates to the PluginManager's process and card logic."""
 
-    kind = "actions"
+    kind = "cards"
 
     def __init__(self, manager: "PluginManager") -> None:
         self._manager = manager
 
     def register(self, plugin: InstalledPlugin) -> None:
-        self._manager.register_actions(plugin)
+        self._manager.register_cards(plugin)
 
     def unregister(self, plugin_id: str) -> None:
-        self._manager.unregister_actions(plugin_id)
+        self._manager.unregister_cards(plugin_id)
 
 
 @dataclass
 class _Live:  # pylint: disable=too-many-instance-attributes
-    """One active action instance: where it is, what it declared and how its gestures are recognised."""
+    """One active card instance: where it is, what it declared and how its gestures are recognised."""
 
-    target: ActionTarget
-    action: ActionSpec
+    target: CardTarget
+    card: CardSpec
     recognizer: GestureRecognizer
     gestures: frozenset[Gesture]
     settings: dict[str, Any]
@@ -107,7 +107,7 @@ def _uses_pack_icon(live: _Live) -> bool:
     if live.plugin_icon_ref is not None:
         return True
     # The resolved look, like _compose: a manifest-default icon or background ref counts too.
-    appearance = resolve_appearance(live.action.appearance, live.appearance)
+    appearance = resolve_appearance(live.card.appearance, live.appearance)
     background = appearance["background"]
     return bool(appearance["icon"]["ref"]) or (background["type"] == "image" and bool(background["image"]["ref"]))
 
@@ -144,13 +144,13 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._hellos: dict[str, dict[str, Any]] = {}
         self._sink: StreamDeckHardwareSink = StreamDeckHardwareSink(None, self._set_key_label)
         self._state_changed_cb: _StateChangedCallback | None = None
-        self.settings_persister: Callable[[ActionTarget, dict[str, Any]], None] | None = None
+        self.settings_persister: Callable[[CardTarget, dict[str, Any]], None] | None = None
         if policy is None:
             limit = int(config.get_or_default("plugin.memory_limit", _DEFAULT_MEMORY_LIMIT))
             policy = SupervisorPolicy(memory_limit=limit)
         self._supervisor = PluginSupervisor(policy, PluginProcess, self._on_plugin_message, self._on_plugin_failed)
         self.icon_packs = IconPackRegistry(on_failure=self._record_failure)
-        self._contributions = ContributionRegistry([_ActionsHandler(self), self.icon_packs])
+        self._contributions = ContributionRegistry([_CardsHandler(self), self.icon_packs])
 
     def create(self, context: "ServerContext") -> None:
         """Wire up the device manager, then scan plugins and start the supervisor."""
@@ -197,7 +197,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._settings_store.close()
 
     def add_plugin(self, plugin: InstalledPlugin) -> None:
-        """Register a plugin's contributions; an actions plugin's process starts when its first action appears."""
+        """Register a plugin's contributions; an cards plugin's process starts when its first card appears."""
         manifest = plugin.manifest
         host = detect_platform()
         if not platform_supports(manifest.platforms, host):
@@ -211,8 +211,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._record_failure(manifest.id, str(exc))
         self._recompose_icon_users()
 
-    def register_actions(self, plugin: InstalledPlugin) -> None:
-        """Register a plugin's actions with the supervisor (the "actions" contribution handler)."""
+    def register_cards(self, plugin: InstalledPlugin) -> None:
+        """Register a plugin's cards with the supervisor (the "cards" contribution handler)."""
         manifest = plugin.manifest
         if manifest.runtime is None:
             return
@@ -251,8 +251,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         for live in users:
             self._recompose(live)
 
-    def unregister_actions(self, plugin_id: str) -> None:
-        """Stop a plugin's process and drop its live instances (the "actions" contribution handler)."""
+    def unregister_cards(self, plugin_id: str) -> None:
+        """Stop a plugin's process and drop its live instances (the "cards" contribution handler)."""
         with self._lock:
             dropped = [c for c, live in self._live.items() if live.target.plugin_uuid == plugin_id]
             recognizers = [self._live.pop(c).recognizer for c in dropped]
@@ -302,8 +302,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Forget every persisted setting of a plugin (used on uninstall)."""
         self._settings_store.delete_plugin(plugin_id)
 
-    def live_targets(self, plugin_id: str) -> list[ActionTarget]:
-        """Return the action instances currently active for a plugin."""
+    def live_targets(self, plugin_id: str) -> list[CardTarget]:
+        """Return the card instances currently active for a plugin."""
         with self._lock:
             return [live.target for live in self._live.values() if live.target.plugin_uuid == plugin_id]
 
@@ -312,29 +312,29 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         with self._lock:
             return list(self._failures)
 
-    def list_actions(self) -> list[dict[str, Any]]:
-        """Return every action declared across all plugin manifests.
+    def list_cards(self) -> list[dict[str, Any]]:
+        """Return every card declared across all plugin manifests.
 
-        Each entry carries icon_b64 (the action's icon, base64-encoded, or "" if none), its tooltip and
+        Each entry carries icon_b64 (the card's icon, base64-encoded, or "" if none), its tooltip and
         its settings schema in the manifest JSON shape.
         """
-        actions: list[dict[str, Any]] = []
+        cards: list[dict[str, Any]] = []
         for plugin in self.plugins():
             manifest = plugin.manifest
-            actions.extend(
+            cards.extend(
                 {
                     "plugin_uuid": manifest.id,
                     "plugin_name": manifest.name,
                     "plugin_builtin": self.is_builtin(manifest.id),
-                    "action_uuid": spec.id,
-                    "action_name": spec.name,
+                    "card_uuid": spec.id,
+                    "card_name": spec.name,
                     "icon_b64": self._icon_b64(plugin.plugin_dir, spec.icon or manifest.icon),
                     "tooltip": spec.tooltip,
                     "settings_schema": schema_to_json(spec.settings),
                 }
-                for spec in manifest.actions
+                for spec in manifest.cards
             )
-        return actions
+        return cards
 
     def get_key_display_states(self, device_id: str) -> list[dict[str, Any]]:
         """Return the display label and animation id (None when static) of every labelled or animated key."""
@@ -346,22 +346,22 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         keys = list(labels) + [k for k in animation_ids if k not in labels]
         return [{"key_index": k, "label": labels.get(k, ""), "animation_id": animation_ids.get(k)} for k in keys]
 
-    def store_settings(self, target: ActionTarget, settings: dict[str, Any]) -> None:
-        """Persist settings for an action instance so its plugin receives them on activation."""
-        self._settings_store.set_settings(target.plugin_uuid, target.action_uuid, target.context_id, settings)
+    def store_settings(self, target: CardTarget, settings: dict[str, Any]) -> None:
+        """Persist settings for a card instance so its plugin receives them on activation."""
+        self._settings_store.set_settings(target.plugin_uuid, target.card_uuid, target.context_id, settings)
 
-    def complete_settings(self, target: ActionTarget, settings: dict[str, Any]) -> dict[str, Any]:
-        """Return settings validated against the action's schema with defaults filled in."""
-        spec = self._action_spec(target.plugin_uuid, target.action_uuid)
+    def complete_settings(self, target: CardTarget, settings: dict[str, Any]) -> dict[str, Any]:
+        """Return settings validated against the card's schema with defaults filled in."""
+        spec = self._card_spec(target.plugin_uuid, target.card_uuid)
         return apply_schema(spec.settings, settings) if spec is not None else dict(settings)
 
-    def appearance_for(self, target: ActionTarget, stored: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Return (resolved appearance, appearance defaults) for an action's stored appearance."""
-        spec = self._action_spec(target.plugin_uuid, target.action_uuid)
+    def appearance_for(self, target: CardTarget, stored: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return (resolved appearance, appearance defaults) for a card's stored appearance."""
+        spec = self._card_spec(target.plugin_uuid, target.card_uuid)
         defaults = spec.appearance if spec is not None else {}
         return resolve_appearance(defaults, stored), resolve_appearance(defaults, {})
 
-    def set_appearance(self, target: ActionTarget, stored: dict[str, Any]) -> None:
+    def set_appearance(self, target: CardTarget, stored: dict[str, Any]) -> None:
         """Apply a new stored appearance to a live instance and redraw its key without asking the plugin."""
         with self._lock:
             live = self._live.get(target.context_id)
@@ -370,7 +370,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             live.appearance = dict(stored)
         self._recompose(live)
 
-    def preview_image(self, target: ActionTarget, stored: dict[str, Any]) -> bytes | None:
+    def preview_image(self, target: CardTarget, stored: dict[str, Any]) -> bytes | None:
         """Compose a live key with a draft appearance, changing nothing; None if the instance is not live."""
         with self._lock:
             live = self._live.get(target.context_id)
@@ -383,34 +383,32 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             logging.warning("Could not compose preview for context %s", target.context_id, exc_info=True)
             return None
 
-    def activate_action(
-        self, target: ActionTarget, appearance: dict[str, Any] | None = None, draw: bool = True
-    ) -> None:
-        """Tell the action's plugin that an instance appeared, starting the plugin if needed.
+    def activate_card(self, target: CardTarget, appearance: dict[str, Any] | None = None, draw: bool = True) -> None:
+        """Tell the card's plugin that an instance appeared, starting the plugin if needed.
 
         ``draw=False`` skips the first, plugin-less draw of the key: the caller has just put the key's last image
         on the hardware, and drawing the bare background and title over it only makes the key flicker until the
         plugin's own image arrives. An animated face is still started (over that cached poster), because animations
         live in memory only and a reopened device or restarted server has none.
         """
-        spec = self._action_spec(target.plugin_uuid, target.action_uuid)
+        spec = self._card_spec(target.plugin_uuid, target.card_uuid)
         with self._lock:
             plugin = self._plugins.get(target.plugin_uuid)
         if plugin is None:
             self._mark_missing(target)
             return
         if spec is None or (plugin.manifest.runtime is None and not spec.static):
-            logging.warning("Cannot activate unknown action %s/%s", target.plugin_uuid, target.action_uuid)
+            logging.warning("Cannot activate unknown card %s/%s", target.plugin_uuid, target.card_uuid)
             return
         with self._lock:
             previous = self._live.get(target.context_id)
         if previous is not None:
-            self.deactivate_action(previous.target)
+            self.deactivate_card(previous.target)
         self._clear_placeholder(target.device_id, target.key_index)
-        stored = self._settings_store.get_settings(target.plugin_uuid, target.action_uuid, target.context_id)
+        stored = self._settings_store.get_settings(target.plugin_uuid, target.card_uuid, target.context_id)
         live = _Live(
             target=target,
-            action=spec,
+            card=spec,
             recognizer=GestureRecognizer(self._gesture_emitter(target.context_id)),
             gestures=_gestures_from(sorted(spec.gestures)),
             settings=apply_schema(spec.settings, stored),
@@ -427,41 +425,41 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         elif self._supervisor.is_ready(target.plugin_uuid):
             self._send_will_appear(live)
 
-    def deactivate_action(self, target: ActionTarget) -> None:
+    def deactivate_card(self, target: CardTarget) -> None:
         """Tell the plugin the instance is gone and release its process."""
         with self._lock:
             live = self._live.pop(target.context_id, None)
         if live is None:
             return
         live.recognizer.cancel()
-        if live.action.static:
+        if live.card.static:
             return
         plugin_id = target.plugin_uuid
         if self._supervisor.is_ready(plugin_id):
             self._supervisor.send(plugin_id, Message("will_disappear", target.context_id))
         self._supervisor.release(plugin_id)
 
-    def dispatch_key_down(self, target: ActionTarget) -> None:
+    def dispatch_key_down(self, target: CardTarget) -> None:
         """Forward the raw key down, then feed the press to the instance's gesture recognizer."""
         live = self._live.get(target.context_id)
-        if live is None or live.action.static:
+        if live is None or live.card.static:
             return
         self._send_context(live, "key_down")
         live.recognizer.key_down(live.gestures)
 
-    def dispatch_key_up(self, target: ActionTarget) -> None:
+    def dispatch_key_up(self, target: CardTarget) -> None:
         """Forward the raw key up, then feed the release to the instance's gesture recognizer."""
         live = self._live.get(target.context_id)
-        if live is None or live.action.static:
+        if live is None or live.card.static:
             return
         self._send_context(live, "key_up")
         live.recognizer.key_up()
 
-    def dispatch_settings_changed(self, target: ActionTarget) -> None:
+    def dispatch_settings_changed(self, target: CardTarget) -> None:
         """Send the instance its new settings; re-saving settings retries a failed plugin."""
         plugin_id = target.plugin_uuid
         existing = self._live.get(target.context_id)
-        if existing is not None and existing.action.static:
+        if existing is not None and existing.card.static:
             return
         if self._supervisor.is_failed(plugin_id):
             with self._lock:
@@ -470,8 +468,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         live = self._live.get(target.context_id)
         if live is None:
             return
-        stored = self._settings_store.get_settings(target.plugin_uuid, target.action_uuid, target.context_id)
-        live.settings = apply_schema(live.action.settings, stored)
+        stored = self._settings_store.get_settings(target.plugin_uuid, target.card_uuid, target.context_id)
+        live.settings = apply_schema(live.card.settings, stored)
         self._send_context(live, "settings_changed", {"settings": self._delivery(live)})
 
     # ------------------------------------------------------------------
@@ -481,7 +479,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def _recompose(self, live: _Live, poster: bool = True) -> None:
         """Compose the key face outside the lock, then write it if the instance is still active.
 
-        Only the final sink write holds self._lock, so no hardware write can follow deactivate_action.
+        Only the final sink write holds self._lock, so no hardware write can follow deactivate_card.
         With poster=False only an animation is started and nothing is written for a still image.
         """
         target = live.target
@@ -500,7 +498,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     def _compose(self, live: _Live, poster: bool = True) -> Composed:
         with self._lock:
             plugin = self._plugins.get(live.target.plugin_uuid)
-            spec = live.action
+            spec = live.card
             state = spec.states[live.state] if 0 <= live.state < len(spec.states) else None
             image, plugin_title, stored = live.plugin_image, live.plugin_title, dict(live.appearance)
             icon_ref, image_color = live.plugin_icon_ref, live.plugin_image_color
@@ -567,7 +565,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def delivered_settings(self, live: _Live) -> dict[str, Any]:
         """The settings a plugin receives: opted-in text expanded and page ids resolved; stored values stay raw."""
-        return deliver_settings(live.action.settings, live.settings, self._device_layout(live.target.device_id))
+        return deliver_settings(live.card.settings, live.settings, self._device_layout(live.target.device_id))
 
     def _delivery(self, live: _Live) -> dict[str, Any]:
         delivered = self.delivered_settings(live)
@@ -593,15 +591,11 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def _refresh_live(self, live: _Live) -> None:
         with self._lock:
-            title = resolve_appearance(live.action.appearance, live.appearance).get("title", {})
+            title = resolve_appearance(live.card.appearance, live.appearance).get("title", {})
         if "{" in str(title.get("text", "")):
             self._recompose(live)
         plugin_id = live.target.plugin_uuid
-        if (
-            live.action.static
-            or not has_dynamic_fields(live.action.settings)
-            or not self._supervisor.is_ready(plugin_id)
-        ):
+        if live.card.static or not has_dynamic_fields(live.card.settings) or not self._supervisor.is_ready(plugin_id):
             return
         delivered = self.delivered_settings(live)
         if delivered != live.delivered:
@@ -624,7 +618,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         target = live.target
         column, row = self._key_position(target)
         payload = {
-            "action": target.action_uuid,
+            "card": target.card_uuid,
             "device": target.device_id,
             "key": {"index": target.key_index, "column": column, "row": row},
             "settings": self._delivery(live),
@@ -632,7 +626,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         }
         self._supervisor.send(target.plugin_uuid, Message("will_appear", target.context_id, payload))
 
-    def _key_position(self, target: ActionTarget) -> tuple[int, int]:
+    def _key_position(self, target: CardTarget) -> tuple[int, int]:
         try:
             device = self._device_manager.open_device(target.device_id)
             position = device.key_position(target.key_index)
@@ -726,7 +720,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def _on_ready(self, plugin_id: str) -> None:
         with self._lock:
-            lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.action.static]
+            lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.card.static]
         for live in lives:
             self._clear_placeholder(live.target.device_id, live.target.key_index)
             self._send_will_appear(live)
@@ -773,10 +767,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         if not isinstance(raw, dict):
             logging.warning("[%s] set_settings without a settings object dropped", live.target.plugin_uuid)
             return
-        incoming = keep_raw_templates(live.action.settings, raw, live.delivered, live.settings)
-        incoming = stored_profile_ids(live.action.settings, incoming, live.delivered, live.settings)
-        merged = {**live.settings, **stored_page_ids(live.action.settings, incoming)}
-        settings = apply_schema(live.action.settings, merged)
+        incoming = keep_raw_templates(live.card.settings, raw, live.delivered, live.settings)
+        incoming = stored_profile_ids(live.card.settings, incoming, live.delivered, live.settings)
+        merged = {**live.settings, **stored_page_ids(live.card.settings, incoming)}
+        settings = apply_schema(live.card.settings, merged)
         live.settings = settings
         live.delivered = self.delivered_settings(live)
         self.store_settings(live.target, settings)
@@ -784,7 +778,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self.settings_persister(live.target, settings)
 
     def _on_switch_page(self, live: _Live, payload: dict[str, Any]) -> None:
-        """Switch the key's device; runs without the manager lock because a switch deactivates actions."""
+        """Switch the key's device; runs without the manager lock because a switch deactivates cards."""
         if self._page_controller is None:
             return
         device_id = live.target.device_id
@@ -839,7 +833,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         with self._lock:
             self._drop_failure(plugin_id)
             self._failures.append(event)
-            lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.action.static]
+            lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.card.static]
         for live in lives:
             self._mark_failed(live)
         self._push("plugin_failed", {"plugin_id": plugin_id, "error": reason})
@@ -854,7 +848,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._placeholders.add((target.device_id, target.key_index))
         self._notify_state(target.device_id, target.key_index)
 
-    def _mark_missing(self, target: ActionTarget) -> None:
+    def _mark_missing(self, target: CardTarget) -> None:
         with self._lock:
             failed = any(f.plugin_uuid == target.plugin_uuid for f in self._failures)
         label = _FAILED_LABEL if failed else _MISSING_LABEL
@@ -888,16 +882,16 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _action_spec(self, plugin_id: str, action_id: str) -> ActionSpec | None:
+    def _card_spec(self, plugin_id: str, card_id: str) -> CardSpec | None:
         with self._lock:
             plugin = self._plugins.get(plugin_id)
         if plugin is None:
             return None
-        return next((a for a in plugin.manifest.actions if a.id == action_id), None)
+        return next((a for a in plugin.manifest.cards if a.id == card_id), None)
 
     @staticmethod
-    def _make_settings_persister(context: "ServerContext") -> Callable[[ActionTarget, dict[str, Any]], None]:
-        def _persist(target: ActionTarget, settings: dict[str, Any]) -> None:
+    def _make_settings_persister(context: "ServerContext") -> Callable[[CardTarget, dict[str, Any]], None]:
+        def _persist(target: CardTarget, settings: dict[str, Any]) -> None:
             page_id = context.page_controller.active_page_id(target.device_id)
             context.key_assignment_store.update_settings(target.device_id, page_id, target.key_index, settings)
 
@@ -941,8 +935,8 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             )
             if live is None:
                 return {}, {}
-            return resolve_appearance(live.action.appearance, live.appearance), resolve_appearance(
-                live.action.appearance, {}
+            return resolve_appearance(live.card.appearance, live.appearance), resolve_appearance(
+                live.card.appearance, {}
             )
 
     def _set_key_label(self, device_id: str, key_index: int, label: str) -> None:

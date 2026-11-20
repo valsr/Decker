@@ -21,9 +21,9 @@ from PyQt6.QtWidgets import (
 from decker.client.call_bridge import CallBridge
 from decker.client.context import AppContext
 from decker.client.events import (
-    ActionListUpdatedEvent,
     AppEvent,
     AppRulesUpdatedEvent,
+    CardListUpdatedEvent,
     DetectionStatusEvent,
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
@@ -34,8 +34,8 @@ from decker.client.events import (
 )
 from decker.client.ui_state_store import UiStateStore
 from decker.client.views.base import BaseView
-from decker.client.widgets.action_config_panel import ActionConfigPanel
 from decker.client.widgets.button_grid import ButtonGridWidget
+from decker.client.widgets.card_config_panel import CardConfigPanel
 from decker.client.widgets.icon_edit import IconEdit
 from decker.client.widgets.page_tab_bar import PageTabBar
 from decker.client.widgets.profiles_dialog import ProfilesDialog
@@ -91,7 +91,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._key_slots: dict[int, dict[str, Any]] = {}  # key_index → assignment metadata
         self._select_after_refresh: int | None = None  # the key to open once its data arrives after a move or copy
         self._active_device_id: str | None = None
-        self._actions: list[dict[str, Any]] = []  # action list from the server (with settings schemas)
+        self._cards: list[dict[str, Any]] = []  # card list from the server (with settings schemas)
         self._bridge = CallBridge(self)  # runs the animation fetches and page switches off the GUI thread
         self._refresh_panel_timer = QTimer(self)  # one panel rebuild per burst of key-state events
         self._refresh_panel_timer.setSingleShot(True)
@@ -106,7 +106,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._sidebar = SidebarWidget()  # Panel with plugins and other menu items
         self._page_tabs = PageTabBar()
         self._grid = ButtonGridWidget()  # Main button view
-        self._config_panel = ActionConfigPanel()  # Button configuration
+        self._config_panel = CardConfigPanel()  # Button configuration
 
         self._content_splitter = QSplitter(Qt.Orientation.Vertical)
         self._content_splitter.addWidget(self._grid)
@@ -146,9 +146,9 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
     def handle_event(self, event: AppEvent) -> bool | None:  # pylint: disable=useless-return
         if isinstance(event, DeviceListUpdatedEvent):
             self._on_devices_updated(event.devices)
-        elif isinstance(event, ActionListUpdatedEvent):
-            self._actions = event.actions
-            self._sidebar.set_actions(event.actions)
+        elif isinstance(event, CardListUpdatedEvent):
+            self._cards = event.cards
+            self._sidebar.set_cards(event.cards)
             self._refresh_config_panel()
         elif isinstance(event, KeyDisplayStatesUpdatedEvent):
             self._on_display_states_updated(event.device_id, event.states)
@@ -198,7 +198,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._grid.key_pressed.connect(self._on_key_pressed)
         self._grid.key_edit_requested.connect(self._on_key_edit_requested)
         self._grid.key_long_pressed.connect(self._on_key_long_pressed)
-        self._grid.action_dropped.connect(self._on_action_dropped)
+        self._grid.card_dropped.connect(self._on_card_dropped)
 
     # ------------------------------------------------------------------
     # Persisted layout state
@@ -560,14 +560,14 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         self._refresh_config_panel()
 
     def _sync_draggable(self) -> None:
-        """Only keys with an action can be dragged, and drags are tagged with the device and page they start on."""
+        """Only keys with a card can be dragged, and drags are tagged with the device and page they start on."""
         self._grid.set_draggable_keys(self._key_slots.keys())
         device_id = AppContext.get().active_device_id
         page_id = self._active_page_id
         self._grid.set_drag_scope(f"{device_id}/{page_id}" if device_id and page_id else "")
 
     def _on_key_moved(self, from_index: int, to_index: int, copy: bool) -> None:
-        """Move (or, with Ctrl, copy) a key's action; the destination key is selected afterwards."""
+        """Move (or, with Ctrl, copy) a key's card; the destination key is selected afterwards."""
         device_id = AppContext.get().active_device_id
         page_id = self._active_page_id
         cm = AppContext.get().connection_manager
@@ -595,14 +595,14 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
         if cm is not None:
             self._bridge.submit(lambda: cm.call("key_simulate_long_press", device_id, index), lambda _result: None)
 
-    def _on_action_dropped(self, key_index: int, action_data: Any) -> None:
+    def _on_card_dropped(self, key_index: int, card_data: Any) -> None:
         device_id = AppContext.get().active_device_id
         page_id = self._active_page_id
         if not device_id or not page_id:
             return
-        plugin_uuid = str(action_data.get("plugin_uuid", ""))
-        action_uuid = str(action_data.get("action_uuid", ""))
-        if not plugin_uuid or not action_uuid:
+        plugin_uuid = str(card_data.get("plugin_uuid", ""))
+        card_uuid = str(card_data.get("card_uuid", ""))
+        if not plugin_uuid or not card_uuid:
             return
         context_id = uuid.uuid4().hex
         settings: dict[str, Any] = {}
@@ -615,20 +615,20 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             page_id,
             key_index,
             plugin_uuid,
-            action_uuid,
+            card_uuid,
             context_id,
             json.dumps(settings),
         )
         if ok:
             self._key_slots[key_index] = {
                 "plugin_uuid": plugin_uuid,
-                "action_uuid": action_uuid,
+                "card_uuid": card_uuid,
                 "context_id": context_id,
                 "settings": settings,
             }
             self._grid.set_key_label(key_index, "0")
             self._sync_draggable()
-            logging.debug("Assigned %s/%s to key %d", plugin_uuid, action_uuid, key_index)
+            logging.debug("Assigned %s/%s to key %d", plugin_uuid, card_uuid, key_index)
 
     def _on_display_states_updated(self, device_id: str, states: list[dict[str, Any]]) -> None:
         if device_id != AppContext.get().active_device_id:
@@ -668,22 +668,22 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             self._config_panel.show_placeholder()
             return
         self._grid.set_selected(index)
-        action = next(
+        card = next(
             (
                 a
-                for a in self._actions
-                if a.get("plugin_uuid") == slot.get("plugin_uuid") and a.get("action_uuid") == slot.get("action_uuid")
+                for a in self._cards
+                if a.get("plugin_uuid") == slot.get("plugin_uuid") and a.get("card_uuid") == slot.get("card_uuid")
             ),
             None,
         )
         self._config_panel.set_preview_provider(lambda appearance: self._preview_key(index, appearance))
-        self._config_panel.show_action_config(
-            list((action or {}).get("settings_schema") or []),
+        self._config_panel.show_card_config(
+            list((card or {}).get("settings_schema") or []),
             slot.get("settings", {}),
             slot.get("appearance", {}),
             slot.get("appearance_defaults", {}),
             self._make_save_callback(index),
-            title=str((action or {}).get("action_name") or ""),
+            title=str((card or {}).get("card_name") or ""),
         )
 
     def _sync_slot(self, key_index: int, state: dict[str, Any]) -> None:
@@ -696,7 +696,7 @@ class DashboardView(BaseView):  # pylint: disable=too-many-instance-attributes
             return
         self._key_slots[key_index] = {
             "plugin_uuid": str(state.get("plugin_uuid", "")),
-            "action_uuid": str(state.get("action_uuid", "")),
+            "card_uuid": str(state.get("card_uuid", "")),
             "context_id": str(state.get("context_id", "")),
             "settings": dict(state.get("settings") or {}),
             "appearance": dict(state.get("appearance") or {}),

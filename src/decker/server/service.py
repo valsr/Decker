@@ -45,7 +45,7 @@ from decker.plugin.icons import read_icon
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.repository_index import IndexVersion, latest_compatible
 from decker.plugin.settings_schema import schema_to_json
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.key_assignments import KeyAssignment
 from decker.server.plugin_installer import PluginInstallError
 from decker.server.repositories import CatalogEntry, RepositoryError, RepositoryStore
@@ -280,16 +280,16 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
 
     @exposed
     @api_response
-    def plugins_actions_list(self) -> list:
-        """List every action declared across all loaded plugin manifests as a JSON string."""
+    def plugins_cards_list(self) -> list:
+        """List every card declared across all loaded plugin manifests as a JSON string."""
         if self._context is None:
             return []
-        return self._context.plugin_manager.list_actions()
+        return self._context.plugin_manager.list_cards()
 
     @exposed
     @api_response
     def plugins_list(self) -> list:
-        """List installed plugins with their metadata, action and icon pack counts, and global settings."""
+        """List installed plugins with their metadata, card and icon pack counts, and global settings."""
         if self._context is None:
             return []
         manager = self._context.plugin_manager
@@ -504,7 +504,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
 
     @exposed
     def plugin_usage(self, plugin_id: str) -> int:
-        """Return how many keys across all devices and pages use the plugin's actions."""
+        """Return how many keys across all devices and pages use the plugin's cards."""
         if self._context is None or self._context.plugin_installer is None:
             return 0
         return self._context.plugin_installer.usage(plugin_id)
@@ -526,12 +526,12 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         page_id: str,
         key_index: int,
         plugin_uuid: str,
-        action_uuid: str,
+        card_uuid: str,
         context_id: str,
         settings_json: str = "{}",
     ) -> bool:
         """
-        Assign a plugin action to a key slot on a page, activating it if the page is on the device.
+        Assign a plugin card to a key slot on a page, activating it if the page is on the device.
 
         Returns:
             bool: False if the page does not exist on the device.
@@ -539,9 +539,9 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         if self._context is None or self._context.page_store.get(device_id, page_id) is None:
             return False
         settings: dict[str, Any] = json.loads(settings_json)
-        target = ActionTarget(
+        target = CardTarget(
             plugin_uuid=plugin_uuid,
-            action_uuid=action_uuid,
+            card_uuid=card_uuid,
             context_id=context_id,
             device_id=device_id,
             key_index=key_index,
@@ -551,18 +551,18 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         is_active = self._is_active_page(device_id, page_id)
         existing = key_store.get(device_id, page_id, key_index)
         if existing is not None and is_active:
-            pm.deactivate_action(existing.target)
+            pm.deactivate_card(existing.target)
         key_store.assign(device_id, page_id, key_index, target, settings)
         pm.store_settings(target, settings)
         if is_active:
             self._context.device_manager.open_device(device_id)
-            pm.activate_action(target, {})
+            pm.activate_card(target, {})
         return True
 
     @exposed
     def key_unassign(self, device_id: str, page_id: str, key_index: int) -> bool:
         """
-        Remove a plugin action from a key slot on a page, deactivating it if the page is on the device.
+        Remove a plugin card from a key slot on a page, deactivating it if the page is on the device.
 
         Returns:
             bool: True if an assignment existed and was removed.
@@ -575,7 +575,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             return False
         key_store.unassign(device_id, page_id, key_index)
         if self._is_active_page(device_id, page_id):
-            self._context.plugin_manager.deactivate_action(assignment.target)
+            self._context.plugin_manager.deactivate_card(assignment.target)
             self._context.device_manager.clear_key_state(device_id, key_index)
         else:
             self._context.device_manager.delete_stored_key_state(device_id, page_id, key_index)
@@ -584,9 +584,9 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
     @exposed
     def key_move(self, device_id: str, page_id: str, from_index: int, to_index: int) -> bool:
         """
-        Move a key's action to another slot of the page, replacing whatever was there.
+        Move a key's card to another slot of the page, replacing whatever was there.
 
-        The action instance keeps its identity, settings and appearance.
+        The card instance keeps its identity, settings and appearance.
 
         Returns:
             bool: False (nothing changed) for an unknown page, an empty source, the same slot or a bad index.
@@ -601,9 +601,9 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         if not ctx.key_assignment_store.move(device_id, page_id, from_index, to_index):
             return False
         if active:
-            ctx.plugin_manager.deactivate_action(source.target)
+            ctx.plugin_manager.deactivate_card(source.target)
             if replaced is not None:
-                ctx.plugin_manager.deactivate_action(replaced.target)
+                ctx.plugin_manager.deactivate_card(replaced.target)
             ctx.device_manager.blank_key(device_id, from_index)
             ctx.device_manager.clear_key_state(device_id, to_index)
             self._activate_slot(device_id, page_id, to_index)
@@ -615,7 +615,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
     @exposed
     def key_copy(self, device_id: str, page_id: str, from_index: int, to_index: int) -> bool:
         """
-        Copy a key's action (settings and appearance) to another slot of the page as a new instance.
+        Copy a key's card (settings and appearance) to another slot of the page as a new instance.
 
         Returns:
             bool: False (nothing changed) for an unknown page, an empty source, the same slot or a bad index.
@@ -630,7 +630,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             return False
         if active:
             if replaced is not None:
-                ctx.plugin_manager.deactivate_action(replaced.target)
+                ctx.plugin_manager.deactivate_card(replaced.target)
             ctx.device_manager.clear_key_state(device_id, to_index)
             self._activate_slot(device_id, page_id, to_index)
         else:
@@ -657,12 +657,12 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             return
         pm = self._context.plugin_manager
         pm.store_settings(assignment.target, assignment.settings)
-        pm.activate_action(assignment.target, assignment.appearance)
+        pm.activate_card(assignment.target, assignment.appearance)
 
     @exposed
     def key_update_settings(self, device_id: str, page_id: str, key_index: int, settings_json: str) -> bool:
         """
-        Update per-key action settings; a live action is notified via on_settings_changed.
+        Update per-key card settings; a live card is notified via on_settings_changed.
 
         Returns:
             bool: True if the slot was assigned and settings were persisted.
@@ -984,7 +984,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
 
     @exposed
     def page_activate(self, device_id: str, page_id: str) -> bool:
-        """Show a page on the device, switching which actions are live. Returns False for an unknown page."""
+        """Show a page on the device, switching which cards are live. Returns False for an unknown page."""
         return self._context is not None and self._context.page_controller.activate(device_id, page_id)
 
     @exposed
@@ -1025,7 +1025,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
                     image_b64=image_b64,
                     label=per_key.label if per_key is not None else "",
                     plugin_uuid=assignment.target.plugin_uuid if assignment else None,
-                    action_uuid=assignment.target.action_uuid if assignment else None,
+                    card_uuid=assignment.target.card_uuid if assignment else None,
                     context_id=assignment.target.context_id if assignment else None,
                     settings=(
                         self._context.plugin_manager.complete_settings(assignment.target, assignment.settings)
@@ -1044,7 +1044,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         Simulate a short key press (key_down immediately followed by key_up).
 
         Returns:
-            bool: True if an action was assigned to this key.
+            bool: True if a card was assigned to this key.
         """
         return self._simulate_press(device_id, key_index, long_press=False)
 
@@ -1054,7 +1054,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
         Simulate a long key press (key_down, hold for 600 ms, then key_up).
 
         Returns:
-            bool: True if an action was assigned to this key.
+            bool: True if a card was assigned to this key.
         """
         return self._simulate_press(device_id, key_index, long_press=True)
 
@@ -1151,7 +1151,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             "version": manifest.version,
             "author": manifest.author,
             "description": manifest.description,
-            "actions": len(manifest.actions),
+            "cards": len(manifest.cards),
             "icon_packs": len(manifest.icon_packs),
             "icon_b64": base64.b64encode(icon).decode("ascii") if icon else "",
             "global_settings_schema": schema_to_json(manifest.global_settings),

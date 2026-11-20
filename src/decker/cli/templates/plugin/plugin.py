@@ -1,11 +1,11 @@
-"""A minimal Decker action: pressing the key changes its title."""
+"""A minimal Decker card: pressing the key changes its title."""
 
-from decker_plugin_sdk import ActionContext, DeckerPlugin, action
+from decker_plugin_sdk import CardContext, DeckerPlugin, card
 
 
-@action("{{action_id}}")
+@card("{{card_id}}")
 class Hello(DeckerPlugin):
     """Shows a greeting on the key when pressed."""
 
-    def on_press(self, ctx: ActionContext) -> None:
+    def on_press(self, ctx: CardContext) -> None:
         ctx.set_title("Hello!")

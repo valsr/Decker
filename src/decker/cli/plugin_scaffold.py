@@ -33,13 +33,13 @@ def scaffold(plugin_id: str, dest: Path) -> Path:
     try:
         PluginManifest.from_dict(
             {
-                "format": 1,
+                "format": 2,
                 "id": plugin_id,
                 "name": "x",
                 "version": "0.1.0",
                 "author": "x",
                 "runtime": {"type": "python", "entry": "plugin.py"},
-                "contributes": {"actions": [{"id": f"{plugin_id}.action", "name": "x"}]},
+                "contributes": {"cards": [{"id": f"{plugin_id}.card", "name": "x"}]},
             }
         )
     except ManifestValidationError as exc:
@@ -47,7 +47,7 @@ def scaffold(plugin_id: str, dest: Path) -> Path:
     target = dest / plugin_id
     if target.exists():
         raise PluginCliError(f"{target} already exists")
-    values = {"plugin_id": plugin_id, "action_id": f"{plugin_id}.action", "name": _display_name(plugin_id)}
+    values = {"plugin_id": plugin_id, "card_id": f"{plugin_id}.card", "name": _display_name(plugin_id)}
 
     template_root = resources.files(_TEMPLATE_PACKAGE).joinpath(_TEMPLATE_DIR)
     files: dict[str, bytes] = {}

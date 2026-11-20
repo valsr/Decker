@@ -4,15 +4,15 @@ import os
 import threading
 import time
 
-from decker_plugin_sdk import ActionContext, DeckerPlugin, Gesture, action
+from decker_plugin_sdk import CardContext, DeckerPlugin, Gesture, card
 
 BLOCK = threading.Event()
 SEEN: list[str] = []
 
 
-@action("test.echo.echo")
+@card("test.echo.echo")
 class Echo(DeckerPlugin):
-    def on_press(self, ctx: ActionContext) -> None:
+    def on_press(self, ctx: CardContext) -> None:
         mode = ctx.settings.get("mode")
         if mode == "junk":
             os.system("echo junk-from-child")
@@ -27,7 +27,7 @@ class Echo(DeckerPlugin):
         SEEN.append(str(ctx.settings.get("tag", "")))
         ctx.set_title("pressed")
 
-    def on_long_press(self, ctx: ActionContext) -> None:
+    def on_long_press(self, ctx: CardContext) -> None:
         ctx.set_title("long")
 
     def gestures(self, settings: dict) -> frozenset[Gesture] | None:

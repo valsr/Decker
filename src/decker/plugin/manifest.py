@@ -17,11 +17,21 @@ from decker.plugin.settings_schema import (
 )
 
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?")
-SUPPORTED_FORMAT = 1
-KNOWN_CONTRIBUTION_KINDS = frozenset({"actions", "icon_packs"})
+SUPPORTED_FORMATS = (1, 2)
+CARDS_FORMAT = 2  # format 1 predates the card/action split: its ``contributes.actions`` entries are cards
+KNOWN_CONTRIBUTION_KINDS = frozenset({"cards", "icon_packs"})
+_LEGACY_CARD_KIND = "actions"
 VALID_GESTURES = frozenset({"press", "double_press", "long_press"})
 _RUNTIME_TYPES = ("python", "executable")
 _UUID_PATTERN = re.compile(r"[a-z0-9]+(\.[a-z0-9-]+)+")
+
+
+def _legacy_cards(fmt: int, contributes: dict[str, Any]) -> dict[str, Any]:
+    """Format 1 called what a key shows an action: read ``contributes.actions`` as the cards."""
+    if fmt >= CARDS_FORMAT or _LEGACY_CARD_KIND not in contributes:
+        return contributes
+    renamed = {("cards" if kind == _LEGACY_CARD_KIND else kind): value for kind, value in contributes.items()}
+    return renamed
 
 
 def is_valid_plugin_id(value: object) -> bool:
@@ -50,15 +60,15 @@ class RuntimeSpec:
 
 @dataclass(frozen=True)
 class StateSpec:
-    """A visual state of an action."""
+    """A visual state of a card."""
 
     image: str | None = None
     title: str | None = None
 
 
 @dataclass(frozen=True)
-class ActionSpec:
-    """A key action contributed by a plugin."""
+class CardSpec:
+    """A key card contributed by a plugin."""
 
     id: str
     name: str
@@ -98,7 +108,7 @@ class PluginManifest:
     runtime: RuntimeSpec | None
     permissions: tuple[str, ...]
     global_settings: tuple[SettingEntry, ...]
-    actions: tuple[ActionSpec, ...]
+    cards: tuple[CardSpec, ...]
     icon_packs: tuple[IconPackSpec, ...]
     platforms: PlatformSpec | None = None
 
@@ -108,8 +118,8 @@ class PluginManifest:
         fmt = data.get("format")
         if fmt is None:
             raise ManifestValidationError("manifest missing required field: format")
-        if type(fmt) is not int or fmt != SUPPORTED_FORMAT:  # pylint: disable=unidiomatic-typecheck
-            raise ManifestValidationError(f"unsupported manifest format {fmt!r} (supported: {SUPPORTED_FORMAT})")
+        if type(fmt) is not int or fmt not in SUPPORTED_FORMATS:  # pylint: disable=unidiomatic-typecheck
+            raise ManifestValidationError(f"unsupported manifest format {fmt!r} (supported: {list(SUPPORTED_FORMATS)})")
         plugin_id = _parse_id(data.get("id"), "manifest id")
         missing = [key for key in ("name", "version", "author") if not _is_nonempty_str(data.get(key))]
         if missing:
@@ -120,6 +130,7 @@ class PluginManifest:
         contributes = data.get("contributes")
         if not isinstance(contributes, dict) or not contributes:
             raise ManifestValidationError("manifest contributes must be a non-empty object")
+        contributes = _legacy_cards(fmt, contributes)
         unknown = sorted(set(contributes) - KNOWN_CONTRIBUTION_KINDS)
         if unknown:
             raise ManifestValidationError(
@@ -127,18 +138,18 @@ class PluginManifest:
             )
 
         runtime = _parse_runtime(data.get("runtime")) if data.get("runtime") is not None else None
-        actions = tuple(_parse_action(e, plugin_id) for e in _as_list(contributes.get("actions", []), "actions"))
+        cards = tuple(_parse_card(e, plugin_id) for e in _as_list(contributes.get("cards", []), "cards"))
         packs = tuple(_parse_icon_pack(e, plugin_id) for e in _as_list(contributes.get("icon_packs", []), "icon_packs"))
-        needs_runtime = next((a for a in actions if not a.static), None)
+        needs_runtime = next((a for a in cards if not a.static), None)
         if needs_runtime and runtime is None:
             raise ManifestValidationError(
-                f"manifest contributes actions but declares no runtime (action {needs_runtime.id} is not static)"
+                f"manifest contributes cards but declares no runtime (card {needs_runtime.id} is not static)"
             )
-        if not actions and not packs:
-            raise ManifestValidationError("manifest contributes no actions or icon packs")
+        if not cards and not packs:
+            raise ManifestValidationError("manifest contributes no cards or icon packs")
 
         return cls(
-            format=SUPPORTED_FORMAT,
+            format=fmt,
             id=plugin_id,
             name=str(data["name"]),
             version=str(data["version"]),
@@ -151,7 +162,7 @@ class PluginManifest:
             runtime=runtime,
             permissions=tuple(str(p) for p in _as_list(data.get("permissions", []), "permissions")),
             global_settings=_parse_global_settings(data.get("global_settings", [])),
-            actions=actions,
+            cards=cards,
             icon_packs=packs,
             platforms=_parse_platforms(data),
         )
@@ -243,54 +254,52 @@ def _validate_requirement(req: Any) -> str:
     return req
 
 
-def _parse_action(entry: Any, plugin_id: str) -> ActionSpec:
+def _parse_card(entry: Any, plugin_id: str) -> CardSpec:
     if not isinstance(entry, dict) or "id" not in entry or "name" not in entry:
-        raise ManifestValidationError(f"invalid action entry: {entry!r}")
-    action_id = _parse_contribution_id(entry["id"], plugin_id, "action id")
-    static = _parse_static(entry, action_id)
+        raise ManifestValidationError(f"invalid card entry: {entry!r}")
+    card_id = _parse_contribution_id(entry["id"], plugin_id, "card id")
+    static = _parse_static(entry, card_id)
     gestures = entry.get("gestures", ["press"])
     if (
         not isinstance(gestures, list)
         or not gestures
         or not all(isinstance(g, str) and g in VALID_GESTURES for g in gestures)
     ):
-        raise ManifestValidationError(
-            f"action {action_id} gestures must be a non-empty subset of {sorted(VALID_GESTURES)}"
-        )
+        raise ManifestValidationError(f"card {card_id} gestures must be a non-empty subset of {sorted(VALID_GESTURES)}")
     appearance = entry.get("appearance", {})
     if not isinstance(appearance, dict):
-        raise ManifestValidationError(f"action {action_id} appearance must be an object")
+        raise ManifestValidationError(f"card {card_id} appearance must be an object")
     for key in appearance:
         if key not in APPEARANCE_KEYS:
-            raise ManifestValidationError(f"action {action_id} has unknown appearance key {key!r}")
-    states = tuple(_parse_state(s, action_id) for s in _as_list(entry.get("states", []), "states"))
-    return ActionSpec(
-        id=action_id,
+            raise ManifestValidationError(f"card {card_id} has unknown appearance key {key!r}")
+    states = tuple(_parse_state(s, card_id) for s in _as_list(entry.get("states", []), "states"))
+    return CardSpec(
+        id=card_id,
         name=str(entry["name"]),
         tooltip=str(entry.get("tooltip") or ""),
         icon=_optional_str(entry.get("icon")),
         gestures=frozenset(gestures),
         states=states,
-        settings=_parse_settings(entry.get("settings", []), f"action {action_id} settings"),
+        settings=_parse_settings(entry.get("settings", []), f"card {card_id} settings"),
         appearance=dict(appearance),
         static=static,
     )
 
 
-def _parse_static(entry: dict[str, Any], action_id: str) -> bool:
+def _parse_static(entry: dict[str, Any], card_id: str) -> bool:
     static = entry.get("static", False)
     if not isinstance(static, bool):
-        raise ManifestValidationError(f"action {action_id} static must be a boolean")
+        raise ManifestValidationError(f"card {card_id} static must be a boolean")
     if static:
         for name in ("settings", "gestures"):
             if name in entry:
-                raise ManifestValidationError(f"static action {action_id} cannot declare {name}")
+                raise ManifestValidationError(f"static card {card_id} cannot declare {name}")
     return static
 
 
-def _parse_state(entry: Any, action_id: str) -> StateSpec:
+def _parse_state(entry: Any, card_id: str) -> StateSpec:
     if not isinstance(entry, dict):
-        raise ManifestValidationError(f"action {action_id} state must be an object")
+        raise ManifestValidationError(f"card {card_id} state must be an object")
     return StateSpec(image=_optional_str(entry.get("image")), title=_optional_str(entry.get("title")))
 
 

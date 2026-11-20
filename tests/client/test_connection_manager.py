@@ -16,8 +16,8 @@ from decker.client.connection_manager import (
 )
 from decker.client.context import AppContext
 from decker.client.events import (
-    ActionListUpdatedEvent,
     AppRulesUpdatedEvent,
+    CardListUpdatedEvent,
     DetectionStatusEvent,
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
@@ -68,7 +68,7 @@ def _healthy_conn() -> MagicMock:
     conn.root.heartbeat.return_value = _heartbeat_payload(DeckerStatusEnum.HEALTHY)
     conn.root.devices_list.return_value = json.dumps([])
     conn.root.plugins_load_failures.return_value = json.dumps([])
-    conn.root.plugins_actions_list.return_value = json.dumps([])
+    conn.root.plugins_cards_list.return_value = json.dumps([])
     return conn
 
 
@@ -93,7 +93,7 @@ class TestConnectionManager:
         mock_conn = MagicMock()
         mock_conn.root.devices_list.return_value = json.dumps([{"id": "abc123", "serial": "X"}])
         mock_conn.root.plugins_load_failures.return_value = json.dumps([])
-        mock_conn.root.plugins_actions_list.return_value = json.dumps([])
+        mock_conn.root.plugins_cards_list.return_value = json.dumps([])
         mock_connect.return_value = mock_conn
 
         self.manager._try_connect()  # pylint: disable=protected-access
@@ -135,7 +135,7 @@ class TestConnectionManager:
         mock_conn.root.heartbeat.return_value = _heartbeat_payload(DeckerStatusEnum.HEALTHY)
         mock_conn.root.devices_list.return_value = json.dumps([{"id": "abc123"}])
         mock_conn.root.plugins_load_failures.return_value = json.dumps([])
-        mock_conn.root.plugins_actions_list.return_value = json.dumps([])
+        mock_conn.root.plugins_cards_list.return_value = json.dumps([])
         self.manager._conn = mock_conn  # pylint: disable=protected-access
         self.manager.state = ServerState.HEALTHY
 
@@ -150,7 +150,7 @@ class TestConnectionManager:
         mock_conn.root.heartbeat.return_value = _heartbeat_payload(DeckerStatusEnum.UNHEALTHY)
         mock_conn.root.devices_list.return_value = json.dumps([])
         mock_conn.root.plugins_load_failures.return_value = json.dumps([])
-        mock_conn.root.plugins_actions_list.return_value = json.dumps([])
+        mock_conn.root.plugins_cards_list.return_value = json.dumps([])
         self.manager._conn = mock_conn  # pylint: disable=protected-access
         self.manager.state = ServerState.HEALTHY
 
@@ -219,7 +219,7 @@ class TestConnectionManager:
         self.manager._refresh_all()  # pylint: disable=protected-access
         second = EventManager.get().drain()
 
-        assert_that([type(e) for e in first]).contains(DeviceListUpdatedEvent, ActionListUpdatedEvent)
+        assert_that([type(e) for e in first]).contains(DeviceListUpdatedEvent, CardListUpdatedEvent)
         assert_that(second).is_empty()
 
     def test_run_once_survives_unexpected_error(self):
@@ -276,7 +276,7 @@ class TestConnectionManager:
         mock_conn.root.plugins_load_failures.return_value = json.dumps(
             [{"plugin_uuid": "com.decker.broken", "error": "boom"}]
         )
-        mock_conn.root.plugins_actions_list.return_value = json.dumps([])
+        mock_conn.root.plugins_cards_list.return_value = json.dumps([])
         mock_connect.return_value = mock_conn
 
         self.manager._try_connect()  # pylint: disable=protected-access
@@ -305,17 +305,17 @@ class TestConnectionManager:
         mock_conn = MagicMock()
         mock_conn.root.devices_list.return_value = json.dumps([])
         mock_conn.root.plugins_load_failures.return_value = json.dumps([])
-        mock_conn.root.plugins_actions_list.return_value = json.dumps(
-            [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
+        mock_conn.root.plugins_cards_list.return_value = json.dumps(
+            [{"plugin_uuid": "p", "plugin_name": "P", "card_uuid": "p.a", "card_name": "A"}]
         )
         mock_connect.return_value = mock_conn
 
         self.manager._try_connect()  # pylint: disable=protected-access
 
-        events = [e for e in EventManager.get().drain() if isinstance(e, ActionListUpdatedEvent)]
+        events = [e for e in EventManager.get().drain() if isinstance(e, CardListUpdatedEvent)]
         assert_that(events).is_length(1)
-        assert_that(events[0].actions).is_equal_to(
-            [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
+        assert_that(events[0].cards).is_equal_to(
+            [{"plugin_uuid": "p", "plugin_name": "P", "card_uuid": "p.a", "card_name": "A"}]
         )
 
     def test_check_heartbeat_success_refreshes_actions(self):
@@ -323,23 +323,23 @@ class TestConnectionManager:
         mock_conn.root.heartbeat.return_value = _heartbeat_payload(DeckerStatusEnum.HEALTHY)
         mock_conn.root.devices_list.return_value = json.dumps([])
         mock_conn.root.plugins_load_failures.return_value = json.dumps([])
-        mock_conn.root.plugins_actions_list.return_value = json.dumps(
-            [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
+        mock_conn.root.plugins_cards_list.return_value = json.dumps(
+            [{"plugin_uuid": "p", "plugin_name": "P", "card_uuid": "p.a", "card_name": "A"}]
         )
         self.manager._conn = mock_conn  # pylint: disable=protected-access
         self.manager.state = ServerState.HEALTHY
 
         self.manager._check_heartbeat()  # pylint: disable=protected-access
 
-        events = [e for e in EventManager.get().drain() if isinstance(e, ActionListUpdatedEvent)]
+        events = [e for e in EventManager.get().drain() if isinstance(e, CardListUpdatedEvent)]
         assert_that(events).is_length(1)
 
     def test_refresh_actions_failure_does_not_raise(self):
         mock_conn = MagicMock()
-        mock_conn.root.plugins_actions_list.side_effect = RuntimeError("boom")
+        mock_conn.root.plugins_cards_list.side_effect = RuntimeError("boom")
         self.manager._conn = mock_conn  # pylint: disable=protected-access
 
-        self.manager._refresh_actions()  # pylint: disable=protected-access
+        self.manager._refresh_cards()  # pylint: disable=protected-access
 
         assert_that(EventManager.get().drain()).is_empty()
 
@@ -508,14 +508,14 @@ class TestOnServerEvent:
     def test_plugins_changed_refreshes_action_list(self):
         self.manager._on_server_event("plugins_changed", "{}")  # pylint: disable=protected-access
         assert_that([type(e) for e in EventManager.get().drain()]).is_equal_to([PluginsChangedEvent])
-        assert_that(self.manager._actions_refresh_requested.is_set()).is_true()  # pylint: disable=protected-access
+        assert_that(self.manager._cards_refresh_requested.is_set()).is_true()  # pylint: disable=protected-access
 
         self.manager._conn = MagicMock()  # pylint: disable=protected-access
-        self.manager._conn.root.plugins_actions_list.return_value = json.dumps(
+        self.manager._conn.root.plugins_cards_list.return_value = json.dumps(
             [{"id": "x"}]
         )  # pylint: disable=protected-access
         self.manager._run_once(time.monotonic())  # pylint: disable=protected-access
-        events = [e for e in EventManager.get().drain() if isinstance(e, ActionListUpdatedEvent)]
+        events = [e for e in EventManager.get().drain() if isinstance(e, CardListUpdatedEvent)]
         assert_that(events).is_length(1)
 
     def test_unknown_event_type_is_silently_ignored(self):

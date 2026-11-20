@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, BinaryIO, TypeVar
 
-from ._context import MAX_LINE_BYTES, ActionContext, encode_line
+from ._context import MAX_LINE_BYTES, CardContext, encode_line
 from ._gestures import Gesture
 
 WORKERS = 4
@@ -19,33 +19,33 @@ _T = TypeVar("_T", bound=type["DeckerPlugin"])
 
 
 class DeckerPlugin:
-    """Base class for actions; override the handlers you need."""
+    """Base class for cards; override the handlers you need."""
 
-    def on_will_appear(self, ctx: ActionContext) -> None:
+    def on_will_appear(self, ctx: CardContext) -> None:
         """The key became visible."""
 
-    def on_will_disappear(self, ctx: ActionContext) -> None:
+    def on_will_disappear(self, ctx: CardContext) -> None:
         """The key is no longer visible."""
 
-    def on_key_down(self, ctx: ActionContext) -> None:
+    def on_key_down(self, ctx: CardContext) -> None:
         """Raw key down."""
 
-    def on_key_up(self, ctx: ActionContext) -> None:
+    def on_key_up(self, ctx: CardContext) -> None:
         """Raw key up."""
 
-    def on_press(self, ctx: ActionContext) -> None:
+    def on_press(self, ctx: CardContext) -> None:
         """Press gesture."""
 
-    def on_double_press(self, ctx: ActionContext) -> None:
+    def on_double_press(self, ctx: CardContext) -> None:
         """Double-press gesture."""
 
-    def on_long_press(self, ctx: ActionContext) -> None:
+    def on_long_press(self, ctx: CardContext) -> None:
         """Long-press gesture."""
 
-    def on_settings_changed(self, ctx: ActionContext) -> None:
+    def on_settings_changed(self, ctx: CardContext) -> None:
         """The key's settings changed."""
 
-    def on_global_settings_changed(self, ctx: ActionContext) -> None:
+    def on_global_settings_changed(self, ctx: CardContext) -> None:
         """The plugin's global settings changed."""
 
     def gestures(self, settings: dict[str, Any]) -> frozenset[Gesture] | None:  # pylint: disable=unused-argument
@@ -53,18 +53,18 @@ class DeckerPlugin:
         return None
 
 
-def action(action_id: str) -> "Callable[[_T], _T]":
-    """Register a DeckerPlugin subclass under a manifest action id."""
+def card(card_id: str) -> "Callable[[_T], _T]":
+    """Register a DeckerPlugin subclass under a manifest card id."""
 
     def decorate(cls: _T) -> _T:
-        _REGISTRY[action_id] = cls
+        _REGISTRY[card_id] = cls
         return cls
 
     return decorate
 
 
-def registered_actions() -> dict[str, type[DeckerPlugin]]:
-    """The actions registered so far with @action."""
+def registered_cards() -> dict[str, type[DeckerPlugin]]:
+    """The cards registered so far with @card."""
     return dict(_REGISTRY)
 
 
@@ -86,14 +86,14 @@ def _warn(text: str) -> None:
 
 
 class _Runtime:  # pylint: disable=too-many-instance-attributes
-    def __init__(self, actions: Mapping[str, type[DeckerPlugin]], stdout: BinaryIO) -> None:
-        self._actions = actions
+    def __init__(self, cards: Mapping[str, type[DeckerPlugin]], stdout: BinaryIO) -> None:
+        self._cards = cards
         self._stdout = stdout
         self._write_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._pool = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="decker-sdk")
         self._queues: dict[str, deque[dict[str, Any]]] = {}
-        self._contexts: dict[str, tuple[DeckerPlugin, ActionContext]] = {}
+        self._contexts: dict[str, tuple[DeckerPlugin, CardContext]] = {}
         self._global_settings: dict[str, Any] = {}
         self._stopping = False
 
@@ -212,16 +212,16 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
         return dict(value) if isinstance(value, dict) else {}
 
     def _create(self, context: str, payload: dict[str, Any]) -> None:
-        action_id = payload.get("action")
-        cls = self._actions.get(action_id) if isinstance(action_id, str) else None
+        card_id = payload.get("card")
+        cls = self._cards.get(card_id) if isinstance(card_id, str) else None
         if cls is None:
-            _warn(f"no action registered for {action_id!r}")
+            _warn(f"no card registered for {card_id!r}")
             return
         key = self._dict(payload.get("key"))
         state = payload.get("state")
-        ctx = ActionContext(
+        ctx = CardContext(
             context=context,
-            action=str(action_id),
+            card=str(card_id),
             device=str(payload.get("device", "")),
             key_index=int(key.get("index", 0)),
             column=int(key.get("column", 0)),
@@ -240,12 +240,12 @@ class _Runtime:  # pylint: disable=too-many-instance-attributes
             ctx.global_settings = settings
             self._enqueue(context, {"event": "global_settings_changed", "context": context, "payload": payload})
 
-    def _send_gestures(self, plugin: DeckerPlugin, ctx: ActionContext) -> None:
+    def _send_gestures(self, plugin: DeckerPlugin, ctx: CardContext) -> None:
         gestures = plugin.gestures(ctx.settings)
         if gestures is not None:
             self.send("set_gestures", ctx.context, {"gestures": sorted(str(g) for g in gestures)})
 
 
-def run(actions: Mapping[str, type[DeckerPlugin]], stdin: BinaryIO, stdout: BinaryIO) -> int:
+def run(cards: Mapping[str, type[DeckerPlugin]], stdin: BinaryIO, stdout: BinaryIO) -> int:
     """Serve the protocol on the given streams until shutdown or EOF; returns the exit code."""
-    return _Runtime(actions, stdout).serve(stdin)
+    return _Runtime(cards, stdout).serve(stdin)

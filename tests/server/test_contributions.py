@@ -55,7 +55,7 @@ def _pack_dir(tmp_path: Path) -> None:
 
 
 def test_registry_dispatches_by_kind(tmp_path):
-    actions, packs = _Recorder("actions"), _Recorder("icon_packs")
+    actions, packs = _Recorder("cards"), _Recorder("icon_packs")
     registry = ContributionRegistry([actions, packs])
 
     registry.add(_plugin(tmp_path, _PACK))
@@ -67,13 +67,13 @@ def test_registry_dispatches_by_kind(tmp_path):
 
 def test_registry_requires_every_known_kind():
     with pytest.raises(AssertionError):
-        ContributionRegistry([_Recorder("actions")])
+        ContributionRegistry([_Recorder("cards")])
 
 
 def test_handler_failure_rolls_back(tmp_path):
-    actions, packs = _Recorder("actions"), _Recorder("icon_packs", fail=True)
+    actions, packs = _Recorder("cards"), _Recorder("icon_packs", fail=True)
     registry = ContributionRegistry([actions, packs])
-    plugin = _plugin(tmp_path, {"actions": [_ACTION], **_PACK}, runtime=True)
+    plugin = _plugin(tmp_path, {"cards": [_ACTION], **_PACK}, runtime=True)
 
     with pytest.raises(RuntimeError):
         registry.add(plugin)
@@ -112,7 +112,7 @@ def test_bad_pack_path_is_a_load_failure_but_keeps_actions(tmp_path):
     manager = _manager(tmp_path)
     plugin = _plugin(
         tmp_path,
-        {"actions": [_ACTION], "icon_packs": [{"id": "com.t.p.icons", "name": "P", "path": "../out"}]},
+        {"cards": [_ACTION], "icon_packs": [{"id": "com.t.p.icons", "name": "P", "path": "../out"}]},
         runtime=True,
     )
     try:
@@ -121,7 +121,7 @@ def test_bad_pack_path_is_a_load_failure_but_keeps_actions(tmp_path):
         assert_that(manager.load_failures()).extracting("error").contains(
             "icon pack com.t.p.icons: path points outside the plugin folder"
         )
-        assert_that(manager.list_actions()).extracting("action_uuid").contains("com.t.p.a")
+        assert_that(manager.list_cards()).extracting("card_uuid").contains("com.t.p.a")
     finally:
         manager.destroy()
 

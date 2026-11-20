@@ -7,7 +7,7 @@ import pytest
 from assertpy import assert_that
 
 from decker.common.model import AppRule, DefaultRule, MatchCondition
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.app_rule_store import AppRuleStore
 from decker.server.device_state_store import DeviceStateStore
 from decker.server.key_assignments import KeyAssignmentStore
@@ -23,8 +23,8 @@ DEV = "dev1"
 PAGE1 = initial_page_id(DEV)
 
 
-def _target(key_index: int, ctx: str) -> ActionTarget:
-    return ActionTarget(plugin_uuid="com.p", action_uuid="com.p.a", context_id=ctx, device_id=DEV, key_index=key_index)
+def _target(key_index: int, ctx: str) -> CardTarget:
+    return CardTarget(plugin_uuid="com.p", card_uuid="com.p.a", context_id=ctx, device_id=DEV, key_index=key_index)
 
 
 @pytest.fixture()
@@ -105,12 +105,12 @@ class TestActivate:
 
         assert_that(tracker.mock_calls).is_equal_to(
             [
-                call.pm.deactivate_action(old),
+                call.pm.deactivate_card(old),
                 call.dm.show_page(DEV, page2.page_id),
                 call.dm.get_device_state(DEV),
                 call.pm.store_settings(new, {"step": 2}),
                 call.dm.get_device_state().has_image(0),
-                call.pm.activate_action(new, {}, draw=True),
+                call.pm.activate_card(new, {}, draw=True),
                 call.pm.refresh_page_dependent(DEV),
             ]
         )
@@ -143,7 +143,7 @@ class TestRestore:
 
         context.device_manager.show_page.assert_called_once_with(DEV, PAGE1)
         context.plugin_manager.store_settings.assert_called_once_with(target, {"x": 1})
-        context.plugin_manager.activate_action.assert_called_once_with(target, {}, draw=True)
+        context.plugin_manager.activate_card.assert_called_once_with(target, {}, draw=True)
 
 
 class TestEditing:
@@ -175,7 +175,7 @@ class TestDeletePage:
         assert_that(context.key_assignment_store.all_for_page(DEV, page2.page_id)).is_empty()
         assert_that(context.device_state_store.get_all_key_labels(DEV, page2.page_id)).is_empty()
         assert_that(context.page_store.get(DEV, page2.page_id)).is_none()
-        context.plugin_manager.deactivate_action.assert_not_called()
+        context.plugin_manager.deactivate_card.assert_not_called()
         context.device_manager.show_page.assert_not_called()
 
     def test_deleting_active_page_moves_to_next_page(self, context):
@@ -187,7 +187,7 @@ class TestDeletePage:
 
         context.page_controller.delete_page(DEV, page2.page_id)
 
-        context.plugin_manager.deactivate_action.assert_called_once_with(live)
+        context.plugin_manager.deactivate_card.assert_called_once_with(live)
         assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(page3.page_id)
 
     def test_deleting_active_last_page_moves_to_previous_page(self, context):
@@ -262,9 +262,9 @@ class TestProfiles:
 
         assert_that(context.page_controller.activate_profile(DEV, profile.profile_id)).is_true()
 
-        context.plugin_manager.deactivate_action.assert_called_once_with(old)
+        context.plugin_manager.deactivate_card.assert_called_once_with(old)
         context.device_manager.show_page.assert_called_with(DEV, page.page_id)
-        context.plugin_manager.activate_action.assert_called_once_with(new, {}, draw=True)
+        context.plugin_manager.activate_card.assert_called_once_with(new, {}, draw=True)
         assert_that(context.page_controller.active_profile_id(DEV)).is_equal_to(profile.profile_id)
         assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(page.page_id)
         assert_that(_names(_events(context))).contains(PAGES_CHANGED_EVENT, PROFILES_CHANGED_EVENT)
@@ -336,7 +336,7 @@ class TestProfiles:
 
         assert_that(context.page_controller.delete_profile(DEV, second.profile_id)).is_true()
 
-        context.plugin_manager.deactivate_action.assert_called_once_with(live)
+        context.plugin_manager.deactivate_card.assert_called_once_with(live)
         assert_that(context.page_controller.active_profile_id(DEV)).is_equal_to(third.profile_id)
         assert_that(context.key_assignment_store.all_for_page(DEV, page.page_id)).is_empty()
         assert_that(context.device_state_store.get_all_key_labels(DEV, page.page_id)).is_empty()
@@ -358,7 +358,7 @@ class TestProfiles:
         assert_that(context.page_controller.delete_profile(DEV, second.profile_id)).is_true()
 
         context.device_manager.show_page.assert_not_called()
-        context.plugin_manager.deactivate_action.assert_not_called()
+        context.plugin_manager.deactivate_card.assert_not_called()
         assert_that(context.page_controller.active_page_id(DEV)).is_equal_to(PAGE1)
 
     def test_cannot_delete_last_or_unknown_profile(self, context):
@@ -444,7 +444,7 @@ class TestShowWithoutBareRedraw:
 
         context.page_controller.restore(DEV)
 
-        assert_that(context.plugin_manager.activate_action.call_args_list).is_equal_to(
+        assert_that(context.plugin_manager.activate_card.call_args_list).is_equal_to(
             [call(cached, {}, draw=False), call(fresh, {}, draw=True)]
         )
 
@@ -456,7 +456,7 @@ class TestShowWithoutBareRedraw:
 
         context.page_controller.restore(DEV)
 
-        context.plugin_manager.activate_action.assert_called_once_with(target, {}, draw=True)
+        context.plugin_manager.activate_card.assert_called_once_with(target, {}, draw=True)
 
 
 class TestAppRuleCascade:

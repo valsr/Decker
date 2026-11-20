@@ -138,7 +138,7 @@ def test_unknown_appearance_key_in_manifest_rejected() -> None:
         "runtime": {"type": "python", "entry": "plugin.py", "python": ">=3.12", "requirements": []},
         "contributes": {"actions": [{"id": "com.example.p.a", "name": "A", "appearance": {"background": "#112233"}}]},
     }
-    assert_that(PluginManifest.from_dict(data).actions[0].appearance).is_equal_to({"background": "#112233"})
+    assert_that(PluginManifest.from_dict(data).cards[0].appearance).is_equal_to({"background": "#112233"})
     data["contributes"]["actions"][0]["appearance"] = {"bogus": 1}  # type: ignore[index]
     with pytest.raises(ManifestValidationError, match="com.example.p.a.*bogus"):
         PluginManifest.from_dict(data)
@@ -183,14 +183,14 @@ def test_legacy_keys_removed_from_resolved_appearance() -> None:
 
 def test_manifest_default_legacy_keys_still_accepted() -> None:
     data = _manifest_data({"title_position": "top", "show_title": False})
-    assert_that(PluginManifest.from_dict(data).actions[0].appearance).is_equal_to(
+    assert_that(PluginManifest.from_dict(data).cards[0].appearance).is_equal_to(
         {"title_position": "top", "show_title": False}
     )
 
 
 def test_manifest_default_nested_title_accepted() -> None:
     data = _manifest_data({"title": {"position": "top"}})
-    assert_that(PluginManifest.from_dict(data).actions[0].appearance).is_equal_to({"title": {"position": "top"}})
+    assert_that(PluginManifest.from_dict(data).cards[0].appearance).is_equal_to({"title": {"position": "top"}})
 
 
 def test_visible_false_hides_plugin_title() -> None:

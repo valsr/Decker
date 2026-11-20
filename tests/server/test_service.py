@@ -15,7 +15,7 @@ from decker.animation.model import AnimationSpec
 from decker.common.platforms import HostPlatform, PlatformSpec
 from decker.plugin.events import PluginLoadFailedEvent
 from decker.plugin.repository_index import IndexPlugin, IndexVersion
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.appearance import resolve_appearance
 from decker.server.key_assignments import KeyAssignmentStore
 from decker.server.page_controller import PageController
@@ -29,9 +29,7 @@ P1 = initial_page_id("dev1")
 
 
 def _make_target(device_id="dev1", key_index=0, plugin="com.p", action="com.p.a", ctx="ctx1"):
-    return ActionTarget(
-        plugin_uuid=plugin, action_uuid=action, context_id=ctx, device_id=device_id, key_index=key_index
-    )
+    return CardTarget(plugin_uuid=plugin, card_uuid=action, context_id=ctx, device_id=device_id, key_index=key_index)
 
 
 _PAGE_STORES: list[PageStore] = []
@@ -153,16 +151,16 @@ class TestPluginsLoadFailures:
 
 class TestPluginsActionsList:
     def test_returns_empty_list_when_no_context_configured(self):
-        assert_that(json.loads(DeckerService().plugins_actions_list())).is_equal_to([])
+        assert_that(json.loads(DeckerService().plugins_cards_list())).is_equal_to([])
 
     def test_returns_actions_from_plugin_manager(self, store, manager):
-        manager.list_actions.return_value = [
-            {"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}
+        manager.list_cards.return_value = [
+            {"plugin_uuid": "p", "plugin_name": "P", "card_uuid": "p.a", "card_name": "A"}
         ]
         DeckerService.configure_context(_make_context(manager, store))
-        result = json.loads(DeckerService().plugins_actions_list())
+        result = json.loads(DeckerService().plugins_cards_list())
         assert_that(result).is_equal_to(
-            [{"plugin_uuid": "p", "plugin_name": "P", "action_uuid": "p.a", "action_name": "A"}]
+            [{"plugin_uuid": "p", "plugin_name": "P", "card_uuid": "p.a", "card_name": "A"}]
         )
 
 
@@ -170,14 +168,14 @@ class TestKeyAssign:
     def test_assign_activates_action(self, service, manager, store):
         result = service.key_assign("dev1", P1, 0, "com.p", "com.p.a", "ctx1", json.dumps({"step": 2}))
         assert_that(result).is_true()
-        manager.activate_action.assert_called_once()
+        manager.activate_card.assert_called_once()
         assert_that(store.get("dev1", P1, 0)).is_not_none()
 
     def test_assign_deactivates_previous_if_exists(self, service, manager, store):
         target = _make_target()
         store.assign("dev1", P1, 0, target, {})
         service.key_assign("dev1", P1, 0, "com.q", "com.q.b", "ctx2")
-        manager.deactivate_action.assert_called_once_with(target)
+        manager.deactivate_card.assert_called_once_with(target)
 
     def test_assign_returns_false_without_context(self):
         s = DeckerService()
@@ -196,13 +194,13 @@ class TestKeyUnassign:
         store.assign("dev1", P1, 0, target, {})
         result = service.key_unassign("dev1", P1, 0)
         assert_that(result).is_true()
-        manager.deactivate_action.assert_called_once_with(target)
+        manager.deactivate_card.assert_called_once_with(target)
         assert_that(store.get("dev1", P1, 0)).is_none()
 
     def test_unassign_returns_false_when_unassigned(self, service, manager):
         result = service.key_unassign("dev1", P1, 0)
         assert_that(result).is_false()
-        manager.deactivate_action.assert_not_called()
+        manager.deactivate_card.assert_not_called()
 
     def test_unassign_returns_false_without_context(self):
         s = DeckerService()
@@ -494,7 +492,7 @@ class TestKeysOnInactivePage:
     def test_assign_to_inactive_page_stores_without_activating(self, service, manager, store, page2):
         assert_that(service.key_assign("dev1", page2, 0, "com.p", "com.p.a", "c", json.dumps({"step": 4}))).is_true()
 
-        manager.activate_action.assert_not_called()
+        manager.activate_card.assert_not_called()
         manager.store_settings.assert_called_once()
         saved = store.get("dev1", page2, 0)
         assert saved is not None
@@ -509,7 +507,7 @@ class TestKeysOnInactivePage:
 
         assert_that(service.key_unassign("dev1", page2, 0)).is_true()
 
-        manager.deactivate_action.assert_not_called()
+        manager.deactivate_card.assert_not_called()
         ctx = service._context  # pylint: disable=protected-access
         ctx.device_manager.delete_stored_key_state.assert_called_once_with("dev1", page2, 0)
         ctx.device_manager.clear_key_state.assert_not_called()
@@ -839,8 +837,8 @@ class TestKeyMoveAndCopy:
 
         assert_that(service.key_move("dev1", P1, 0, 4)).is_true()
 
-        manager.deactivate_action.assert_any_call(source)
-        manager.deactivate_action.assert_any_call(old_target)
+        manager.deactivate_card.assert_any_call(source)
+        manager.deactivate_card.assert_any_call(old_target)
         dm.blank_key.assert_called_once_with("dev1", 0)
         dm.clear_key_state.assert_called_once_with("dev1", 4)
         moved = store.get("dev1", P1, 4)
@@ -848,9 +846,9 @@ class TestKeyMoveAndCopy:
         assert_that(moved.target.context_id).is_equal_to("c0")
         assert_that(store.get("dev1", P1, 0)).is_none()
         manager.store_settings.assert_called_once_with(moved.target, {"n": 1})
-        manager.activate_action.assert_called_once_with(moved.target, {"background": {"color": "#ff0000"}})
+        manager.activate_card.assert_called_once_with(moved.target, {"background": {"color": "#ff0000"}})
         names = [c[0] for c in order.mock_calls]
-        assert_that(names.index("dm.clear_key_state")).is_less_than(names.index("pm.activate_action"))
+        assert_that(names.index("dm.clear_key_state")).is_less_than(names.index("pm.activate_card"))
 
     def test_move_on_an_inactive_page_only_changes_rows_and_cached_state(self, service, manager, store):
         other = service._context.page_store.add_page("dev1", "Other")  # pylint: disable=protected-access
@@ -860,8 +858,8 @@ class TestKeyMoveAndCopy:
 
         assert_that(service.key_move("dev1", other.page_id, 0, 4)).is_true()
 
-        manager.deactivate_action.assert_not_called()
-        manager.activate_action.assert_not_called()
+        manager.deactivate_card.assert_not_called()
+        manager.activate_card.assert_not_called()
         assert_that(store.get("dev1", other.page_id, 4).target.context_id).is_equal_to("c0")
         dm.delete_stored_key_state.assert_any_call("dev1", other.page_id, 0)
         dm.delete_stored_key_state.assert_any_call("dev1", other.page_id, 4)
@@ -879,10 +877,10 @@ class TestKeyMoveAndCopy:
         assert_that(copy.target.context_id).is_not_equal_to("c0").is_not_equal_to("c4")
         assert_that(copy.settings).is_equal_to({"n": 1})
         assert_that(store.get("dev1", P1, 0).target.context_id).is_equal_to("c0")
-        manager.deactivate_action.assert_called_once_with(old_target)
-        assert source not in [c.args[0] for c in manager.deactivate_action.call_args_list]
+        manager.deactivate_card.assert_called_once_with(old_target)
+        assert source not in [c.args[0] for c in manager.deactivate_card.call_args_list]
         manager.store_settings.assert_called_once_with(copy.target, {"n": 1})
-        manager.activate_action.assert_called_once_with(copy.target, {"background": {"color": "#ff0000"}})
+        manager.activate_card.assert_called_once_with(copy.target, {"background": {"color": "#ff0000"}})
         service._context.device_manager.clear_key_state.assert_called_once_with(
             "dev1", 4
         )  # pylint: disable=protected-access
@@ -894,7 +892,7 @@ class TestKeyMoveAndCopy:
 
         assert_that(service.key_copy("dev1", other.page_id, 0, 4)).is_true()
 
-        manager.activate_action.assert_not_called()
+        manager.activate_card.assert_not_called()
         assert_that(store.get("dev1", other.page_id, 4)).is_not_none()
         assert_that(store.get("dev1", other.page_id, 0)).is_not_none()
 
@@ -921,8 +919,8 @@ class TestKeyMoveAndCopy:
         assert_that(getattr(service, method)("dev1", page, src, dst)).is_false()
 
         assert_that(store.all_for_page("dev1", P1)).is_length(1)
-        manager.activate_action.assert_not_called()
-        manager.deactivate_action.assert_not_called()
+        manager.activate_card.assert_not_called()
+        manager.deactivate_card.assert_not_called()
 
     @pytest.mark.parametrize("method", ["key_move", "key_copy"])
     def test_a_device_that_cannot_open_returns_false(self, service, manager, store, method):
@@ -958,8 +956,8 @@ class TestKeyMoveAndCopyAreAllOrNothing:
         with patch.object(store, "move", return_value=False):
             assert_that(service.key_move("dev1", P1, 0, 4)).is_false()
 
-        manager.deactivate_action.assert_not_called()
-        manager.activate_action.assert_not_called()
+        manager.deactivate_card.assert_not_called()
+        manager.activate_card.assert_not_called()
         service._context.device_manager.blank_key.assert_not_called()  # pylint: disable=protected-access
 
     def test_a_copy_the_store_refuses_deactivates_nothing(self, service, manager, store):
@@ -968,8 +966,8 @@ class TestKeyMoveAndCopyAreAllOrNothing:
         with patch.object(store, "copy_key", return_value=None):
             assert_that(service.key_copy("dev1", P1, 0, 4)).is_false()
 
-        manager.deactivate_action.assert_not_called()
-        manager.activate_action.assert_not_called()
+        manager.deactivate_card.assert_not_called()
+        manager.activate_card.assert_not_called()
 
     def test_a_store_error_leaves_the_live_instances_alone(self, service, manager, store):
         self._seed(service, manager)
@@ -977,7 +975,7 @@ class TestKeyMoveAndCopyAreAllOrNothing:
         with patch.object(store, "move", side_effect=RuntimeError("disk")), pytest.raises(RuntimeError):
             service.key_move("dev1", P1, 0, 4)
 
-        manager.deactivate_action.assert_not_called()
+        manager.deactivate_card.assert_not_called()
 
     def test_the_replaced_instance_is_still_deactivated_after_a_successful_move(self, service, manager, store):
         self._seed(service, manager)
@@ -985,7 +983,7 @@ class TestKeyMoveAndCopyAreAllOrNothing:
 
         assert_that(service.key_move("dev1", P1, 0, 4)).is_true()
 
-        manager.deactivate_action.assert_any_call(replaced)
+        manager.deactivate_card.assert_any_call(replaced)
 
 
 class TestSystemIconRpcs:
@@ -1163,7 +1161,7 @@ class TestPlatformData:
         plugin = MagicMock()
         plugin.manifest.platforms = PlatformSpec(os=("linux",), desktops=("gnome",))
         plugin.manifest.icon = None
-        plugin.manifest.actions = ()
+        plugin.manifest.cards = ()
         plugin.manifest.icon_packs = ()
         plugin.manifest.global_settings = ()
         info = DeckerService._plugin_info(plugin, {})  # pylint: disable=protected-access

@@ -18,8 +18,8 @@ from rpyc.utils.helpers import BgServingThread, async_
 
 from decker.client import config as client_config
 from decker.client.events import (
-    ActionListUpdatedEvent,
     AppRulesUpdatedEvent,
+    CardListUpdatedEvent,
     DetectionStatusEvent,
     DeviceListUpdatedEvent,
     KeyDisplayStatesUpdatedEvent,
@@ -104,7 +104,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._reconnect_requested = threading.Event()
         self._device_refresh_requested = threading.Event()
         self._layout_refresh_requested = threading.Event()
-        self._actions_refresh_requested = threading.Event()
+        self._cards_refresh_requested = threading.Event()
         self._devices_refresh_requested = threading.Event()
         self._rules_refresh_requested = threading.Event()
         self._screensaver_refresh_lock = threading.Lock()
@@ -114,7 +114,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self.state: ServerState = ServerState.DISCONNECTED
         self._reported_plugin_failures: set[str] = set()
         self._last_devices: list[DeviceHardwareInfo] | None = None
-        self._last_actions: list[dict[str, Any]] | None = None
+        self._last_cards: list[dict[str, Any]] | None = None
         self.server_settings: ServerSettingsInfo | None = None
 
     @property
@@ -169,9 +169,9 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._devices_refresh_requested.set()
         self._wake_event.set()
 
-    def request_actions_refresh(self) -> None:
-        """Re-fetch the plugin action list on the worker thread."""
-        self._actions_refresh_requested.set()
+    def request_cards_refresh(self) -> None:
+        """Re-fetch the plugin card list on the worker thread."""
+        self._cards_refresh_requested.set()
         self._wake_event.set()
 
     def _wait(self, timeout: float) -> None:
@@ -212,9 +212,9 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         if self._devices_refresh_requested.is_set():
             self._devices_refresh_requested.clear()
             self._refresh_devices()
-        if self._actions_refresh_requested.is_set():
-            self._actions_refresh_requested.clear()
-            self._refresh_actions()
+        if self._cards_refresh_requested.is_set():
+            self._cards_refresh_requested.clear()
+            self._refresh_cards()
         if self._rules_refresh_requested.is_set():
             self._rules_refresh_requested.clear()
             self.refresh_app_rules()
@@ -249,7 +249,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         logging.info("Connected to server at %s:%d", host, port)
         self.state = ServerState.INITIALIZING
         self._last_devices = None
-        self._last_actions = None
+        self._last_cards = None
         self._bg_server = BgServingThread(self._conn)
         self.call("client_attached")
         EventManager.get().push(ServerConnectedEvent(host=host, port=port))
@@ -290,7 +290,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
 
     def _refresh_all(self) -> None:
         self._refresh_devices()
-        self._refresh_actions()
+        self._refresh_cards()
         self._check_plugin_failures()
 
     def _call_json(self, method: str, *args: Any) -> Any:
@@ -345,18 +345,18 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         self._last_devices = devices
         EventManager.get().push(DeviceListUpdatedEvent(devices=devices))
 
-    def _refresh_actions(self) -> None:
+    def _refresh_cards(self) -> None:
         if self._conn is None:
             return
         try:
-            actions: list[dict[str, Any]] = self._call_json("plugins_actions_list")
+            cards: list[dict[str, Any]] = self._call_json("plugins_cards_list")
         except Exception as e:  # pylint: disable=broad-except
-            logging.warning("Could not list plugin actions: %s", e)
+            logging.warning("Could not list plugin cards: %s", e)
             return
-        if actions == self._last_actions:
+        if cards == self._last_cards:
             return
-        self._last_actions = actions
-        EventManager.get().push(ActionListUpdatedEvent(actions=actions))
+        self._last_cards = cards
+        EventManager.get().push(CardListUpdatedEvent(cards=cards))
 
     def call(self, method: str, *args: Any) -> Any:
         """Call an RPC method on the server and return the result. Returns None on error."""
@@ -604,7 +604,7 @@ class ConnectionManager:  # pylint: disable=too-many-instance-attributes
         elif event_type in _SCREENSAVER_EVENT_TYPES:
             self._on_screensaver_event(event_type, data)
         elif event_type == "plugins_changed":
-            self.request_actions_refresh()
+            self.request_cards_refresh()
             EventManager.get().push(PluginsChangedEvent())
         else:
             logging.debug("Unknown server event type: %s", event_type)

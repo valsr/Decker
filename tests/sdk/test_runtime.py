@@ -11,7 +11,7 @@ import pytest
 from assertpy import assert_that
 
 from decker_plugin_sdk import run
-from decker_plugin_sdk._context import ActionContext
+from decker_plugin_sdk._context import CardContext
 
 FIXTURE = Path(__file__).parent / "fixtures" / "echo_plugin.py"
 
@@ -74,7 +74,7 @@ class Harness:
             "will_appear",
             context,
             {
-                "action": "test.echo.echo",
+                "card": "test.echo.echo",
                 "device": "d",
                 "key": {"index": 0, "column": 0, "row": 0},
                 "settings": settings,
@@ -239,7 +239,7 @@ def _appear(context: str, **settings: Any) -> dict:
         "event": "will_appear",
         "context": context,
         "payload": {
-            "action": "test.echo.echo",
+            "card": "test.echo.echo",
             "device": "d",
             "key": {"index": 0, "column": 0, "row": 0},
             "settings": settings,
@@ -276,11 +276,11 @@ def test_stray_fd1_writes_do_not_corrupt_protocol() -> None:
 
 
 def _context(sent: list[tuple[str, str | None, dict[str, Any]]]) -> Any:
-    from decker_plugin_sdk import ActionContext
+    from decker_plugin_sdk import CardContext
 
-    return ActionContext(
+    return CardContext(
         context="c1",
-        action="a",
+        card="a",
         device="d",
         key_index=0,
         column=0,
@@ -305,9 +305,9 @@ def test_set_icon_without_color_omits_it() -> None:
     assert_that(sent).is_equal_to([("set_image", "c1", {"icon": "pack:p/a.svg"})])
 
 
-def _context_with_log() -> tuple[ActionContext, list[tuple[str, str | None, dict[str, Any]]]]:
+def _context_with_log() -> tuple[CardContext, list[tuple[str, str | None, dict[str, Any]]]]:
     sent: list[tuple[str, str | None, dict[str, Any]]] = []
-    ctx = ActionContext("c1", "a", "d", 0, 0, 0, _send=lambda e, c, p: sent.append((e, c, p)))
+    ctx = CardContext("c1", "a", "d", 0, 0, 0, _send=lambda e, c, p: sent.append((e, c, p)))
     return ctx, sent
 
 

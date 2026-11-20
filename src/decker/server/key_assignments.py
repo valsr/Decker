@@ -1,4 +1,4 @@
-"""SQLite-backed store mapping (device_id, page_id, key_index) to an active action assignment."""
+"""SQLite-backed store mapping (device_id, page_id, key_index) to an active card assignment."""
 
 import json
 import sqlite3
@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from decker.common import paths as decker_paths
+from decker.common.dbmigrate import rename_column
 from decker.common.manager import Manager
-from decker.plugin.target import ActionTarget
+from decker.plugin.target import CardTarget
 from decker.server.pages import initial_page_id
 
 if TYPE_CHECKING:
@@ -24,7 +25,7 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     page_id     TEXT NOT NULL,
     key_index   INTEGER NOT NULL,
     plugin_uuid TEXT NOT NULL,
-    action_uuid TEXT NOT NULL,
+    card_uuid TEXT NOT NULL,
     context_id  TEXT NOT NULL,
     settings    TEXT NOT NULL DEFAULT '{{}}',
     appearance  TEXT NOT NULL DEFAULT '{{}}',
@@ -32,7 +33,7 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
 )
 """
 _META_SCHEMA = "CREATE TABLE IF NOT EXISTS key_assignment_meta (name TEXT PRIMARY KEY)"
-_LEGACY_COLUMNS = "key_index, plugin_uuid, action_uuid, context_id, settings"
+_LEGACY_COLUMNS = "key_index, plugin_uuid, card_uuid, context_id, settings"
 _COLUMNS = f"{_LEGACY_COLUMNS}, appearance"
 _COUNTER_PLUGIN = "com.decker.counter"
 _COUNTER_APPEARANCE_MIGRATION = "counter_appearance"
@@ -50,15 +51,15 @@ _COUNTER_APPEARANCE_KEYS = (
 
 @dataclass(frozen=True)
 class KeyAssignment:
-    """One active key slot: which action occupies it and its current settings."""
+    """One active key slot: which card occupies it and its current settings."""
 
-    target: ActionTarget
+    target: CardTarget
     settings: dict[str, Any]
     appearance: dict[str, Any] = field(default_factory=dict)
 
 
 class KeyAssignmentStore(Manager):
-    """Persists and retrieves key→action mappings per page from decker.db."""
+    """Persists and retrieves key→card mappings per page from decker.db."""
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         self._lock = threading.Lock()
@@ -69,6 +70,7 @@ class KeyAssignmentStore(Manager):
         """Open the SQLite connection, migrate pre-page data, and initialise the schema."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        rename_column(self._db, _TABLE, "action_uuid", "card_uuid")  # before the page migration reads the columns
         self._migrate_to_pages()
         self._db.execute(_SCHEMA)
         self._db.execute(_META_SCHEMA)
@@ -89,18 +91,18 @@ class KeyAssignmentStore(Manager):
         return self._conn
 
     def assign(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        self, device_id: str, page_id: str, key_index: int, target: ActionTarget, settings: dict[str, Any]
+        self, device_id: str, page_id: str, key_index: int, target: CardTarget, settings: dict[str, Any]
     ) -> None:
         """Persist an assignment, replacing any previous one for this slot."""
         with self._lock:
             self._db.execute(
                 f"""
                 INSERT INTO {_TABLE}
-                    (device_id, page_id, key_index, plugin_uuid, action_uuid, context_id, settings)
+                    (device_id, page_id, key_index, plugin_uuid, card_uuid, context_id, settings)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(device_id, page_id, key_index) DO UPDATE SET
                     plugin_uuid = excluded.plugin_uuid,
-                    action_uuid = excluded.action_uuid,
+                    card_uuid = excluded.card_uuid,
                     context_id  = excluded.context_id,
                     settings    = excluded.settings,
                     appearance  = '{{}}'
@@ -110,7 +112,7 @@ class KeyAssignmentStore(Manager):
                     page_id,
                     key_index,
                     target.plugin_uuid,
-                    target.action_uuid,
+                    target.card_uuid,
                     target.context_id,
                     json.dumps(settings),
                 ),
@@ -165,7 +167,7 @@ class KeyAssignmentStore(Manager):
         return [_to_assignment(device_id, row) for row in rows]
 
     def assignments_for_plugin(self, plugin_id: str) -> list[tuple[str, str, int, KeyAssignment]]:
-        """Return every assignment of a plugin's actions as (device_id, page_id, key_index, assignment)."""
+        """Return every assignment of a plugin's cards as (device_id, page_id, key_index, assignment)."""
         with self._lock:
             rows = self._db.execute(
                 f"SELECT device_id, page_id, {_COLUMNS} FROM {_TABLE} WHERE plugin_uuid = ? "
@@ -306,12 +308,12 @@ def _remap_pages(settings_json: str, page_map: Mapping[str, str]) -> str:
 
 
 def _to_assignment(device_id: str, row: tuple[Any, ...]) -> tuple[int, KeyAssignment]:
-    key_index, plugin_uuid, action_uuid, context_id, settings_json, appearance_json = row
-    target = ActionTarget(
+    key_index, plugin_uuid, card_uuid, context_id, settings_json, appearance_json = row
+    target = CardTarget(
         device_id=device_id,
         key_index=key_index,
         plugin_uuid=plugin_uuid,
-        action_uuid=action_uuid,
+        card_uuid=card_uuid,
         context_id=context_id,
     )
     return key_index, KeyAssignment(

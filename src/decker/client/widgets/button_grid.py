@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from decker.client.action_icons import decode_icon
+from decker.client.card_icons import decode_icon
 from decker.common.model import KeyInfo
 
 _LONG_PRESS_MS = 500
@@ -49,7 +49,7 @@ _RUN_SIZE = 30  # px, the hover play button
 _RUN_ICON_PX = 21  # px, the play-circle drawing inside its 30 px button
 _PLAY_ICON = Path(__file__).resolve().parents[2] / "assets" / "play-circle.svg"
 _RUN_MARGIN = 4  # px from the key's top-right corner
-_MIME_TYPE = "application/x-decker-action"
+_MIME_TYPE = "application/x-decker-card"
 _KEY_MIME_TYPE = "application/x-decker-key"
 _PLUS_ICON = Path(__file__).resolve().parents[2] / "assets" / "plus-circle.svg"
 _BADGE_COLOR = "#2ecc71"  # the copy badge's green
@@ -126,9 +126,9 @@ class _RunButton(QToolButton):
 
 
 class KeyButtonWidget(QPushButton):  # pylint: disable=too-many-instance-attributes,too-many-public-methods
-    """Square button for one key: a click selects it, its play button runs it, and it accepts action drops."""
+    """Square button for one key: a click selects it, its play button runs it, and it accepts card drops."""
 
-    action_dropped = pyqtSignal(int, object)
+    card_dropped = pyqtSignal(int, object)
     long_pressed = pyqtSignal(int)
     edit_clicked = pyqtSignal(int)
     run_clicked = pyqtSignal(int)
@@ -177,7 +177,7 @@ class KeyButtonWidget(QPushButton):  # pylint: disable=too-many-instance-attribu
         self._scope = scope
 
     def set_draggable(self, draggable: bool) -> None:
-        """Whether this key can be dragged (keys with an action can; empty ones cannot)."""
+        """Whether this key can be dragged (keys with a card can; empty ones cannot)."""
         self._draggable = draggable
 
     def _build_run_button(self) -> _RunButton:
@@ -388,7 +388,7 @@ class KeyButtonWidget(QPushButton):  # pylint: disable=too-many-instance-attribu
     # ------------------------------------------------------------------
 
     def dragEnterEvent(self, a0: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """Accept action drops and key drags."""
+        """Accept card drops and key drags."""
         mime = a0.mimeData()
         if mime.hasFormat(_MIME_TYPE) or mime.hasFormat(_KEY_MIME_TYPE):
             a0.acceptProposedAction()
@@ -407,7 +407,7 @@ class KeyButtonWidget(QPushButton):  # pylint: disable=too-many-instance-attribu
         super().dragLeaveEvent(a0)
 
     def dropEvent(self, a0: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
-        """Assign a dropped action, or move/copy a dropped key onto this one."""
+        """Assign a dropped card, or move/copy a dropped key onto this one."""
         self._copy_badge.hide()
         mime = a0.mimeData()
         if mime.hasFormat(_KEY_MIME_TYPE):
@@ -418,7 +418,7 @@ class KeyButtonWidget(QPushButton):  # pylint: disable=too-many-instance-attribu
             data: dict[str, Any] = json.loads(raw.decode())
         except (ValueError, UnicodeDecodeError):
             return
-        self.action_dropped.emit(self.index, data)
+        self.card_dropped.emit(self.index, data)
         a0.acceptProposedAction()
 
     def _drop_key(self, event: Any) -> None:
@@ -457,7 +457,7 @@ class ButtonGridWidget(QWidget):
     key_pressed = pyqtSignal(int)
     key_edit_requested = pyqtSignal(int)
     key_long_pressed = pyqtSignal(int)
-    action_dropped = pyqtSignal(int, object)
+    card_dropped = pyqtSignal(int, object)
     key_moved = pyqtSignal(int, int, bool)  # from index, to index, copy
 
     def __init__(self) -> None:
@@ -494,7 +494,7 @@ class ButtonGridWidget(QWidget):
             button.run_clicked.connect(self.key_pressed.emit)
             button.edit_clicked.connect(self.key_edit_requested.emit)
             button.long_pressed.connect(self.key_long_pressed.emit)
-            button.action_dropped.connect(self.action_dropped.emit)
+            button.card_dropped.connect(self.card_dropped.emit)
             button.key_dropped.connect(self.key_moved.emit)
             button.set_draggable(index in self._draggable)
             button.set_scope(self._scope)
