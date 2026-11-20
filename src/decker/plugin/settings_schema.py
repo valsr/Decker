@@ -7,11 +7,12 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from decker.common.background import BACKGROUND_DEFAULT, normalize_background
 from decker.common.icon_ref import normalize_icon_value
 from decker.common.text_style import TEXT_STYLE_DEFAULTS, normalize_text_style
 
 FIELD_TYPES = frozenset(
-    {"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style", "page", "profile"}
+    {"int", "float", "text", "bool", "choice", "color", "font", "icon", "text_style", "background", "page", "profile"}
 )
 
 _PROFILE_ID_PATTERN = re.compile(r"[0-9]*\Z")
@@ -37,11 +38,13 @@ _ZERO_VALUES: dict[str, Any] = {
     "profile": "",
     "icon": {"ref": "", "color": "#ffffff"},
     "text_style": dict(TEXT_STYLE_DEFAULTS),
+    "background": {**BACKGROUND_DEFAULT, "image": dict(BACKGROUND_DEFAULT["image"])},
 }
 # Object-valued types: normalised field by field against the field default (never rejected as a whole).
 _OBJECT_NORMALIZERS: dict[str, Callable[..., dict[str, Any]]] = {
     "text_style": normalize_text_style,
     "icon": normalize_icon_value,
+    "background": normalize_background,
 }
 _MISSING = object()
 
@@ -181,7 +184,7 @@ def _parse_default(type_: str, data: dict[str, Any], optional: bool, extra: Mapp
         return extra["options"][0]["value"] if type_ == "choice" else _copy(_ZERO_VALUES[type_])
     raw = data["default"]
     if type_ in _OBJECT_NORMALIZERS:
-        if not isinstance(raw, dict):
+        if not isinstance(raw, dict) and not (type_ == "background" and isinstance(raw, str)):
             raise ValueError(f"{where}: default {raw!r} is not valid for type '{type_}'")
         return _OBJECT_NORMALIZERS[type_](raw)
     # A JSON float with an int-like value (e.g. 1.0) is not a valid int default.
