@@ -83,6 +83,7 @@ class _Runtime:
     cursor: GalleryCursor = field(default_factory=GalleryCursor)
     next_gallery: float | None = None
     warned: bool = False
+    no_display: bool = False  # a deck without key screens (e.g. a pedal) never shows a screensaver
 
 
 class ScreensaverEngine(Manager):  # pylint: disable=too-many-instance-attributes
@@ -129,8 +130,11 @@ class ScreensaverEngine(Manager):  # pylint: disable=too-many-instance-attribute
             self._thread.join(timeout=_JOIN_S)
             self._thread = None
         with self._lock:
-            active = [device_id for device_id, rt in self._runtimes.items() if rt.active]
-        for device_id in active:
+            known = set(self._runtimes)
+        with self._wake:
+            known |= self._pending
+            self._pending.clear()
+        for device_id in sorted(known):  # deactivate wakes a device whose overlay is set even if not marked active
             self._safely(partial(self.deactivate, device_id), f"waking {device_id}")
 
     def note_activity(self, device_id: str) -> None:
@@ -162,13 +166,13 @@ class ScreensaverEngine(Manager):  # pylint: disable=too-many-instance-attribute
             return ScreensaverStatus(rt.active, rt.last_error) if rt is not None else ScreensaverStatus(False, "")
 
     def activate(self, device_id: str) -> bool:
-        """Show the screensaver now (whatever the timeout); False if the device is not open or it was cancelled."""
+        """Show the screensaver now (whatever the timeout); False if not open, without key screens, or cancelled."""
         with self._lock:
             rt = self._runtime_locked(device_id, self._clock())
             rt.generation += 1
             generation = rt.generation
         settings = self._settings(device_id)
-        layout = self._layout(device_id, settings)
+        layout = self._layout(device_id, settings, rt)
         if layout is None:
             return False
         images, error = self._render(settings, layout, rt)
@@ -176,15 +180,35 @@ class ScreensaverEngine(Manager):  # pylint: disable=too-many-instance-attribute
             with self._lock:
                 if rt.generation != generation:
                     return False
-            self._devices.set_overlay(device_id, True)  # also stops the device's animations
-            self._write(device_id, images)
-            self._devices.set_brightness(device_id, settings.saver_brightness)
-            with self._lock:
+            try:
+                self._show(device_id, settings, images)
+            finally:
+                shown = self._finish_activation(device_id, rt, settings, error)
+        return shown
+
+    def _show(self, device_id: str, settings: ScreensaverSettings, images: list[bytes] | None) -> None:
+        self._devices.set_overlay(device_id, True)  # also stops the device's animations
+        self._write(device_id, images)
+        self._devices.set_brightness(device_id, settings.saver_brightness)
+        if not self._devices.overlay_active(device_id):
+            # The brightness write reopened the deck and device_opened woke it (same thread, re-entrant op_lock);
+            # the saver brightness then landed on the woken deck, so restore the normal one.
+            self._devices.set_brightness(device_id, settings.brightness)
+
+    def _finish_activation(self, device_id: str, rt: _Runtime, settings: ScreensaverSettings, error: str) -> bool:
+        # Runs even when a hardware call failed: a set overlay is a shown screensaver (so a wake can end it), and
+        # an unset one restarts the idle countdown instead of retrying on every tick.
+        shown = self._devices.overlay_active(device_id)
+        with self._lock:
+            if shown:
                 rt.active = True
                 rt.last_error = error
                 rt.next_gallery = self._next_gallery(settings)
+            else:
+                rt.last_activity = self._clock()
+        if shown:
             self._notify(device_id, True)
-        return True
+        return shown
 
     def deactivate(self, device_id: str) -> bool:
         """Wake the device: release the overlay, restore brightness and redraw the active page; False if awake."""
@@ -200,11 +224,13 @@ class ScreensaverEngine(Manager):  # pylint: disable=too-many-instance-attribute
                 rt.last_activity = self._clock()
             if not was_active:
                 return False
-            settings = self._settings(device_id)
-            self._devices.set_overlay(device_id, False)
-            self._devices.set_brightness(device_id, settings.brightness)
-            self._devices.show_page(device_id, self._active_page(device_id))
-            self._notify(device_id, False)
+            try:
+                settings = self._settings(device_id)
+                self._devices.set_overlay(device_id, False)
+                self._devices.set_brightness(device_id, settings.brightness)
+                self._devices.show_page(device_id, self._active_page(device_id))
+            finally:
+                self._notify(device_id, False)
         return True
 
     def apply_settings(self, device_id: str) -> None:
@@ -241,6 +267,7 @@ class ScreensaverEngine(Manager):  # pylint: disable=too-many-instance-attribute
                 rt = self._runtime_locked(device_id, current)
                 idle_due = (
                     not rt.active
+                    and not rt.no_display
                     and settings.timeout_minutes > 0
                     and current >= rt.last_activity + settings.timeout_minutes * 60
                 )
@@ -257,7 +284,7 @@ class ScreensaverEngine(Manager):  # pylint: disable=too-many-instance-attribute
             rt = self._runtime_locked(device_id, self._clock())
             generation = rt.generation
         settings = self._settings(device_id)
-        layout = self._layout(device_id, settings)
+        layout = self._layout(device_id, settings, rt)
         if layout is None:
             return
         images, error = self._render(settings, layout, rt)
@@ -309,12 +336,14 @@ class ScreensaverEngine(Manager):  # pylint: disable=too-many-instance-attribute
             return None
         return self._clock() + settings.gallery_minutes * 60
 
-    def _layout(self, device_id: str, settings: ScreensaverSettings) -> CanvasLayout | None:
+    def _layout(self, device_id: str, settings: ScreensaverSettings, rt: _Runtime) -> CanvasLayout | None:
         device = self._devices.open_device(device_id)
         if device is None:
             return None
         keys = [key for key in device.get_hw_info().keys if key.type == "key"]
-        if not keys:
+        if not keys or keys[0].pixel_width <= 0 or keys[0].pixel_height <= 0:
+            with self._lock:
+                rt.no_display = True
             return None
         rows = max(key.row for key in keys) + 1
         cols = max(key.col for key in keys) + 1
@@ -342,6 +371,7 @@ class ScreensaverEngine(Manager):  # pylint: disable=too-many-instance-attribute
             try:
                 return load_image(settings.image_path, layout.width, layout.height), ""
             except ScreensaverImageError as exc:
+                _LOGGER.warning("screensaver: %s", exc)
                 return None, str(exc)
         return _load_gallery(settings.folder_path, layout, rt.cursor)
 
@@ -362,12 +392,9 @@ class ScreensaverEngine(Manager):  # pylint: disable=too-many-instance-attribute
 
 def _load_gallery(folder: str, layout: CanvasLayout, cursor: GalleryCursor) -> tuple[Image.Image | None, str]:
     error = "the gallery folder has no readable images"
-    first: str | None = None
-    for _ in range(_MAX_GALLERY_TRIES):
-        path = cursor.next_path(folder) if folder else None
-        if path is None or path == first:
-            break
-        first = first or path
+    paths = cursor.candidates(folder) if folder else []  # one folder scan per render
+    for path in paths[:_MAX_GALLERY_TRIES]:
+        cursor.mark_shown(path)
         try:
             return load_image(path, layout.width, layout.height), ""
         except ScreensaverImageError as exc:
@@ -377,10 +404,9 @@ def _load_gallery(folder: str, layout: CanvasLayout, cursor: GalleryCursor) -> t
 
 
 def _on_black(image: Image.Image) -> Image.Image:
-    rgba = image.convert("RGBA")
-    background = Image.new("RGBA", rgba.size, (0, 0, 0, 255))
-    background.alpha_composite(rgba)
-    return background.convert("RGB")
+    background = Image.new("RGBA", image.size, (0, 0, 0, 255))
+    background.alpha_composite(image if image.mode == "RGBA" else image.convert("RGBA"))
+    return background  # opaque RGBA, so compose does not convert it again
 
 
 def _png_bytes(image: Image.Image) -> bytes:

@@ -467,3 +467,179 @@ def test_corrupt_settings_row_falls_back_to_defaults(engine, store, manager, tmp
     assert_that(manager.calls).contains(("brightness", DEV, defaults.brightness))
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING and DEV in r.getMessage()]
     assert_that(warnings).is_length(1)
+
+
+def test_failed_overlay_write_still_marks_active_so_tick_does_not_retry(engine, store, manager, changes):
+    _set(store, timeout_minutes=1)
+    manager.write_overlay = MagicMock(side_effect=RuntimeError("usb"))
+    engine.tick(0.0)
+
+    engine.tick(60.0)  # the activation fails after the overlay is set
+    engine.tick(61.0)
+    engine.tick(62.0)
+
+    assert_that(manager.names().count("overlay")).is_equal_to(1)
+    assert_that(engine.is_active(DEV)).is_true()
+    assert_that(changes).is_equal_to([(DEV, True)])
+    assert_that(engine.deactivate(DEV)).is_true()
+    assert_that(manager.overlay).is_empty()
+
+
+def test_failed_overlay_set_restarts_the_countdown(engine, store, manager, clock):
+    _set(store, timeout_minutes=1)
+    manager.set_overlay = MagicMock(side_effect=RuntimeError("usb"))
+    engine.tick(0.0)
+    clock.now = 60.0
+
+    engine.tick(60.0)
+    engine.tick(61.0)
+
+    assert_that(manager.set_overlay.call_count).is_equal_to(1)
+    assert_that(engine.is_active(DEV)).is_false()
+    engine.tick(120.0)
+    assert_that(manager.set_overlay.call_count).is_equal_to(2)
+
+
+def test_deactivate_notifies_even_when_the_redraw_fails(engine, store, manager, changes):
+    engine.activate(DEV)
+    manager.show_page = MagicMock(side_effect=RuntimeError("usb"))
+
+    with pytest.raises(RuntimeError):
+        engine.deactivate(DEV)
+
+    assert_that(changes).is_equal_to([(DEV, True), (DEV, False)])
+    assert_that(engine.is_active(DEV)).is_false()
+
+
+def test_destroy_wakes_a_device_whose_overlay_is_set_but_not_marked_active(store, manager, clock, changes):
+    _set(store, saver_brightness=0, brightness=70)
+    eng = ScreensaverEngine(
+        store, manager, lambda device_id: "page-1", lambda d, a: changes.append((d, a)), clock=clock
+    )
+    eng.create(MagicMock())
+    eng.note_activity(DEV)  # the runtime exists, but nothing marked it active
+    manager.overlay.add(DEV)
+
+    eng.destroy()
+
+    assert_that(manager.overlay).is_empty()
+    assert_that(manager.calls).contains(("brightness", DEV, 70), ("show_page", DEV, "page-1"))
+    assert_that(changes).is_equal_to([(DEV, False)])
+
+
+def test_destroy_handles_a_wake_still_pending(store, manager, clock, changes):
+    eng = ScreensaverEngine(
+        store, manager, lambda device_id: "page-1", lambda d, a: changes.append((d, a)), clock=clock
+    )
+    manager.overlay.add("other")
+    eng.request_wake("other")  # never created, so no worker drains it
+
+    eng.destroy()
+
+    assert_that(manager.overlay).is_empty()
+    assert_that(changes).is_equal_to([("other", False)])
+
+
+def test_unreadable_single_image_is_logged_once_per_activation(engine, store, tmp_path, caplog):
+    _set(store, content="image", image_path=str(tmp_path / "missing.png"))
+    caplog.set_level(logging.WARNING)
+
+    engine.activate(DEV)
+    engine.deactivate(DEV)
+    engine.activate(DEV)
+
+    logged = [r for r in caplog.records if "missing.png" in r.getMessage()]
+    assert_that(logged).is_length(2)
+    assert_that([r.getMessage() for r in logged]).does_not_contain(str(tmp_path))
+
+
+def test_reopen_during_the_brightness_write_leaves_the_deck_awake(engine, store, manager, changes):
+    _set(store, brightness=80, saver_brightness=5)
+    real_set_brightness = manager.set_brightness
+    reopened: list[bool] = []
+
+    def set_brightness(device_id: str, percent: int) -> None:
+        if not reopened:  # DeviceManager.set_brightness reopens the deck; its open hook runs device_opened here
+            reopened.append(True)
+            engine.device_opened(device_id)
+        real_set_brightness(device_id, percent)
+
+    manager.set_brightness = set_brightness
+
+    assert_that(engine.activate(DEV)).is_false()
+
+    assert_that(manager.overlay).is_empty()
+    assert_that(engine.is_active(DEV)).is_false()
+    assert_that([c for c in manager.calls if c[0] == "brightness"][-1]).is_equal_to(("brightness", DEV, 80))
+    assert_that(changes).is_equal_to([(DEV, False)])
+
+
+def _blind_device() -> FakeDevice:
+    device = FakeDevice()
+    info = device.get_hw_info()
+    blind = replace(info, keys=[replace(key, pixel_width=0, pixel_height=0) for key in info.keys])
+    device.get_hw_info = lambda: blind  # type: ignore[method-assign]
+    return device
+
+
+def test_deck_without_key_screens_is_unsupported(engine, store, manager, monkeypatch):
+    _set(store, timeout_minutes=1)
+    manager.device = _blind_device()
+    real_open = manager.open_device
+    opens: list[str] = []
+
+    def open_device(device_id: str) -> FakeDevice | None:
+        opens.append(device_id)
+        return real_open(device_id)
+
+    monkeypatch.setattr(manager, "open_device", open_device)
+
+    assert_that(engine.activate(DEV)).is_false()
+    engine.tick(0.0)
+    engine.tick(60.0)
+    engine.tick(120.0)
+
+    assert_that(manager.overlay).is_empty()
+    assert_that(manager.names()).does_not_contain("overlay", "write")
+    assert_that(engine.is_active(DEV)).is_false()
+    assert_that(opens).is_length(1)  # the idle timer never tries again
+
+
+def test_gallery_scans_the_folder_once_per_render(engine, store, manager, tmp_path, monkeypatch):
+    folder = tmp_path / "broken"
+    folder.mkdir()
+    for index in range(10):
+        (folder / f"{index}.png").write_bytes(b"not a png")
+    _set(store, content="gallery", folder_path=str(folder))
+    real_iterdir = Path.iterdir
+    scans: list[Path] = []
+
+    def iterdir(self: Path):
+        scans.append(self)
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+
+    engine.activate(DEV)
+
+    assert_that(scans).is_length(1)
+    assert_that(manager.writes()).is_equal_to([None])
+
+
+def test_render_of_a_large_image_never_converts_it_at_full_size(engine, store, manager, tmp_path, monkeypatch):
+    Image.new("RGB", (3000, 2000), "red").save(tmp_path / "big.png")
+    _set(store, content="image", image_path=str(tmp_path / "big.png"))
+    seen: list[tuple[int, int]] = []
+    for name in ("convert", "resize", "copy", "alpha_composite"):
+        original = getattr(Image.Image, name)
+
+        def spy(self: Image.Image, *args: Any, _original: Any = original, **kwargs: Any) -> Any:
+            seen.append(self.size)
+            return _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Image.Image, name, spy)
+
+    assert_that(engine.activate(DEV)).is_true()
+
+    assert_that(_first_pixel(manager.writes()[0])).is_equal_to((255, 0, 0))
+    assert_that(max(w * h for w, h in seen)).is_less_than_or_equal_to(300 * 200)

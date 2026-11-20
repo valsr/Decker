@@ -89,6 +89,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._overlay: set[str] = set()  # devices whose hardware is held back for the screensaver
         self._overlay_lock = threading.Lock()  # serialises set_overlay so manager and device gates cannot disagree
         self._swallow_release: set[tuple[str, int]] = set()  # keys whose press woke the deck
+        self._held: set[tuple[str, int]] = set()  # keys whose press was delivered and whose release is still due
 
     def create(self, context: "ServerContext") -> None:
         """Wire the state store, active-page lookup and animation settings; devices are opened by open_device()."""
@@ -335,17 +336,27 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._on_key_event_cb(device_id, key_index, pressed)
 
     def _gate_key_event(self, device_id: str, key_index: int, pressed: bool) -> bool:
-        """Return True when the event is swallowed (overlay shown, or the release of the press that woke the deck)."""
+        """Return True when the event is swallowed: a press while the overlay shows, or a release whose press was.
+
+        The release of a press that was delivered before the overlay started still goes through (it never wakes), so
+        the page and plugins never see a keyDown without its keyUp.
+        """
         key = (device_id, key_index)
         with self._lock:
             overlay = device_id in self._overlay
-            wake = overlay and pressed
-            swallowed = overlay or (not pressed and key in self._swallow_release)
-            if overlay and pressed:
-                self._swallow_release.add(key)
-            else:  # a normal press or any release ends the swallow, so a stale entry can never eat a later release
+            if pressed:
+                swallowed = overlay
+                if overlay:
+                    self._swallow_release.add(key)
+                    self._held.discard(key)
+                else:
+                    self._swallow_release.discard(key)
+                    self._held.add(key)
+            else:  # any release ends both records, so a stale entry can never decide a later release
+                swallowed = key in self._swallow_release or (overlay and key not in self._held)
                 self._swallow_release.discard(key)
-        if wake:
+                self._held.discard(key)
+        if pressed and overlay:
             self._call_hook(self._wake_hook, device_id, "wake")
         return swallowed
 
@@ -388,7 +399,7 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             return device_id in self._overlay
 
     def set_brightness(self, device_id: str, percent: int) -> None:
-        """Set an open device's brightness (0-100); opens nothing that is not already reachable."""
+        """Set a device's brightness (0-100), opening it first if needed; a no-op when it cannot be opened."""
         device = self.open_device(device_id)
         if device is not None:
             device.set_brightness(percent)
@@ -399,8 +410,9 @@ class DeviceManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             device = self._devices.get(device_id)
         return device is not None and device.write_overlay(images)
 
-    def _forget_swallowed(self, device_id: str) -> None:
-        self._swallow_release = {key for key in self._swallow_release if key[0] != device_id}  # caller holds _lock
+    def _forget_swallowed(self, device_id: str) -> None:  # caller holds _lock
+        self._swallow_release = {key for key in self._swallow_release if key[0] != device_id}
+        self._held = {key for key in self._held if key[0] != device_id}
 
     def _on_device_closed(self, device: Device) -> None:
         # Identity, not id: a stale Device reporting late must never evict the reopened Device for the same serial.

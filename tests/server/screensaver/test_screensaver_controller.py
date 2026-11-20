@@ -2,6 +2,7 @@ import io
 import json
 import logging
 import sqlite3
+from dataclasses import replace
 
 import pytest
 from assertpy import assert_that
@@ -16,6 +17,8 @@ from tests.server.screensaver.screensaver_fixture import (
     PX,
     ROWS,
     FakeConn,
+    FakeDevice,
+    hw_info,
     saver_context,
 )
 
@@ -202,3 +205,27 @@ def test_remote_preview_with_a_path_is_refused(stack, tmp_path):
 def test_preview_of_an_unreadable_image_is_a_clear_error(stack):
     with pytest.raises(ValueError, match="not found"):
         _controller(stack).preview(DEV, _json(content="image", image_path="/missing/x.png"), loopback=True)
+
+
+def test_remote_preview_with_the_stored_paths_is_allowed(stack, tmp_path):
+    controller = _controller(stack)
+    image = _png(tmp_path / "a.png", (200, 30, 30))
+    controller.set(DEV, _json(content="image", image_path=image), loopback=True)
+
+    decoded = _decode(controller.preview(DEV, _json(content="image", image_path=image, bezel=True), loopback=False))
+
+    assert_that(_pixel(decoded, PX // 2, PX // 2)[0]).is_greater_than(150)
+    with pytest.raises(PermissionError):
+        controller.preview(DEV, _json(content="image", image_path=_png(tmp_path / "b.png")), loopback=False)
+
+
+def test_get_and_preview_work_for_a_deck_without_key_screens(stack, monkeypatch):
+    ctx, devices = stack
+    blind = replace(hw_info(), keys=[replace(key, pixel_width=0, pixel_height=0) for key in hw_info().keys])
+    monkeypatch.setattr(devices, "list_devices", lambda: [blind])
+    monkeypatch.setattr(FakeDevice, "get_hw_info", lambda self: blind)
+    controller = _controller(stack)
+
+    assert_that(controller.get(DEV)["active"]).is_false()
+    assert_that(_decode(controller.preview(DEV, _json(), loopback=True)).size).is_equal_to((72, 72))
+    assert_that(ctx.screensaver_engine.activate(DEV)).is_false()
