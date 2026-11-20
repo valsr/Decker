@@ -1,6 +1,6 @@
 # Settings schema
 
-`global_settings` and each action's `settings` are an ordered list rendered top to bottom as a form.
+`global_settings` and each card's and action's `settings` are an ordered list rendered top to bottom as a form.
 
 ## Entries
 
@@ -26,10 +26,12 @@ and stored as `null`), `placeholder`, `help`.
 | `text_style` | `template` (as for `text`; only its `text`) | an object, see [Text style](#text-style); `default` may be partial |
 | `page` | `profile_field` (key of a `profile` field of the same schema: the dropdown then lists that profile's pages; blank or absent: the key's own profile) | a page of the key's device: stored as its page id (string, default `""`), delivered as `{"page_id", "name", "index", "profile_id"}` (`index` is 1-based within its profile; `profile_id` is `-1` when the page is gone); action settings only, not allowed in `global_settings` |
 | `profile` | | a profile of the key's device: stored as the decimal profile id (`""`, the default, follows the current profile), delivered as `{"profile_id", "name", "index", "icon"}` (`index` is the 1-based dropdown position, `icon` an icon ref, `decker:logo` for the Decker icon; an unset or deleted profile arrives as `{"profile_id": -1, "name": "", "index": 0, "icon": ""}`). Profile ids are small per-device integers and are **reused** after a profile is deleted, so a stored id can later mean a new profile; action settings only, not allowed in `global_settings` |
+| `action` | | an action of any installed plugin: stored as its id (`""`: none). The dropdown lists every available action |
+| `action_params` | `action_field` (key of an `action` field of the same schema; the form then shows that action's settings) | an object: the chosen action's settings. Changing the action resets it. Used by the Run Action card |
 
 ## Text style
 
-`text_style` is one text field with a cog that opens a formatting toolbar (font, size, bold, italic, underline,
+`text_style` is one text field; entering it opens a formatting toolbar (font, size, bold, italic, underline,
 strikethrough, position, colour, outline, outline width, visible). Declare it like any other field:
 
 ```json

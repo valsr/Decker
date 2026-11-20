@@ -29,7 +29,7 @@ class AssetPipeline:
 
     1. an active runtime setImage() override
     2. a user-assigned icon (decker.db)
-    3. the action's per-state manifest icon
+    3. the card's per-state manifest icon
     4. the plugin's top-level manifest icon
     5. the bundled default-key.svg fallback
     """

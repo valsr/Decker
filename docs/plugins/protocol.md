@@ -8,7 +8,7 @@ terminated by `\n`):
 ```
 
 - `event`: required string.
-- `context`: Decker's id for one key instance of an action. Omitted for plugin-wide events.
+- `context`: Decker's id for one key instance of a card. Omitted for plugin-wide events.
 - `payload`: object, omitted when empty.
 
 stdout is reserved for the protocol. Anything a plugin writes to **stderr** is logged by the server with the plugin
@@ -20,7 +20,7 @@ discarded.
 1. The server starts your process and sends `hello`.
 2. Send `ready` when you are set up. Until then the server queues events for you; if `ready` does not arrive
    within the ping timeout (10 s) the process is killed.
-3. The server sends `will_appear` for every key showing one of your actions, then any events queued meanwhile.
+3. The server sends `will_appear` for every key showing one of your cards, then any events queued meanwhile.
 
 ## Server to plugin
 
@@ -32,6 +32,7 @@ discarded.
 | `key_down`, `key_up` | yes | none (raw key events) |
 | `press`, `double_press`, `long_press` | yes | none (recognised by the server for the key's registered gestures) |
 | `settings_changed` | yes | `{"settings": {...}}` |
+| `run_action` | | `{"action": "<action id>", "request": "<id>", "settings": {...}}`: run one of your [actions](package-and-manifest.md#actions) with its validated settings and answer with `action_result` carrying the same `request`. Runs are independent of any key and may overlap |
 | `global_settings_changed` | | `{"global_settings": {...}}` |
 | `device_connected` | | `{"device": "<device id>"}` |
 | `ping` | | none; reply with `pong` |
@@ -47,13 +48,14 @@ discarded.
 | `pong` | | none |
 | `set_image` | yes | `{"image": "<base64>", "format": "png"}` (`png`, `jpeg`, `svg` or `gif`; an animated GIF animates on the key, see [Images](#images)), or `{"image": null}` to clear, or `{"icon": "pack:<pack id>/<path>", "color": "#rrggbb"}` to show an icon from an installed icon pack (see [Images](#images)) |
 | `set_title` | yes | `{"title": "text"}`, shown only when the user set no title; titles are one line, so line breaks are drawn as a single space |
-| `set_state` | yes | `{"state": 1}`, an index into the action's `states` |
+| `set_state` | yes | `{"state": 1}`, an index into the card's `states` |
 | `show_alert`, `show_ok` | yes | none (accepted, no visible effect in v1) |
-| `set_settings` | yes | `{"settings": {...}}`, validated against the action's schema and saved; keys you leave out keep their stored value, so send only what you changed (see [Pages](#pages)) |
+| `set_settings` | yes | `{"settings": {...}}`, validated against the card's schema and saved; keys you leave out keep their stored value, so send only what you changed (see [Pages](#pages)) |
 | `switch_page` | yes | `{"to": "next"\|"previous"\|"first"\|"last", "wrap": false}` or `{"page_id": "<id>"}`: switch the key's device to that page (see [Pages](#pages)) |
 | `switch_profile` | yes | `{"to": "next"\|"previous"\|"first"\|"last", "wrap": false}` or `{"profile_id": 2}`: switch the key's device to that profile's default page (see [Profiles](#profiles)) |
 | `set_global_settings` | | `{"settings": {...}}`, validated against `global_settings` and saved |
 | `set_gestures` | yes | `{"gestures": ["press", "long_press"]}`; replaces the key's gesture set |
+| `action_result` | | `{"request": "<id>", "ok": true}` or `{"request": "<id>", "ok": false, "error": "text"}`, answering `run_action`. The server gives up after 30 s and shows the user the error |
 | `log` | | `{"level": "info", "message": "text"}`; levels `debug`, `info`, `warning`, `error` |
 | `open_url` | | `{"url": "https://..."}`; only `http`/`https` with a host are accepted. Every connected client asks the user before opening it |
 

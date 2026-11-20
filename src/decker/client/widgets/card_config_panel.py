@@ -1,4 +1,4 @@
-"""Bottom panel for configuring the selected key: live preview, appearance rows and action settings."""
+"""Bottom panel for configuring the selected key: live preview, appearance rows and card settings."""
 
 import logging
 import threading
@@ -47,7 +47,7 @@ def _run_in_thread(job: Callable[[], str | None], done: Callable[[str | None], N
 
 
 class CardConfigPanel(QStackedWidget):  # pylint: disable=too-many-instance-attributes
-    """Stacked config panel: page 0 = placeholder, page 1 = preview, appearance rows, Save and action settings."""
+    """Stacked config panel: page 0 = placeholder, page 1 = preview, appearance rows, Save and card settings."""
 
     _preview_ready = pyqtSignal(int, object)
 

@@ -14,7 +14,7 @@ The default repository is `https://valsr.github.io/decker-plugins/index.json` (s
 - **Get More Plugins…**: the button in the Plugins tab opens a dialog with a search box, a category filter and
   "Refresh". Each row shows the plugin's icon, name, short description and installed and available version, with an
   Install, Update, Installed or "Requires Decker …" button. A details pane shows the full description, author, homepage,
-  what the plugin contributes (Actions, Icon packs), size, repository and required Decker version.
+  what the plugin contributes (Cards, Actions, Icon packs), size, repository and required Decker version.
 - **Update check**: the "Update check" selector picks Daily, Weekly (default), Monthly or Manual. "Check for updates"
   refreshes every repository now in the background; the button stays disabled until the server reports that the
   check finished.
@@ -73,7 +73,7 @@ client.
           "size": 12345,
           "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
           "released": "2026-11-16T19:00:00Z",
-          "contributes": { "actions": ["Counter"], "icon_packs": ["Counter icons"] }
+          "contributes": { "cards": ["Counter"], "icon_packs": ["Counter icons"] }
         }
       ]
     }
@@ -112,7 +112,7 @@ client.
 | `size` | Required positive integer, bytes |
 | `sha256` | Required, 64 hex characters |
 | `released` | Optional, free text timestamp |
-| `contributes` | Optional map of kind (`actions`, `icon_packs`) to a list of names, shown in the details pane |
+| `contributes` | Optional map of kind (`cards`, `actions`, `icon_packs`) to a list of names, shown in the details pane |
 | `platforms`, `linux` | Optional; same fields and validation as the [manifest](package-and-manifest.md#platforms). Absent means all platforms. An invalid value skips that version entry with a warning |
 
 ### Platform filter
