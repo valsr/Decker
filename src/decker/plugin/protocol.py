@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 MAX_LINE_BYTES = 8 * 1024 * 1024
 
 SERVER_EVENTS: frozenset[str] = frozenset(
@@ -23,6 +23,8 @@ SERVER_EVENTS: frozenset[str] = frozenset(
         "device_disconnected",
         "ping",
         "shutdown",
+        "get_variable",
+        "variables_changed",
     }
 )
 
@@ -40,6 +42,10 @@ PLUGIN_EVENTS: frozenset[str] = frozenset(
         "log",
         "open_url",
         "pong",
+        "register_variable",
+        "unregister_variable",
+        "variable_updated",
+        "variable_value",
     }
 )
 

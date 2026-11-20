@@ -432,3 +432,22 @@ def test_steady_rate_under_budget_never_kills() -> None:
             rig.last.emit("log")
     assert_that(rig.last.stops).is_equal_to(0)
     assert_that(rig.messages).is_length(1800)
+
+
+def test_send_if_ready_never_queues() -> None:
+    rig = Rig()
+    assert_that(rig.sup.send_if_ready("a.b", Message("x"))).is_false()
+    rig.sup.acquire("a.b")
+    assert_that(rig.sup.send_if_ready("a.b", Message("early"))).is_false()
+    rig.last.emit("ready")
+    assert_that(rig.sup.send_if_ready("a.b", Message("late"))).is_true()
+    assert_that(rig.last.events()).is_equal_to(["hello", "late"])
+    assert_that(rig.sup.send_if_ready("unknown", Message("x"))).is_false()
+
+
+def test_plugin_ids_lists_registered_plugins() -> None:
+    rig = Rig()
+    rig.sup.register("c.d", ["cmd"], Path("."), {}, {})
+    assert_that(sorted(rig.sup.plugin_ids())).is_equal_to(["a.b", "c.d"])
+    rig.sup.unregister("a.b")
+    assert_that(rig.sup.plugin_ids()).is_equal_to(["c.d"])

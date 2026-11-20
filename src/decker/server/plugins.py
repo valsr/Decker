@@ -31,7 +31,7 @@ from decker.plugin.loader import (
     recover_interrupted_installs,
 )
 from decker.plugin.manifest import CardSpec
-from decker.plugin.protocol import Message
+from decker.plugin.protocol import PROTOCOL_VERSION, Message
 from decker.plugin.runtime.launcher import launch_command, launch_env
 from decker.plugin.runtime.process import PluginProcess
 from decker.plugin.runtime.supervisor import PluginSupervisor, SupervisorPolicy
@@ -60,6 +60,7 @@ from decker.server.page_vars import (
     stored_profile_ids,
 )
 from decker.server.switch import SwitchController
+from decker.server.variable_runner import VariableRunner
 from decker.server.variables import VariableConflict, VariableStore
 
 if TYPE_CHECKING:
@@ -142,6 +143,11 @@ def _where(target: CardTarget) -> tuple[str, int]:
     return target.device_id, target.key_index
 
 
+_VARIABLE_EVENTS: frozenset[str] = frozenset(
+    {"register_variable", "unregister_variable", "variable_updated", "variable_value"}
+)
+
+
 def _uses_pack_icon(live: _Live) -> bool:
     if live.plugin_icon_ref is not None:
         return True
@@ -195,6 +201,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._action_runner = ActionRunner(self._supervisor, self._on_action_failed)
         self.icon_packs = IconPackRegistry(on_failure=self._record_failure)
         self.variables = VariableStore(on_change=self._on_variables_changed)
+        self._variable_runner = VariableRunner(self._supervisor, self.variables)
         self._contributions = ContributionRegistry(
             [_CardsHandler(self), _ActionsHandler(self), self.icon_packs, _VariablesHandler(self)]
         )
@@ -290,11 +297,12 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Forget a plugin's variables and stop its process (the "variables" handler)."""
         self.variables.undeclare(plugin_id)
         self._supervisor.unregister(plugin_id)
+        self._variable_runner.plugin_stopped(plugin_id)
         with self._lock:
             self._hellos.pop(plugin_id, None)
 
     def _on_variables_changed(self, names: frozenset[str]) -> None:
-        """Placeholder until variable changes redraw keys."""
+        self._variable_runner.changed(names)
 
     def list_actions(self) -> list[dict[str, Any]]:
         """Every action declared across all loaded plugin manifests, with its settings schema."""
@@ -324,7 +332,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._record_failure(manifest.id, str(exc))
             return
         hello = {
-            "protocol": 1,
+            "protocol": PROTOCOL_VERSION,
             "decker_version": decker_version(),
             "plugin_id": manifest.id,
             "global_settings": self.global_settings(manifest.id),
@@ -977,8 +985,26 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             self._on_set_global_settings(plugin_id, message.payload)
         elif event == "action_result":
             self._action_runner.on_result(plugin_id, message.payload)
+        elif event in _VARIABLE_EVENTS:
+            self._route_variable_message(plugin_id, message)
         else:
             self._route_context_message(plugin_id, message)
+
+    def _route_variable_message(self, plugin_id: str, message: Message) -> None:
+        if message.event == "variable_value":
+            self._variable_runner.on_value(plugin_id, message.payload)
+            return
+        name = message.payload.get("name")
+        if not isinstance(name, str):
+            logging.debug("[%s] dropped %s without a name", plugin_id, message.event)
+        elif message.event == "unregister_variable":
+            self.variables.unregister(plugin_id, name)
+        elif message.event == "register_variable" and not self.variables.register(plugin_id, name):
+            logging.warning("[%s] register_variable(%r) rejected: not inside one of its patterns", plugin_id, name)
+        elif message.event == "variable_updated" and name not in self.variables.registered_names(plugin_id):
+            logging.debug("[%s] ignored variable_updated for %r, which it does not own", plugin_id, name)
+        else:
+            self._variable_runner.ask(plugin_id, name)
 
     def _route_context_message(self, plugin_id: str, message: Message) -> None:
         with self._lock:
@@ -1023,6 +1049,9 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         return False, False
 
     def _on_ready(self, plugin_id: str) -> None:
+        self._variable_runner.send_snapshot(plugin_id)
+        for name in self.variables.registered_names(plugin_id):
+            self._variable_runner.ask(plugin_id, name)
         with self._lock:
             lives = [l for l in self._live.values() if l.target.plugin_uuid == plugin_id and not l.card.headless]
         for live in lives:
@@ -1136,6 +1165,7 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
 
     def _on_plugin_failed(self, plugin_id: str, reason: str) -> None:
         logging.error("Plugin %s failed: %s", plugin_id, reason)
+        self._variable_runner.plugin_stopped(plugin_id)
         event = PluginLoadFailedEvent(plugin_uuid=plugin_id, error=reason)
         with self._lock:
             self._drop_failure(plugin_id)

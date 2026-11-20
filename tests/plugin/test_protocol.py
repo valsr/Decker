@@ -68,7 +68,7 @@ def test_decode_rejects_oversized_line() -> None:
 
 
 def test_protocol_version() -> None:
-    assert_that(PROTOCOL_VERSION).is_equal_to(1)
+    assert_that(PROTOCOL_VERSION).is_equal_to(2)
 
 
 def test_event_sets_match_spec() -> None:
@@ -89,6 +89,8 @@ def test_event_sets_match_spec() -> None:
                 "device_disconnected",
                 "ping",
                 "shutdown",
+                "get_variable",
+                "variables_changed",
             }
         )
     )
@@ -107,6 +109,10 @@ def test_event_sets_match_spec() -> None:
                 "log",
                 "open_url",
                 "pong",
+                "register_variable",
+                "unregister_variable",
+                "variable_updated",
+                "variable_value",
             }
         )
     )

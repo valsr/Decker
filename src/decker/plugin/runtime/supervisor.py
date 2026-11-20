@@ -132,6 +132,20 @@ class PluginSupervisor:
             elif entry.refs > 0:
                 entry.queue.append(message)
 
+    def send_if_ready(self, plugin_id: str, message: Message) -> bool:
+        """Deliver a message only if the plugin is ready now; never queues."""
+        with self._lock:
+            entry = self._entries.get(plugin_id)
+            if entry is None or entry.failed or entry.process is None or not entry.ready:
+                return False
+            entry.process.send(message)
+            return True
+
+    def plugin_ids(self) -> list[str]:
+        """Every registered plugin id."""
+        with self._lock:
+            return list(self._entries)
+
     def is_failed(self, plugin_id: str) -> bool:
         """True once a plugin crashed too often and was given up on."""
         with self._lock:
