@@ -1,6 +1,5 @@
 import io
 import logging
-import tracemalloc
 
 import pytest
 from assertpy import assert_that
@@ -157,23 +156,38 @@ def _clear_reported() -> None:
     appearance_module._REPORTED_BAD_BACKGROUNDS.clear()  # pylint: disable=protected-access
 
 
-def _peak_bytes(data: bytes) -> int:
-    tracemalloc.start()
-    try:
-        _render(_appearance("image"), background_image=data)
-        return tracemalloc.get_traced_memory()[1]
-    finally:
-        tracemalloc.stop()
+def _gif_bytes(width: int, height: int) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), RED).save(buf, format="GIF")
+    return buf.getvalue()
 
 
-def test_extreme_aspect_ratio_images_stay_within_a_small_memory_bound() -> None:
-    wide = _png(Image.new("RGB", (20000, 1), RED))
-    tall = _png(Image.new("RGB", (1, 20000), RED))
-    gif = io.BytesIO()
-    Image.new("RGB", (65535, 1), RED).save(gif, format="GIF")
-    for data in (wide, tall, gif.getvalue()):
-        assert_that(_peak_bytes(data)).is_less_than(30 * 1024 * 1024)
-    assert_that(_render(_appearance("image"), background_image=wide).getpixel((5, 5))).is_equal_to(RED)
+@pytest.mark.parametrize(
+    "data,source",
+    [
+        (lambda: _png(Image.new("RGB", (20000, 1), RED)), (20000, 1)),
+        (lambda: _png(Image.new("RGB", (1, 20000), RED)), (1, 20000)),
+        (lambda: _gif_bytes(65535, 1), (65535, 1)),
+    ],
+)
+def test_extreme_aspect_ratio_images_are_cropped_before_any_resize(
+    monkeypatch: pytest.MonkeyPatch, data, source: tuple[int, int]
+) -> None:
+    calls: list[tuple[tuple[int, int], tuple[int, int]]] = []
+    original = Image.Image.resize
+
+    def spy(self: Image.Image, size: tuple[int, int], *args, **kwargs) -> Image.Image:
+        calls.append((self.size, (int(size[0]), int(size[1]))))
+        return original(self, size, *args, **kwargs)
+
+    monkeypatch.setattr(Image.Image, "resize", spy)
+    got = _render(_appearance("image"), background_image=data())
+    side = min(source)
+    assert_that(calls).is_not_empty()
+    for input_size, output_size in calls:
+        assert_that(input_size[0] * input_size[1]).is_less_than_or_equal_to(side * side)
+        assert_that(output_size).is_equal_to((SIZE, SIZE))
+    assert_that(got.getpixel((5, 5))).is_equal_to(RED)
 
 
 def test_unparseable_svg_logs_once_and_falls_back_to_black(caplog: pytest.LogCaptureFixture) -> None:
