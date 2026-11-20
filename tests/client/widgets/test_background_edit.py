@@ -77,3 +77,36 @@ class TestBackgroundEdit:  # pylint: disable=protected-access
         field.widget._mode.setCurrentIndex(field.widget._mode.findData("none"))
         assert_that(hits).is_length(1)
         assert_that(form.values()["background"]["type"]).is_equal_to("none")
+
+
+class TestBackgroundEditImagePrompt:  # pylint: disable=protected-access
+    def test_empty_image_shows_placeholder_and_browse(self, qapp):  # pylint: disable=unused-argument
+        edit = BackgroundEdit()
+        edit.set_value(_bg("image"))
+        image = edit._image
+        assert_that(image._name.text()).is_equal_to("No image (shows black)")
+        assert_that(image._browse_btn.isHidden()).is_false()
+        assert_that(image._clear.toolTip()).is_equal_to("Remove the background image")
+
+    def test_placeholder_updates_after_choosing_and_clearing(self, qapp):  # pylint: disable=unused-argument
+        edit = BackgroundEdit()
+        edit.set_value(_bg("image"))
+        hits = _spy(edit)
+        edit._image._on_icon_chosen("p", "a.png")
+        assert_that(hits).is_length(1)
+        assert_that(edit.value()["image"]["ref"]).is_equal_to("pack:p/a.png")
+        assert_that(edit._image._name.text()).is_not_equal_to("No image (shows black)")
+        edit._image.clear_icon()
+        assert_that(edit._image._name.text()).is_equal_to("No image (shows black)")
+
+    def test_modes_keep_choices_in_both_directions(self, qapp):  # pylint: disable=unused-argument
+        edit = BackgroundEdit()
+        edit.set_value(_bg("color", "#336699", "pack:p/a.png"))
+        for first, second in (("image", "color"), ("none", "color")):
+            edit._mode.setCurrentIndex(edit._mode.findData(first))
+            edit._mode.setCurrentIndex(edit._mode.findData(second))
+            assert_that(edit.value()).is_equal_to(_bg("color", "#336699", "pack:p/a.png"))
+        edit.set_value(_bg("image", "#336699", "pack:p/a.png"))
+        edit._mode.setCurrentIndex(edit._mode.findData("color"))
+        edit._mode.setCurrentIndex(edit._mode.findData("image"))
+        assert_that(edit.value()).is_equal_to(_bg("image", "#336699", "pack:p/a.png"))
