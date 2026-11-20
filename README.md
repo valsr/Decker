@@ -29,6 +29,7 @@ Decker supports the following Elgato Stream Deck models:
 | Key background images (none, solid colour or image from the image library; see [docs/key-backgrounds.md](docs/key-backgrounds.md)) | Supported |
 | Switch card (one key with Display, Press, Double press and Long press slots that hold cards or actions) | Supported |
 | Plugins (out of process, `.deckerplugin` packages, repositories, updates) | Supported |
+| Plugin variables (plugins export values that key text uses as `{name}`; plugins that declare them run in the background) | Supported |
 | PyQt6 desktop client | Supported |
 | Command line client (`poe cli`) | Supported |
 | Server settings from the client (port, memory and image limits, stop on last client), gated by `--allow-client-reconfiguration`; see [docs/server-reconfiguration.md](docs/server-reconfiguration.md) | Supported |

@@ -16,7 +16,7 @@ and stored as `null`), `placeholder`, `help`.
 |------|------------|-------|
 | `int` | `min`, `max`, `step`, `special_value` (text shown at `min`, e.g. "no limit") | integer |
 | `float` | `min`, `max`, `step`, `decimals` | finite number |
-| `text` | `multiline`, `template` (boolean, default `false`: expand `{page_name}`, `{page_index}`, `{page_count}`, `{current_profile}`, `{profile_id}` before delivery; `{{`/`}}` are literal braces, unknown names stay as typed) | string |
+| `text` | `multiline`, `template` (boolean, default `false`: expand `{page_name}`, `{page_index}`, `{page_count}`, `{current_profile}`, `{profile_id}` before delivery; `{{`/`}}` are literal braces, unknown names stay as typed; plugin variables work too, see [Template variables](#template-variables)) | string |
 | `bool` | | boolean |
 | `choice` | `options`: `[{ "label": "...", "value": ... }]` (non-empty) | one of the option values |
 | `color` | `alpha` (boolean; when `true` the picker has an opacity slider and `#rrggbbaa` is also valid, alpha last) | `#rrggbb` (or `#rrggbbaa`) |
@@ -29,6 +29,19 @@ and stored as `null`), `placeholder`, `help`.
 | `action` | | an action of any installed plugin: stored as its id (`""`: none). The dropdown lists every available action |
 | `action_params` | `action_field` (key of an `action` field of the same schema; the form then shows that action's settings) | an object: the chosen action's settings. Changing the action resets it. Used by the Run Action card |
 | `slots` | | the Switch card's four slots: an object with keys `display`, `press`, `double_press`, `long_press`, each `null` (empty) or `{"kind": "card", "plugin", "card", "settings", "appearance"}` (a card of an installed plugin) or `{"kind": "action", "action", "settings"}` (an action); `display` takes cards only. Built-in Switch only (`com.decker.core.switch`): only that card may declare `behavior: "switch"` (any other card is a manifest error), so the `slots` field type is still accepted but inert outside the Switch, and the shape may change. A slot naming something that is not installed acts as empty but stays stored |
+
+## Template variables
+
+A `text` field with `"template": true` (and a key's title text) expands `{name}` for the variables below. `{{` and `}}`
+stay literal braces.
+
+- **Page and profile variables** (per device, owned by the server): `page_name`, `page_index`, `page_count`,
+  `current_profile`, `profile_id`. They win over a plugin variable of the same name.
+- **Plugin variables** (global, declared in the manifest under [`variables[]`](package-and-manifest.md#variables)): a
+  declared variable that is unset, or whose plugin is stopped, expands to an empty string. A name nobody declared stays
+  as typed. A value is never expanded again, so a value containing `{page_name}` is shown as it is.
+
+The server redraws the live keys whose templated text uses a variable when its value changes.
 
 ## Text style
 
