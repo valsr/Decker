@@ -103,7 +103,13 @@ class _Live:  # pylint: disable=too-many-instance-attributes
 
 def _uses_pack_icon(live: _Live) -> bool:
     icon = live.appearance.get("icon")
-    return live.plugin_icon_ref is not None or (isinstance(icon, dict) and bool(icon.get("ref")))
+    background = live.appearance.get("background")
+    image = background.get("image") if isinstance(background, dict) else None
+    return (
+        live.plugin_icon_ref is not None
+        or (isinstance(icon, dict) and bool(icon.get("ref")))
+        or (isinstance(image, dict) and bool(image.get("ref")))
+    )
 
 
 def _gestures_from(names: Any) -> frozenset[Gesture]:
@@ -514,7 +520,18 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
             image_color,
             PACK_ICON_SCALE if icon_ref is not None else 1.0,
             poster=poster,
+            background_image=self._background_bytes(appearance),
         )
+
+    def _background_bytes(self, appearance: dict[str, Any]) -> bytes | None:
+        background = appearance["background"]
+        if background["type"] != "image":
+            return None
+        try:
+            return self.icon_packs.read_ref(background["image"]["ref"])
+        except Exception:  # pylint: disable=broad-except
+            logging.debug("Could not read background image %r", background["image"]["ref"], exc_info=True)
+            return None
 
     # ------------------------------------------------------------------
     # Page variables and settings delivery
