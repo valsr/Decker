@@ -35,7 +35,7 @@ JSON with snake_case keys. Unknown keys are ignored. `format` must be the intege
   },
   "global_settings": [],
   "contributes": {
-    "actions": [
+    "cards": [
       {
         "id": "com.example.hello.greet",
         "name": "Greet",
@@ -47,6 +47,21 @@ JSON with snake_case keys. Unknown keys are ignored. `format` must be the intege
         "settings": [
           { "key": "name", "type": "text", "label": "Name", "default": "world" }
         ]
+      },
+      {
+        "id": "com.example.hello.wave",
+        "name": "Wave",
+        "card": "com.decker.core.runaction",
+        "action": "com.example.hello.sendwave",
+        "action_settings": { "times": 3 },
+        "appearance": { "title": { "text": "Wave" } }
+      }
+    ],
+    "actions": [
+      {
+        "id": "com.example.hello.sendwave",
+        "name": "Send a wave",
+        "settings": [{ "key": "times", "type": "int", "label": "Times", "default": 1, "min": 1 }]
       }
     ],
     "icon_packs": [
@@ -60,14 +75,14 @@ JSON with snake_case keys. Unknown keys are ignored. `format` must be the intege
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `format` | yes | Integer `1`. |
+| `format` | yes | Integer `2`. Format `1` (before the card/action split) is still read: its `contributes.actions` entries are cards. |
 | `id` | yes | Reverse-domain id matching `^[a-z0-9]+(\.[a-z0-9-]+)+$`, e.g. `com.example.hello`. |
 | `name`, `author` | yes | Non-empty strings. |
 | `version` | yes | Semantic version `x.y.z` (pre-release/build suffixes allowed). |
 | `description`, `homepage`, `category` | no | Strings. |
 | `icon` | no | Path inside the package; the extension is optional (looked up as `.svg`, `@2x.png`, `.png`). Values starting with `pack:` are reserved. |
-| `decker` | no | Version specifier for Decker, e.g. `>=0.2`. Install is refused if the running server does not satisfy it. |
-| `runtime` | for `actions` | See below. |
+| `decker` | no | Version specifier for Decker, e.g. `>=0.6` (cards and actions need Decker 0.6). Install is refused if the running server does not satisfy it. |
+| `runtime` | for `actions` and for `cards` that are not static presets or presets of Run Action | See below. |
 | `global_settings` | no | [Settings schema](settings-schema.md) for plugin-wide settings, shown in Settings, Plugins. |
 | `permissions` | no | Reserved, ignored in v1. |
 | `platforms` | no | Non-empty list of OS names (`linux`, `windows`, `macos`) the plugin supports. Omitted means all platforms. See [Platforms](#platforms). |
@@ -112,7 +127,10 @@ platform, and older Decker versions ignore both fields.
 - `executable`: Decker runs `entry` directly (any language). The file must be executable; the installer sets the
   executable bit. You implement the [protocol](protocol.md) yourself.
 
-### `actions[]`
+### `cards[]`
+
+A card is what a key shows: it draws an image and a title, and may react to presses. Cards are what the key picker lists.
+
 
 | Field | Notes |
 |-------|-------|
@@ -122,7 +140,27 @@ platform, and older Decker versions ignore both fields.
 | `states` | Optional list of `{image, title}`; selected by `set_state` (index into the list). |
 | `appearance` | Optional defaults for the Decker-drawn appearance: `background` (a plain colour string such as `"#1f618d"`, which stays valid, or the nested form `{"type": "none"|"color"|"image", "color": "#rrggbb", "image": {"ref": "pack:<pack id>/<path>"}}`; see [Key backgrounds](../key-backgrounds.md); a manifest may keep the string; older Decker releases cannot draw the nested form, so the key fails to compose there: set `decker` to a release that supports it, or keep the string), `icon` (an icon value `{"ref": "pack:<pack id>/<path>", "color": "#rrggbb"}`; users can also override it per key, which replaces the action's static `icon`/state image and any image the plugin sets itself; older Decker releases reject an unknown appearance key, so set `decker` to a release that supports it) and `title` (a [`text_style`](settings-schema.md#text-style) object; give only the fields you want to change, e.g. `{"position": "top"}`). The older flat `show_title`, `title_position`, `title_font`, `title_size`, `title_color`, `title_outline` and `title_outline_width` keys, and a plain-string `title`, are still accepted and folded into `title`. |
 | `settings` | [Settings schema](settings-schema.md) for the per-key form. |
-| `static` | `true` makes a preset: no code handles it, no process is started, a press does nothing, and the key shows only its Decker-drawn `appearance` (and `states[0]`). A static action cannot declare `settings` or `gestures`. A plugin whose actions are all static needs no `runtime`. |
+| `static` | `true` makes a preset: no code handles it, no process is started, a press does nothing, and the key shows only its Decker-drawn `appearance` (and `states[0]`). A static card cannot declare `settings` or `gestures`. A plugin whose cards are all static needs no `runtime`. |
+| `card` | Makes this card a preset of another card. The only base is the built-in **Run Action** card, `com.decker.core.runaction`. Together with `action` it gives a ready-made key such as "Volume Up". Not valid together with `static`. |
+| `action` | With `card`: the id of the [action](#actions) a press runs. It may belong to any plugin. |
+| `action_settings` | With `card`: the action's preconfigured settings. The card's own `settings` values, if it declares any, override them. |
+
+A preset of Run Action runs no code of its own and needs no `runtime`; the action it runs lives in the plugin that declares it.
+
+### `actions[]`
+
+An action is something to do, not something to show: a function with settings that runs and draws nothing (for example
+an HTTP request). Users reach actions through the built-in **Run Action** card, which lets them pick any available
+action and fill in its settings, or through a preset card that plugins ship (see `card`/`action` above).
+
+| Field | Notes |
+|-------|-------|
+| `id` | Must start with `<plugin id>.`. |
+| `name`, `tooltip`, `icon` | Display data. |
+| `settings` | [Settings schema](settings-schema.md) for the action's parameters. |
+
+A plugin with actions needs a `runtime`: Decker starts the plugin and sends `run_action` (see the [protocol](protocol.md)).
+Decker itself ships one action, **HTTP Request** (`com.decker.core.httprequest`), in the built-in Core plugin.
 
 ### `icon_packs[]`
 

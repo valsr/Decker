@@ -10,7 +10,7 @@ to build one without reading Decker's source.
 - [Limits, lifecycle and the launch environment](limits.md)
 - [Plugin repositories](repositories.md): index format, update checks, hosting your own repository
 
-Presets (`"static"` actions), `{page_name}`-style templates, `page` settings and `switch_page` are described in the manifest, settings-schema and protocol pages above; Decker itself ships one built-in static plugin, Blank.
+Presets (`"static"` cards, and cards that run an action), `{page_name}`-style templates, `page` settings and `switch_page` are described in the manifest, settings-schema and protocol pages above; Decker itself ships two built-in plugins, Blank (static cards, including Page Name and Page Count) and Core (the Run Action card and the HTTP Request action).
 
 Plugins run with your user's permissions and are not sandboxed. Only install plugins from authors you trust.
 
@@ -18,7 +18,8 @@ Plugins run with your user's permissions and are not sandboxed. Only install plu
 
 | Kind | What it is | Needs a runtime |
 |------|------------|-----------------|
-| `actions` | Key actions that appear in the action list and run as a separate process | yes |
+| `cards` | What a key shows: they appear in the card list (the key picker) and run as a separate process, unless they are static presets or presets of Run Action | for code-backed cards |
+| `actions` | Headless things to do (a function with settings, e.g. an HTTP request), run from the Run Action card or a preset card | yes |
 | `icon_packs` | A folder of images browsable from the image library | no |
 
 Decker draws the key background and title (the user's appearance settings). Your plugin supplies the key image with

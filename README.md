@@ -22,7 +22,7 @@ Decker supports the following Elgato Stream Deck models:
 |---------|--------|
 | Server with monitor (heartbeat, memory limit, automatic restart), multiple clients | Supported |
 | Device discovery, stable device ids | Supported |
-| Profiles and pages per device, per-key actions and long press | Supported |
+| Profiles and pages per device, per-key cards and long press | Supported |
 | Key appearance: title, fonts, colours, icon override, live preview | Supported |
 | Image library (icon packs from plugins, User pack, System Icons on Linux) | Supported |
 | Animated GIF key faces | Supported |
@@ -222,7 +222,7 @@ this). Install [uv](https://docs.astral.sh/uv/) as well. Device permissions on m
 
 ## Plugins
 
-Key actions and icon packs (shown together in the image library) come from plugins, shipped as `.deckerplugin` packages. Each plugin runs in its own
+Cards (what a key shows), actions (things a key can run) and icon packs come from plugins, shipped as `.deckerplugin` packages. Each plugin runs in its own
 process, so a misbehaving plugin cannot take the server down. Plugins run with your user's permissions and are not
 sandboxed: only install plugins you trust.
 

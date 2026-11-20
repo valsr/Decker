@@ -20,7 +20,7 @@ poe cli plugin remove com.example.hello
 - Installing is only allowed from the server's own machine unless `server.allow_remote_plugin_install` is `true`.
 - `uv` must be installed on the server machine for plugins with a `python` runtime.
 
-## A minimal action
+## A minimal card
 
 ```python
 from decker_plugin_sdk import CardContext, DeckerPlugin, card
@@ -34,6 +34,24 @@ class Greet(DeckerPlugin):
     def on_press(self, ctx: CardContext) -> None:
         ctx.set_title("Hello!")
 ```
+
+## A minimal action
+
+An action is a function with settings that draws nothing; users run it from the built-in **Run Action** card (or a
+preset card you ship). Declare it under `contributes.actions` in the manifest and register the function:
+
+```python
+from decker_plugin_sdk import action
+
+
+@action("com.example.hello.sendwave")
+def send_wave(settings: dict) -> None:
+    for _ in range(int(settings.get("times", 1))):
+        ...  # do the work; raise to report a failure, which the user sees
+```
+
+Actions run on a worker thread, independently of any key. Return normally for success; an exception is reported to
+the user as the action's error.
 
 ## Handlers (override what you need)
 
@@ -64,7 +82,7 @@ Sized `ImageFont.load_default(size)` needs Pillow >= 10.1.
 
 ## CardContext
 
-Attributes: `context`, `action`, `device`, `key_index`, `column`, `row`, `settings`, `global_settings`, `state`.
+Attributes: `context`, `card`, `device`, `key_index`, `column`, `row`, `settings`, `global_settings`, `state`.
 
 Methods: `set_image(data, format="png")`, `set_icon(ref, color=None)` (show an icon from an installed icon pack or one of Decker's System Icons, see
 [protocol](protocol.md#images)), `clear_image()`, `set_title(title)`, `set_state(n)`, `show_alert()`,
