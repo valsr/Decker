@@ -3,6 +3,7 @@
 import base64
 import binascii
 import zlib
+from pathlib import Path
 
 from PyQt6.QtCore import QByteArray, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
@@ -18,6 +19,18 @@ def card_pixmap(card: dict[str, str], size: int) -> QPixmap:
     pixmap = decode_icon(card.get("icon_b64", ""))
     if pixmap is None:
         return placeholder_pixmap(card.get("card_name", ""), size)
+    return pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+
+def asset_pixmap(name: str, size: int, tint: str | None = None) -> QPixmap:
+    """A bundled icon from the assets folder (an SVG using ``currentColor`` is filled with ``tint``), size×size."""
+    try:
+        raw = (Path(__file__).resolve().parents[1] / "assets" / name).read_bytes()
+    except OSError:
+        return placeholder_pixmap(name, size)
+    pixmap = decode_icon(base64.b64encode(raw).decode("ascii"), tint)
+    if pixmap is None:
+        return placeholder_pixmap(name, size)
     return pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
 

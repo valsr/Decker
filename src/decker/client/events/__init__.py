@@ -70,6 +70,13 @@ class OpenUrlRequestedEvent:
 
 
 @dataclass(frozen=True)
+class ActionListUpdatedEvent:
+    """The set of plugin actions known to the server has changed."""
+
+    actions: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
 class CardListUpdatedEvent:
     """The set of plugin cards known to the server has changed."""
 
@@ -211,6 +218,7 @@ AppEvent = (
     | ActionFailedEvent
     | OpenUrlRequestedEvent
     | CardListUpdatedEvent
+    | ActionListUpdatedEvent
     | KeyDisplayStatesUpdatedEvent
     | PagesUpdatedEvent
     | ProfilesUpdatedEvent

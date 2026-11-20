@@ -17,6 +17,7 @@ from decker.client.connection_manager import (
 from decker.client.context import AppContext
 from decker.client.events import (
     ActionFailedEvent,
+    ActionListUpdatedEvent,
     AppRulesUpdatedEvent,
     CardListUpdatedEvent,
     DetectionStatusEvent,
@@ -334,6 +335,18 @@ class TestConnectionManager:
 
         events = [e for e in EventManager.get().drain() if isinstance(e, CardListUpdatedEvent)]
         assert_that(events).is_length(1)
+
+    def test_actions_are_fetched_and_pushed_once_until_they_change(self):
+        actions = [{"action_uuid": "p.a", "action_name": "Do"}]
+        mock_conn = MagicMock()
+        mock_conn.root.plugins_actions_list.return_value = json.dumps(actions)
+        self.manager._conn = mock_conn  # pylint: disable=protected-access
+
+        self.manager._refresh_actions()  # pylint: disable=protected-access
+        self.manager._refresh_actions()  # pylint: disable=protected-access
+
+        events = [e for e in EventManager.get().drain() if isinstance(e, ActionListUpdatedEvent)]
+        assert_that([e.actions for e in events]).is_equal_to([actions])
 
     def test_refresh_actions_failure_does_not_raise(self):
         mock_conn = MagicMock()
