@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from assertpy import assert_that
 
+from decker.common.variables import MAX_REGISTERED
 from decker.plugin.loader import InstalledPlugin
 from decker.plugin.manifest import ManifestValidationError, PluginManifest, VariableSpec
 from decker.plugin.protocol import Message
@@ -188,6 +189,23 @@ def test_rejected_register_is_ignored(tmp_path: Path) -> None:
 
         assert_that(_asks(proc, "other_name")).is_empty()
         assert_that(manager.variables.registered_names("com.t.one")).is_empty()
+    finally:
+        manager.destroy()
+
+
+def test_register_over_the_limit_starts_no_ask(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    procs = _fake_processes(manager)
+    try:
+        proc = _started(manager, procs, _plugin(tmp_path, "com.t.one", [{"pattern": "m_{x}_v"}]))
+        for index in range(MAX_REGISTERED):
+            assert_that(manager.variables.register("com.t.one", f"m_{index}_v")).is_true()
+
+        _send(proc, "register_variable", {"name": "m_over_v"})
+        time.sleep(0.1)
+
+        assert_that(_asks(proc, "m_over_v")).is_empty()
+        assert_that(manager.variables.registered_names("com.t.one")).does_not_contain("m_over_v")
     finally:
         manager.destroy()
 
@@ -471,7 +489,7 @@ def test_unset_declared_variable_expands_to_empty_string(tmp_path: Path, monkeyp
         manager.activate_card(_key("ctx-d", 3, "com.t.one", "com.t.one.k"))
 
         assert_that(_settings_sent(proc, "ctx-d")).is_equal_to([{"label": "L[]"}])
-        assert_that(manager.template_variables("dev-1").get("media_volume", "?")).is_equal_to("")
+        assert_that(manager.variables.lookup("media_volume", "?")).is_equal_to("")
     finally:
         manager.destroy()
 
@@ -482,7 +500,7 @@ def test_undeclared_name_stays_as_typed(tmp_path: Path, monkeypatch: pytest.Monk
         _titled(manager, "ctx-a", 0, "X {nobody_owns} {page_name}")
 
         assert_that(titles[-1]).is_equal_to("X {nobody_owns} Settings")
-        assert_that(manager.template_variables("dev-1").get("nobody_owns", "?")).is_equal_to("?")
+        assert_that(manager.variables.lookup("nobody_owns", "?")).is_equal_to("?")
     finally:
         manager.destroy()
 
@@ -498,9 +516,6 @@ def test_page_variable_wins_over_plugin_variable_of_same_name(tmp_path: Path, mo
 
         assert_that(manager.variables.owner_of("page_name")).is_none()
         assert_that(VariableChain({"x": "page"}, {"x": "global"}).get("x")).is_equal_to("page")
-        variables = manager.template_variables("dev-1")
-        assert_that(variables.get("page_name")).is_equal_to("Settings")
-        assert_that(dict(variables)).contains_entry({"page_name": "Settings"})
         assert_that(titles[-1]).is_equal_to("Settings")
     finally:
         manager.destroy()

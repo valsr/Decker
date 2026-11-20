@@ -116,7 +116,12 @@ def parse_host_label(raw: Any) -> str:
 
 def _contribution_summary(plugin: dict[str, Any]) -> str:
     parts = []
-    for key, singular in (("cards", "card"), ("actions", "action"), ("icon_packs", "icon pack")):
+    for key, singular in (
+        ("cards", "card"),
+        ("actions", "action"),
+        ("icon_packs", "icon pack"),
+        ("variables", "variable"),
+    ):
         count = int(plugin.get(key, 0))
         if count:
             parts.append(f"{count} {singular}{'' if count == 1 else 's'}")

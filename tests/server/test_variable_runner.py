@@ -340,3 +340,25 @@ def test_send_snapshot_sends_every_value() -> None:
     rig.runner.send_snapshot("p")
 
     assert_that(_pushes(p)).is_equal_to([{"set": {"mute": "true", "vol": "3"}, "removed": []}])
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_raising_send_does_not_block_the_variable_forever() -> None:
+    rig = Rig()
+    rig.plugin("p", "vol")
+    real_send = rig.sup.send
+    calls: list[int] = []
+
+    def flaky(plugin_id: str, message: Message) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        real_send(plugin_id, message)
+
+    rig.sup.send = flaky  # type: ignore[method-assign]
+    rig.runner.ask("p", "vol")
+    assert_that(_wait_until(rig.idle)).is_true()
+
+    rig.runner.ask("p", "vol")
+
+    assert_that(rig.request("p", "vol", 0)).is_not_empty()

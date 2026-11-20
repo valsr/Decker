@@ -8,6 +8,7 @@ from decker.common.template import TEMPLATE_VARIABLES
 MAX_NAME_LENGTH = 64
 MAX_VALUE_LENGTH = 1024
 MAX_DECLARATIONS = 256
+MAX_REGISTERED = 256
 CORE_VARIABLE_NAMES: frozenset[str] = frozenset(TEMPLATE_VARIABLES)
 
 _NAME = re.compile(r"[a-z][a-z0-9_]*")

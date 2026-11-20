@@ -422,9 +422,11 @@ def _parse_variables(value: Any) -> tuple[VariableSpec, ...]:
 
 
 def _parse_variable(entry: Any) -> VariableSpec:
-    if not isinstance(entry, dict) or ("name" in entry) == ("pattern" in entry):
+    if not isinstance(entry, dict) or (entry.get("name") is None) == (entry.get("pattern") is None):
         raise ManifestValidationError(f"variable entry needs exactly one of name and pattern: {entry!r}")
-    name, pattern = entry.get("name"), entry.get("pattern")
+    name, pattern, description = entry.get("name"), entry.get("pattern"), entry.get("description")
+    if description is not None and not isinstance(description, str):
+        raise ManifestValidationError(f"variable description must be a string: {description!r}")
     if name is not None and not (isinstance(name, str) and is_valid_name(name)):
         raise ManifestValidationError(f"invalid variable name {name!r}")
     if pattern is not None and not (isinstance(pattern, str) and is_valid_pattern(pattern)):
@@ -432,7 +434,7 @@ def _parse_variable(entry: Any) -> VariableSpec:
     clash = next((c for c in sorted(CORE_VARIABLE_NAMES) if c == name or (pattern and match_pattern(pattern, c))), None)
     if clash is not None:
         raise ManifestValidationError(f"variable {name or pattern!r} collides with the core variable {clash!r}")
-    return VariableSpec(name=name, pattern=pattern, description=str(entry.get("description") or ""))
+    return VariableSpec(name=name, pattern=pattern, description=description or "")
 
 
 def _require_variable_prerequisites(runtime: RuntimeSpec | None, decker: Any) -> None:

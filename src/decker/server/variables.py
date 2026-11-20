@@ -6,6 +6,7 @@ from typing import Any
 
 from decker.common.variables import (
     CORE_VARIABLE_NAMES,
+    MAX_REGISTERED,
     is_valid_name,
     match_pattern,
     pattern_shape,
@@ -75,6 +76,8 @@ class VariableStore:
         with self._lock:
             if self._exact.get(name, ("",))[0] == plugin_id or self._concrete.get(name) == plugin_id:
                 return True
+            if self._registered_count(plugin_id) >= MAX_REGISTERED:
+                return False
             if not is_valid_name(name) or name in self._exact or name in self._concrete or name in CORE_VARIABLE_NAMES:
                 return False
             if self._pattern_owners(name) == {plugin_id}:
@@ -211,6 +214,9 @@ class VariableStore:
     def _owns_registered(self, plugin_id: str, name: str) -> bool:
         exact = self._exact.get(name)
         return (exact is not None and exact[0] == plugin_id) or self._concrete.get(name) == plugin_id
+
+    def _registered_count(self, plugin_id: str) -> int:
+        return sum(1 for owner in self._concrete.values() if owner == plugin_id)
 
     def _names_of(self, plugin_id: str) -> list[str]:
         names = [n for n, (owner, _) in self._exact.items() if owner == plugin_id]

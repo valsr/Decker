@@ -13,7 +13,6 @@ import psutil
 import pytest
 from assertpy import assert_that
 
-from decker.common.template import expand_template
 from decker.plugin.environment import venv_python
 from decker.plugin.runtime.supervisor import SupervisorPolicy
 from decker.plugin.settings_store import PluginSettingsStore
@@ -72,7 +71,7 @@ class _Env:
         return str(self.manager.variables.lookup(name, "<undeclared>"))
 
     def expand(self, text: str) -> str:
-        return expand_template(text, self.manager.template_variables("dev-1"))
+        return self.manager._expanded_appearance("dev-1", {"title": {"text": text}})["title"]["text"]
 
     def counter(self) -> int:
         text = self.value("test_counter")

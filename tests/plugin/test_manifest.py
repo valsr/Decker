@@ -480,3 +480,18 @@ def test_variables_only_plugin_is_valid() -> None:
 def test_plugin_contributing_nothing_is_rejected() -> None:
     with pytest.raises(ManifestValidationError, match="cards, actions, icon packs or variables"):
         PluginManifest.from_dict(_minimal(2, {"cards": []}))
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"name": None},
+        {"pattern": None},
+        {"name": None, "pattern": None},
+        {"name": 5},
+        {"name": "ok", "description": {}},
+    ],
+)
+def test_null_or_mistyped_variable_values_rejected(entry: Any) -> None:
+    with pytest.raises(ManifestValidationError):
+        PluginManifest.from_dict(_variables([entry]))
