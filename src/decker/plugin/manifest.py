@@ -11,6 +11,13 @@ from packaging.requirements import InvalidRequirement, Requirement
 from decker.common.appearance_schema import APPEARANCE_KEYS
 from decker.common.platforms import PlatformSpec, parse_platform_spec
 from decker.common.slots import SWITCH_CARD_ID
+from decker.common.variables import (
+    CORE_VARIABLE_NAMES,
+    MAX_DECLARATIONS,
+    is_valid_name,
+    is_valid_pattern,
+    match_pattern,
+)
 from decker.plugin.settings_schema import (
     SettingEntry,
     SettingField,
@@ -20,7 +27,7 @@ from decker.plugin.settings_schema import (
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?")
 SUPPORTED_FORMATS = (1, 2)
 CARDS_FORMAT = 2  # format 1 predates the card/action split: its ``contributes.actions`` entries are cards
-KNOWN_CONTRIBUTION_KINDS = frozenset({"cards", "actions", "icon_packs"})
+KNOWN_CONTRIBUTION_KINDS = frozenset({"cards", "actions", "icon_packs", "variables"})
 RUN_ACTION_CARD_ID = "com.decker.core.runaction"  # the built-in card that runs the action chosen in its settings
 _LEGACY_CARD_KIND = "actions"
 VALID_GESTURES = frozenset({"press", "double_press", "long_press"})
@@ -152,6 +159,7 @@ class PluginManifest:
     actions: tuple[ActionSpec, ...]
     icon_packs: tuple[IconPackSpec, ...]
     platforms: PlatformSpec | None = None
+    variables: tuple[VariableSpec, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PluginManifest":
@@ -187,8 +195,11 @@ class PluginManifest:
             raise ManifestValidationError(
                 f"manifest contributes cards but declares no runtime (card {needs_runtime.id} is not static)"
             )
-        if not cards and not actions and not packs:
-            raise ManifestValidationError("manifest contributes no cards, actions or icon packs")
+        variables = _parse_variables(contributes.get("variables", []))
+        if variables:
+            _require_variable_prerequisites(runtime, data.get("decker"))
+        if not cards and not actions and not packs and not variables:
+            raise ManifestValidationError("manifest contributes no cards, actions, icon packs or variables")
 
         return cls(
             format=fmt,
@@ -208,6 +219,7 @@ class PluginManifest:
             actions=actions,
             icon_packs=packs,
             platforms=_parse_platforms(data),
+            variables=variables,
         )
 
     @classmethod
@@ -395,6 +407,41 @@ def _parse_static(entry: dict[str, Any], card_id: str) -> bool:
             if name in entry:
                 raise ManifestValidationError(f"static card {card_id} cannot declare {name}")
     return static
+
+
+def _parse_variables(value: Any) -> tuple[VariableSpec, ...]:
+    entries = _as_list(value, "variables")
+    if len(entries) > MAX_DECLARATIONS:
+        raise ManifestValidationError(f"manifest declares {len(entries)} variables, at most {MAX_DECLARATIONS} allowed")
+    specs = tuple(_parse_variable(entry) for entry in entries)
+    declared = [spec.name or spec.pattern for spec in specs]
+    for key in declared:
+        if declared.count(key) > 1:
+            raise ManifestValidationError(f"duplicate variable declaration {key!r}")
+    return specs
+
+
+def _parse_variable(entry: Any) -> VariableSpec:
+    if not isinstance(entry, dict) or ("name" in entry) == ("pattern" in entry):
+        raise ManifestValidationError(f"variable entry needs exactly one of name and pattern: {entry!r}")
+    name, pattern = entry.get("name"), entry.get("pattern")
+    if name is not None and not (isinstance(name, str) and is_valid_name(name)):
+        raise ManifestValidationError(f"invalid variable name {name!r}")
+    if pattern is not None and not (isinstance(pattern, str) and is_valid_pattern(pattern)):
+        raise ManifestValidationError(f"invalid variable pattern {pattern!r}")
+    clash = next((c for c in sorted(CORE_VARIABLE_NAMES) if c == name or (pattern and match_pattern(pattern, c))), None)
+    if clash is not None:
+        raise ManifestValidationError(f"variable {name or pattern!r} collides with the core variable {clash!r}")
+    return VariableSpec(name=name, pattern=pattern, description=str(entry.get("description") or ""))
+
+
+def _require_variable_prerequisites(runtime: RuntimeSpec | None, decker: Any) -> None:
+    if runtime is None:
+        raise ManifestValidationError("manifest contributes variables but declares no runtime")
+    if not _is_nonempty_str(decker):
+        raise ManifestValidationError(
+            'manifest contributes variables, so it must declare a "decker" version constraint'
+        )
 
 
 def _parse_state(entry: Any, card_id: str) -> StateSpec:

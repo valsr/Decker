@@ -26,6 +26,7 @@ def contributed_kinds(plugin: InstalledPlugin) -> frozenset[str]:
         "cards": plugin.manifest.cards,
         "actions": plugin.manifest.actions,
         "icon_packs": plugin.manifest.icon_packs,
+        "variables": plugin.manifest.variables,
     }
     return frozenset(kind for kind, entries in kinds.items() if entries)
 

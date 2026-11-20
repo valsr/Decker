@@ -60,6 +60,7 @@ from decker.server.page_vars import (
     stored_profile_ids,
 )
 from decker.server.switch import SwitchController
+from decker.server.variables import VariableConflict, VariableStore
 
 if TYPE_CHECKING:
     from decker.server.server_context import ServerContext
@@ -101,6 +102,21 @@ class _ActionsHandler:
 
     def unregister(self, plugin_id: str) -> None:
         self._manager.unregister_actions(plugin_id)
+
+
+class _VariablesHandler:
+    """The "variables" contribution handler: declares a plugin's variables in the VariableStore."""
+
+    kind = "variables"
+
+    def __init__(self, manager: "PluginManager") -> None:
+        self._manager = manager
+
+    def register(self, plugin: InstalledPlugin) -> None:
+        self._manager.register_variables(plugin)
+
+    def unregister(self, plugin_id: str) -> None:
+        self._manager.unregister_variables(plugin_id)
 
 
 @dataclass
@@ -178,7 +194,10 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._supervisor = PluginSupervisor(policy, PluginProcess, self._on_plugin_message, self._on_plugin_failed)
         self._action_runner = ActionRunner(self._supervisor, self._on_action_failed)
         self.icon_packs = IconPackRegistry(on_failure=self._record_failure)
-        self._contributions = ContributionRegistry([_CardsHandler(self), _ActionsHandler(self), self.icon_packs])
+        self.variables = VariableStore(on_change=self._on_variables_changed)
+        self._contributions = ContributionRegistry(
+            [_CardsHandler(self), _ActionsHandler(self), self.icon_packs, _VariablesHandler(self)]
+        )
 
     def create(self, context: "ServerContext") -> None:
         """Wire up the device manager, then scan plugins and start the supervisor."""
@@ -255,6 +274,27 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         self._supervisor.unregister(plugin_id)
         with self._lock:
             self._hellos.pop(plugin_id, None)
+
+    def register_variables(self, plugin: InstalledPlugin) -> None:
+        """Declare a plugin's variables; a collision raises VariableConflict (the "variables" handler)."""
+        self._register_runtime(plugin)
+        try:
+            self.variables.declare(plugin.manifest.id, plugin.manifest.variables)
+        except VariableConflict:
+            self._supervisor.unregister(plugin.manifest.id)  # the registry only rolls back handlers that succeeded
+            with self._lock:
+                self._hellos.pop(plugin.manifest.id, None)
+            raise
+
+    def unregister_variables(self, plugin_id: str) -> None:
+        """Forget a plugin's variables and stop its process (the "variables" handler)."""
+        self.variables.undeclare(plugin_id)
+        self._supervisor.unregister(plugin_id)
+        with self._lock:
+            self._hellos.pop(plugin_id, None)
+
+    def _on_variables_changed(self, names: frozenset[str]) -> None:
+        """Placeholder until variable changes redraw keys."""
 
     def list_actions(self) -> list[dict[str, Any]]:
         """Every action declared across all loaded plugin manifests, with its settings schema."""
