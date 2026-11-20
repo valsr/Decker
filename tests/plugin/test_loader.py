@@ -53,6 +53,18 @@ class TestPluginLoader:
         assert_that(result.failures[0].plugin_uuid).is_equal_to("com.decker.broken")
         assert_that(result.failures[0].error).contains("malformed JSON")
 
+    def test_null_variable_entry_is_a_failure_and_siblings_still_load(self, tmp_path):
+        bad = dict(_MANIFEST, id="com.decker.nullvar", format=2, decker=">=0.1")
+        bad["contributes"] = {"variables": [{"name": None}]}
+        _make_plugin(tmp_path, bad, name="com.decker.nullvar")
+        _make_plugin(tmp_path)
+
+        result = PluginLoader(tmp_path).scan()
+
+        assert_that(result.plugins).extracting("manifest").extracting("id").contains_only("com.decker.test")
+        assert_that(result.failures).is_length(1)
+        assert_that(result.failures[0].plugin_uuid).is_equal_to("com.decker.nullvar")
+
     def test_old_format_manifest_is_a_failure(self, tmp_path):
         _make_plugin(tmp_path, {"UUID": "com.decker.old", "Name": "Old"}, name="com.decker.old")
 

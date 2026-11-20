@@ -125,14 +125,17 @@ class VariableRunner:  # pylint: disable=too-many-instance-attributes
         return request, pending
 
     def _ask_loop(self, key: tuple[str, str], request: str, pending: _Pending) -> None:
-        while True:
-            self._ask_once(key, request, pending)
+        try:
+            while True:
+                self._ask_once(key, request, pending)
+                with self._lock:
+                    if key not in self._dirty or self._closed:
+                        return
+                    self._dirty.discard(key)
+                    request, pending = self._new_request_locked(key[0])
+        finally:
             with self._lock:
-                if key not in self._dirty or self._closed:
-                    self._inflight.discard(key)
-                    return
-                self._dirty.discard(key)
-                request, pending = self._new_request_locked(key[0])
+                self._inflight.discard(key)
 
     def _ask_once(self, key: tuple[str, str], request: str, pending: _Pending) -> None:
         plugin_id, name = key

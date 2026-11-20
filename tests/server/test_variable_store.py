@@ -2,6 +2,7 @@ import pytest
 from assertpy import assert_that
 
 from decker.common.template import expand_template
+from decker.common.variables import MAX_REGISTERED
 from decker.plugin.manifest import VariableSpec
 from decker.server.variables import VariableConflict, VariableStore
 
@@ -270,3 +271,31 @@ def test_has_declarations() -> None:
     assert_that(store.has_declarations()).is_true()
     store.undeclare("p1")
     assert_that(store.has_declarations()).is_false()
+
+
+def _full_store() -> VariableStore:
+    store = VariableStore()
+    _declared(store, "p1", _pattern("sensor_{id}"))
+    for index in range(MAX_REGISTERED):
+        assert_that(store.register("p1", f"sensor_{index}")).is_true()
+    return store
+
+
+def test_register_is_capped_per_plugin() -> None:
+    store = _full_store()
+    assert_that(store.register("p1", "sensor_extra")).is_false()
+    assert_that(store.register("p1", "sensor_0")).is_true()
+    assert_that(store.registered_names("p1")).is_length(MAX_REGISTERED)
+
+
+def test_unregister_frees_a_registration_slot() -> None:
+    store = _full_store()
+    store.unregister("p1", "sensor_0")
+    assert_that(store.register("p1", "sensor_extra")).is_true()
+    assert_that(store.register("p1", "sensor_extra2")).is_false()
+
+
+def test_drop_values_resets_the_registration_count() -> None:
+    store = _full_store()
+    store.drop_values("p1")
+    assert_that(store.register("p1", "sensor_extra")).is_true()

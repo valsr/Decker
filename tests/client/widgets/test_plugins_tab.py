@@ -43,6 +43,7 @@ _PLUGINS = [
         "description": "Extra things",
         "actions": 1,
         "icon_packs": 0,
+        "variables": 2,
         "icon_b64": "",
         "global_settings_schema": [{"key": "token", "type": "text", "label": "Token", "default": ""}],
         "global_settings": {"token": "abc"},
@@ -89,7 +90,7 @@ def test_lists_plugins_with_contribution_summary(tab):
 
     assert_that(texts).is_length(2)
     assert_that(texts[0]).contains("Core", "v1.0.0", "Decker", "2 actions · 1 icon pack")
-    assert_that(texts[1]).contains("Extra", "Acme", "1 action")
+    assert_that(texts[1]).contains("Extra", "Acme", "1 action · 2 variables")
 
 
 def test_uninstall_confirms_with_usage_count_and_calls_rpc(tab, manager):

@@ -14,6 +14,7 @@ from decker.animation.factory import AnimationFactory
 from decker.animation.model import AnimationSpec
 from decker.common.platforms import HostPlatform, PlatformSpec
 from decker.plugin.events import PluginLoadFailedEvent
+from decker.plugin.manifest import VariableSpec
 from decker.plugin.repository_index import IndexPlugin, IndexVersion
 from decker.plugin.target import CardTarget
 from decker.server.appearance import resolve_appearance
@@ -1180,8 +1181,10 @@ class TestPlatformData:
         plugin.manifest.icon = None
         plugin.manifest.cards = ()
         plugin.manifest.icon_packs = ()
+        plugin.manifest.variables = (VariableSpec(name="a_b", pattern=None), VariableSpec(name=None, pattern="c_{d}"))
         plugin.manifest.global_settings = ()
         info = DeckerService._plugin_info(plugin, {})  # pylint: disable=protected-access
+        assert_that(info["variables"]).is_equal_to(2)
         assert_that(info["platforms"]).is_equal_to(["linux"])
         assert_that(info["linux"]).is_equal_to({"desktops": ["gnome"]})
         assert_that(info["supported"]).is_false()

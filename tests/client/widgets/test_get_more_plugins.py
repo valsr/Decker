@@ -41,7 +41,9 @@ def _plugin(plugin_id, name, **overrides):
         "shadowed_by": [],
         "installed_version": None,
         "latest_compatible": "2.0.0",
-        "versions": [{**version, "contributes": {"actions": ["Do it"], "icon_packs": []}}],
+        "versions": [
+            {**version, "contributes": {"actions": ["Do it"], "icon_packs": [], "variables": ["media_volume", "m_{x}"]}}
+        ],
     }
     plugin.update(overrides)
     return plugin
@@ -166,6 +168,7 @@ def test_details_pane_shows_size_and_repository(dialog):
     text = dialog._details.text()
     assert_that(text).contains("2.0 KiB", "https://repo.example/index.json", "Acme", "https://acme.example", "&gt;=0.1")
     assert_that(text).contains("Do it")
+    assert_that(text).contains("Variables: media_volume", "m_{x}")
 
 
 def test_icons_load_one_at_a_time_off_the_ui_thread(dialog, manager, qapp):

@@ -11,6 +11,7 @@
 | Protocol line size | 8 MiB; longer lines are discarded |
 | stderr | read in 8 KiB chunks and logged; never buffered unbounded |
 | Variable declarations (`contributes.variables`) | 256 per plugin |
+| Registered concrete names (`register_variable`) | 256 per plugin; further `register_variable` calls are refused |
 | Variable name | 64 characters |
 | Variable value | 1024 characters; a longer value is refused and the old one stays |
 | Variable ask (`get_variable`) | the plugin has 5 s to answer; on a timeout the old value stays |
@@ -28,7 +29,8 @@
 - Each plugin runs in its own process group; stopping or killing it also stops helper processes it started.
 - **Crashes**: restart with backoff (0.5 s, 2 s, 5 s). Three crashes within 60 s mark the plugin failed: its keys
   are cleared and labelled "Plugin failed", and clients are notified. Re-saving a key's settings retries it; so
-  does a server restart.
+  does a server restart. A plugin with only variables that is marked failed has no key whose re-save would retry
+  it, so it recovers on reinstall or a server restart.
 - **Hangs**: the server pings every 5 s; no `pong` within 10 s kills the process. A process that sends no `ready`
   within 10 s is killed too.
 - **Memory**: the server samples each plugin's resident set size and kills it above the limit, default 256 MiB

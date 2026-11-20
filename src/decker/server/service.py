@@ -1169,6 +1169,7 @@ class DeckerService(Service):  # pylint: disable=too-many-public-methods  # one 
             "description": manifest.description,
             "cards": len(manifest.cards),
             "icon_packs": len(manifest.icon_packs),
+            "variables": len(manifest.variables),
             "icon_b64": base64.b64encode(icon).decode("ascii") if icon else "",
             "global_settings_schema": schema_to_json(manifest.global_settings),
             "global_settings": global_settings,

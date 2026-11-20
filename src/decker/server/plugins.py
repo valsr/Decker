@@ -880,10 +880,6 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         """Template variables for what the device shows (empty when pages are unavailable)."""
         return page_variables(self._device_layout(device_id))
 
-    def template_variables(self, device_id: str) -> Mapping[str, str]:
-        """Everything key text may use: page and profile variables first, then the plugins' global variables."""
-        return VariableChain(self.page_variables(device_id), self.variables.view())
-
     def delivered_settings(self, live: _Live) -> dict[str, Any]:
         """The settings a plugin receives: opted-in text expanded and page ids resolved; stored values stay raw."""
         layout = self._device_layout(live.target.device_id)
@@ -1065,9 +1061,13 @@ class PluginManager(Manager):  # pylint: disable=too-many-instance-attributes,to
         elif message.event == "unregister_variable":
             self.variables.unregister(plugin_id, name)
         elif message.event == "register_variable" and not self.variables.register(plugin_id, name):
-            logging.warning("[%s] register_variable(%r) rejected: not inside one of its patterns", plugin_id, name)
+            logging.warning(
+                "[%s] register_variable(%r) rejected: not inside one of its patterns, taken, or over the limit",
+                plugin_id,
+                name[:80],
+            )
         elif message.event == "variable_updated" and name not in self.variables.registered_names(plugin_id):
-            logging.debug("[%s] ignored variable_updated for %r, which it does not own", plugin_id, name)
+            logging.debug("[%s] ignored variable_updated for %r, which it does not own", plugin_id, name[:80])
         else:
             self._variable_runner.ask(plugin_id, name)
 
