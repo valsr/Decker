@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 from decker.client.card_icons import asset_pixmap, card_pixmap
 from decker.plugin.manifest import RUN_ACTION_CARD_ID
 
-_MIME_TYPE = "application/x-decker-card"
+CARD_MIME_TYPE = "application/x-decker-card"
 ICON_SIZE = 48
 DRAG_ICON_SIZE = 56
 _TILE_SIZE = QSize(96, 104)  # room for a two-line name under the icon
@@ -46,7 +46,7 @@ class _DraggableCardList(QListWidget):
         card: dict[str, Any] = item.data(Qt.ItemDataRole.UserRole) or {}
         payload = {field: card[field] for field in _DRAG_FIELDS if field in card}
         mime = QMimeData()
-        mime.setData(_MIME_TYPE, QByteArray(json.dumps(payload).encode()))
+        mime.setData(CARD_MIME_TYPE, QByteArray(json.dumps(payload).encode()))
         drag = QDrag(self)
         drag.setMimeData(mime)
         override = item.data(_DRAG_PIXMAP_ROLE)

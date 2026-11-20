@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 )
 
 from decker.client.card_icons import decode_icon
+from decker.client.widgets.sidebar import CARD_MIME_TYPE
 from decker.common.model import KeyInfo
 
 _LONG_PRESS_MS = 500
@@ -49,7 +50,6 @@ _RUN_SIZE = 30  # px, the hover play button
 _RUN_ICON_PX = 21  # px, the play-circle drawing inside its 30 px button
 _PLAY_ICON = Path(__file__).resolve().parents[2] / "assets" / "play-circle.svg"
 _RUN_MARGIN = 4  # px from the key's top-right corner
-_MIME_TYPE = "application/x-decker-card"
 _KEY_MIME_TYPE = "application/x-decker-key"
 _PLUS_ICON = Path(__file__).resolve().parents[2] / "assets" / "plus-circle.svg"
 _BADGE_COLOR = "#2ecc71"  # the copy badge's green
@@ -390,14 +390,14 @@ class KeyButtonWidget(QPushButton):  # pylint: disable=too-many-instance-attribu
     def dragEnterEvent(self, a0: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
         """Accept card drops and key drags."""
         mime = a0.mimeData()
-        if mime.hasFormat(_MIME_TYPE) or mime.hasFormat(_KEY_MIME_TYPE):
+        if mime.hasFormat(CARD_MIME_TYPE) or mime.hasFormat(_KEY_MIME_TYPE):
             a0.acceptProposedAction()
             self._show_copy_badge(a0)
 
     def dragMoveEvent(self, a0: Any) -> None:  # noqa: N802  # pylint: disable=invalid-name
         """Show the copy badge while Ctrl is held over a key drag."""
         mime = a0.mimeData()
-        if mime.hasFormat(_MIME_TYPE) or mime.hasFormat(_KEY_MIME_TYPE):
+        if mime.hasFormat(CARD_MIME_TYPE) or mime.hasFormat(_KEY_MIME_TYPE):
             a0.acceptProposedAction()
             self._show_copy_badge(a0)
 
@@ -413,7 +413,7 @@ class KeyButtonWidget(QPushButton):  # pylint: disable=too-many-instance-attribu
         if mime.hasFormat(_KEY_MIME_TYPE):
             self._drop_key(a0)
             return
-        raw: bytes = bytes(mime.data(_MIME_TYPE))
+        raw: bytes = bytes(mime.data(CARD_MIME_TYPE))
         try:
             data: dict[str, Any] = json.loads(raw.decode())
         except (ValueError, UnicodeDecodeError):
