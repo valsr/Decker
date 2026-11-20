@@ -33,19 +33,24 @@ values; nothing is clamped silently.
 - **Waking:** while the screensaver shows, the first key press wakes the deck and is swallowed, and so is that key's
   release. Neither reaches the page, a plugin or a client, so waking never fires an action. Waking restores normal
   brightness and redraws the active page from stored state.
+- A key held down when the screensaver starts still gets its release delivered (a release never wakes the deck), so
+  the page and plugins never see a press without its release.
 - Profile or page switches (manual, plugin or app rule) while the screensaver shows only change state; waking shows
   whatever is then active.
 
 ## Content
 
 - `none`: a dark screen at the screensaver brightness.
-- `image`: one file. Formats: `png`, `jpg`, `jpeg`, `svg`. SVG is rasterised at the canvas size. Only the first frame of
-  an animated file is used (no animated screensavers).
+- `image`: one file. Formats: `png`, `jpg`, `jpeg`, `svg`; a PNG or JPEG must really be that format (a file whose
+  content does not match its extension counts as undecodable). SVG is rasterised at its own aspect ratio, just large
+  enough to cover the canvas, and is then scaled like any other picture. SVG needs the Cairo library. Only the first
+  frame of an animated file is used (no animated screensavers).
 - `gallery`: the image files of `folder_path`, sorted by file name. The folder is rescanned at every advance, so added
   and removed files take effect; the gallery wraps around, and unreadable files are skipped. With `gallery_mode`
   `activation` the next image shows each time the screensaver starts; with `interval` it advances every
   `gallery_minutes` while active.
-- Each picture is rendered once per activation and per gallery advance, not per frame.
+- Each picture is rendered once per activation and per gallery advance, not per frame. A large picture is shrunk
+  while it is decoded, to about twice the size the canvas needs, before anything else touches it.
 
 ## Scaling and bezel geometry
 
@@ -74,15 +79,16 @@ The 16 mm and 4 mm defaults apply to every model; edit them per device if your d
 
 - Paths: 1024 characters.
 - Image file: 20 MiB.
-- Decoded size: 64 megapixels.
+- Decoded size: 24 megapixels.
 
 A file over a limit counts as unreadable (see failure behaviour).
 
 ## Who may set paths
 
 `image_path` and `folder_path` live on the server's machine. Only clients on the server's machine (loopback) can change
-them with `screensaver_set`, or use any non-empty path in `screensaver_preview`. A remote client gets an error; it can
-still change every other setting. Images are never uploaded.
+them with `screensaver_set`. A remote client gets an error; it can still change every other setting. The same rule
+applies to `screensaver_preview`: a remote client can preview with the stored paths, and is refused only when its draft
+names a different `image_path` or `folder_path`. Images are never uploaded.
 
 ## Brightness
 
@@ -93,7 +99,8 @@ screensaver brightness (0-100) is applied only while the screensaver shows; 0 tu
 
 A missing, unreadable, oversized or undecodable image, a missing folder, or a gallery with no readable image does not
 break the deck. The screen goes dark at the screensaver brightness, and the reason is reported as `last_error` by
-`screensaver_get`. The Device tab shows it next to the picker.
+`screensaver_get`. The Device tab shows it under the **Activate now** button; it refetches `last_error` whenever the
+screensaver starts or stops.
 
 ## Hot-plug and shutdown
 
@@ -137,5 +144,8 @@ Events: `screensaver_changed` with `{"device_id", "active"}` when a screensaver 
 
 ## Known limitations
 
-- A key held down when the screensaver starts does not get its release delivered to the page.
+- Settings saved while the screensaver shows (screensaver brightness, content, image, scaling, bezel) apply at the
+  next activation; only an interval gallery's timer is restarted at once.
+- Decks without key screens (such as the Stream Deck Pedal) have no screensaver: activating returns `false` and the
+  idle timeout never starts one. Their brightness and settings can still be read and saved.
 - The client renders the preview request on the GUI thread, so the dialog can stall briefly on a slow server.
