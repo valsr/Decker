@@ -573,3 +573,59 @@ def test_removing_plugin_drops_values_and_stops_process(tmp_path: Path, monkeypa
         assert_that(titles[-1]).is_equal_to("Vol {media_volume}")  # no longer declared: stays as typed
     finally:
         manager.destroy()
+
+
+def test_late_answer_of_a_stopped_process_is_not_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manager, procs, titles, proc = _volume_rig(tmp_path, monkeypatch)
+    store = manager.variables
+    real_set_value = store.set_value
+    raced: list[bool] = []
+
+    def stop_then_write(*args: Any, **kwargs: Any) -> bool:
+        # The ask thread popped its pending and passed the stopped check; the process dies before it writes.
+        if not raced:
+            raced.append(True)
+            proc.running = False
+            manager._on_plugin_exit("com.t.one")  # pylint: disable=protected-access  # plugin_stopped + drop_values
+        return real_set_value(*args, **kwargs)
+
+    monkeypatch.setattr(store, "set_value", stop_then_write)
+    try:
+        _titled(manager, "ctx-a", 0, "Vol {media_volume}")
+        _answer(proc, "media_volume", 40)
+
+        assert_that(_wait_until(lambda: bool(raced))).is_true()
+        time.sleep(0.05)
+        assert_that(store.snapshot()).is_empty()
+        assert_that(titles).does_not_contain("Vol 40")
+
+        proc.on_exit(1)  # the supervisor sees the crash and restarts it after the back-off
+        manager._supervisor.tick(time.monotonic() + 60.0)  # pylint: disable=protected-access
+        restarted = procs["com.t.one"]
+        assert_that(restarted).is_not_same_as(proc)
+        restarted.emit("ready")
+        _answer(restarted, "media_volume", 41)
+        assert_that(_wait_until(lambda: store.snapshot() == {"media_volume": "41"})).is_true()
+        assert_that(_wait_until(lambda: titles[-1:] == ["Vol 41"])).is_true()
+    finally:
+        manager.destroy()
+
+
+def test_declared_unset_variable_expands_without_pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = _manager(tmp_path)
+    procs = _fake_processes(manager)
+    titles = _with_pages(manager, monkeypatch)
+    manager._page_store = manager._page_controller = None  # pylint: disable=protected-access  # no pages at all
+    try:
+        manager.add_plugin(_static_plugin(tmp_path))
+        manager.add_plugin(_plugin(tmp_path, "com.t.one", [{"name": "media_volume"}], [_LABEL_CARD]))
+        procs["com.t.one"].emit("ready")
+
+        _titled(manager, "ctx-a", 0, "A{media_volume}B {{x}}")
+        assert_that(titles[-1]).is_equal_to("AB {x}")
+
+        manager.store_settings(_key("ctx-d", 3, "com.t.one", "com.t.one.k"), {"label": "L{media_volume} {{"})
+        manager.activate_card(_key("ctx-d", 3, "com.t.one", "com.t.one.k"))
+        assert_that(_settings_sent(procs["com.t.one"], "ctx-d")).is_equal_to([{"label": "L {"}])
+    finally:
+        manager.destroy()

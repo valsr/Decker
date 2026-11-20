@@ -91,10 +91,10 @@ class VariableStore:
             changed = {name} if self._values.pop(name, None) is not None else set()
         self._notify(changed)
 
-    def set_value(self, plugin_id: str, name: str, value: str | None) -> bool:
-        """Cache a value for a name the plugin owns; None clears it."""
+    def set_value(self, plugin_id: str, name: str, value: str | None, accept: Callable[[], bool] | None = None) -> bool:
+        """Cache a value for a name the plugin owns; None clears it. `accept`, checked under the lock, can veto it."""
         with self._lock:
-            if not self._owns_registered(plugin_id, name):
+            if not self._owns_registered(plugin_id, name) or (accept is not None and not accept()):
                 return False
             old = self._values.get(name)
             if value is None:
@@ -114,6 +114,11 @@ class VariableStore:
             for name in [n for n, owner in self._concrete.items() if owner == plugin_id]:
                 del self._concrete[name]
         self._notify(changed)
+
+    def has_declarations(self) -> bool:
+        """Whether any plugin declares a variable, so templated text may expand global names."""
+        with self._lock:
+            return bool(self._exact or self._patterns)
 
     def registered_names(self, plugin_id: str) -> list[str]:
         """Return the plugin's exact and registered concrete names, sorted."""

@@ -122,9 +122,12 @@ def deliver_settings(
     layout: DeviceLayout,
     variables: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """A copy of `settings` with opted-in text expanded and page/profile ids resolved; the input is left raw."""
+    """A copy of `settings`, ids resolved and opted-in text expanded (by default with page variables, if any)."""
     if variables is None:
         variables = page_variables(layout)
+        expand = bool(variables)
+    else:
+        expand = True
     result = {key: dict(value) if isinstance(value, dict) else value for key, value in settings.items()}
     for entry in schema:
         if not isinstance(entry, SettingField) or entry.key not in result:
@@ -134,7 +137,7 @@ def deliver_settings(
             result[entry.key] = resolve_page(layout, value)
         elif entry.type == "profile":
             result[entry.key] = resolve_profile(layout, value)
-        elif not entry.extra.get("template") or not variables:
+        elif not entry.extra.get("template") or not expand:
             continue
         elif entry.type == "text" and isinstance(value, str):
             result[entry.key] = expand_template(value, variables)

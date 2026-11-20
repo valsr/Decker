@@ -18,13 +18,14 @@ DEFAULT_TIMEOUT_S = 5.0
 @dataclass
 class _Pending:
     plugin_id: str
+    epoch: int
     done: threading.Event = field(default_factory=threading.Event)
     stopped: bool = False
     value: str | None = None
     error: str = "no answer"
 
 
-class VariableRunner:
+class VariableRunner:  # pylint: disable=too-many-instance-attributes
     """Fills the VariableStore from plugin getters and keeps every ready plugin's copy of the variables current."""
 
     def __init__(self, supervisor: PluginSupervisor, store: VariableStore, timeout: float = DEFAULT_TIMEOUT_S) -> None:
@@ -37,6 +38,7 @@ class VariableRunner:
         self._inflight: set[tuple[str, str]] = set()
         self._dirty: set[tuple[str, str]] = set()
         self._failing: set[tuple[str, str]] = set()
+        self._epochs: dict[str, int] = {}  # per plugin id, bumped whenever its process stops; survives restarts
         self._closed: bool = False
 
     def ask(self, plugin_id: str, name: str) -> None:
@@ -77,6 +79,7 @@ class VariableRunner:
     def plugin_stopped(self, plugin_id: str) -> None:
         """Wake every ask waiting on the plugin; they end without changing the store."""
         with self._lock:
+            self._epochs[plugin_id] = self._epochs.get(plugin_id, 0) + 1
             self._release_locked(lambda pid: pid == plugin_id)
 
     def stop_all(self) -> None:
@@ -117,7 +120,7 @@ class VariableRunner:
 
     def _new_request_locked(self, plugin_id: str) -> tuple[str, _Pending]:
         request = uuid.uuid4().hex
-        pending = _Pending(plugin_id)
+        pending = _Pending(plugin_id, self._epochs.get(plugin_id, 0))
         self._pending[request] = pending
         return request, pending
 
@@ -149,7 +152,12 @@ class VariableRunner:
         else:
             with self._lock:
                 self._failing.discard(key)
-            self._store.set_value(plugin_id, name, pending.value)
+            self._store.set_value(plugin_id, name, pending.value, lambda: self._current(pending))
+
+    def _current(self, pending: _Pending) -> bool:
+        # Runs under the store lock: an answer from a process that stopped since the ask was sent is dropped.
+        with self._lock:
+            return not self._closed and self._epochs.get(pending.plugin_id, 0) == pending.epoch
 
     def _failed(self, key: tuple[str, str], error: str) -> None:
         with self._lock:

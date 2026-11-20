@@ -249,3 +249,24 @@ def test_redeclare_same_plugin_overlapping_does_not_conflict_and_drops_values() 
 
 def test_owner_of_core_name_is_none() -> None:
     assert_that(VariableStore().owner_of("page_name")).is_none()
+
+
+def test_accept_vetoes_a_write_under_the_lock() -> None:
+    changes: list[frozenset[str]] = []
+    store = VariableStore(on_change=changes.append)
+    _declared(store, "p1", _name("weather"))
+
+    assert_that(store.set_value("p1", "weather", "sunny", lambda: False)).is_false()
+    assert_that(store.snapshot()).is_empty()
+    assert_that(changes).is_empty()
+    assert_that(store.set_value("p1", "weather", "sunny", lambda: True)).is_true()
+    assert_that(store.snapshot()).is_equal_to({"weather": "sunny"})
+
+
+def test_has_declarations() -> None:
+    store = VariableStore()
+    assert_that(store.has_declarations()).is_false()
+    _declared(store, "p1", _pattern("sensor_{id}"))
+    assert_that(store.has_declarations()).is_true()
+    store.undeclare("p1")
+    assert_that(store.has_declarations()).is_false()
