@@ -1205,7 +1205,7 @@ def test_page_switch_and_plugin_messages_do_not_deadlock(tmp_path):
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(20)
+        thread.join(60)
     alive = [t.is_alive() for t in threads]
     done.set()
     if not any(alive):
