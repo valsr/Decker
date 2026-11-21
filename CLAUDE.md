@@ -59,6 +59,8 @@ poe test     # pytest with coverage (target ≥ 85%)
 
 Run `format` before the others; it changes files that the linter then re-checks.
 
+Decker supports Windows and macOS, and CI type-checks for them too (`mypy --platform win32 .` and `mypy --platform darwin .`, besides the default run). Run both before pushing: POSIX-only APIs such as `signal.SIGKILL` or `os.getuid` are errors under `win32` even in code or tests that are skipped there. Use the portable form (`psutil.Process(pid).kill()`), or guard with `sys.platform` in a way mypy understands.
+
 ## Code style
 
 - **Formatter**: black (line length 120) + isort (`black` profile). Let the formatter decide; don't fight it.
