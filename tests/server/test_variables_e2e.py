@@ -1,7 +1,5 @@
 import logging
-import os
 import shutil
-import signal
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -126,7 +124,7 @@ def test_killing_the_process_clears_then_restores_values(env: _Env) -> None:
     first = env.pid()
     assert first is not None
 
-    os.kill(first, signal.SIGKILL)
+    psutil.Process(first).kill()
 
     assert_that(
         _wait(
